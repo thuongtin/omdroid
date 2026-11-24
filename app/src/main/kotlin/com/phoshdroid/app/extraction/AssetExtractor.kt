@@ -8,12 +8,17 @@ import java.util.zip.GZIPInputStream
 
 class AssetExtractor {
 
+    /** Hard-link members that could not be materialised from their target. */
+    var skippedLinks: Int = 0
+        private set
+
     fun extract(
         input: InputStream,
         totalBytes: Long,
         targetDir: File,
         onProgress: (percent: Int) -> Unit = {}
     ): Boolean {
+        skippedLinks = 0
         val marker = File(targetDir, ".extraction_complete")
         if (marker.exists()) return false
 
@@ -42,17 +47,27 @@ class AssetExtractor {
                             arrayOf("ln", "-sf", entry.linkName, outFile.absolutePath)
                         ).waitFor()
                     } else if (entry.isLink) {
-                        // Hard link into the archive (terminfo duplicates); the
-                        // entry carries no data, so a plain write would leave an
-                        // empty file.
+                        // Hard-link member into the archive (terminfo and zoneinfo
+                        // aliases); the entry carries no data, so the member has to
+                        // be materialised from its target. Android denies apps hard
+                        // links inside app data, and the old `ln -f` failed without
+                        // throwing, which silently left these members missing on
+                        // device; copy the target instead (all copies together are
+                        // only a few megabytes).
                         outFile.parentFile?.mkdirs()
                         outFile.delete()
                         val target = File(targetDir, entry.linkName)
                         try {
-                            Runtime.getRuntime().exec(
-                                arrayOf("ln", "-f", target.absolutePath, outFile.absolutePath)
-                            ).waitFor()
+                            if (target.isFile) {
+                                target.copyTo(outFile, overwrite = true)
+                                if (target.canExecute()) {
+                                    outFile.setExecutable(true)
+                                }
+                            } else {
+                                skippedLinks++
+                            }
                         } catch (_: Exception) {
+                            skippedLinks++
                         }
                     } else {
                         outFile.parentFile?.mkdirs()
