@@ -11,8 +11,9 @@
 **Omarchy on unrooted Android, in a single APK.**
 
 > [!WARNING]
-> **Highly experimental.** Omdroid has run on one tablet, no build of it has been
-> released, and part of the current code is unit-tested only. Expect breakage. The guest
+> **Highly experimental.** Omdroid has run on one tablet. Its only published build is the
+> [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release, and that exact APK has not been run on a device
+> yet: the measurements below come from the build before it. Expect breakage. The guest
 > lives in the app's private storage, so uninstalling the app or clearing its data deletes
 > everything inside it.
 
@@ -35,8 +36,10 @@ under the desktop -- is not in it; the screenshots further down are Android's ow
 
 Highly experimental. It has been run on exactly one device: a Xiaomi Pad 8 Pro
 (model 25091RP04G), Android 16 with HyperOS 3.0, a Snapdragon SM8750P with an Adreno GPU,
-a 3200x2136 panel and 12 GB of RAM. No Omarchy build has been released -- the releases on
-this repository are the older Phoshdroid builds, and this branch is built from source.
+a 3200x2136 panel and 12 GB of RAM. The first Omdroid build is the [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release. Every earlier
+release on this repository is a Phoshdroid build -- postmarketOS with Phosh, a different
+guest under the same package id -- so do not install Omdroid over Phoshdroid: uninstall it
+first. Installing over it has not been tested.
 
 | Claim | How it was measured | Result | Row |
 | --- | --- | --- | --- |
@@ -63,6 +66,12 @@ warnings; see Known limits.
 
 Not verified yet:
 
+- The released APK itself. It is this tree: the build measured above plus the round 3
+  host work and one extractor fix. Neither a fresh install nor an update with it has been
+  run on a device. The fix is checked on the build machine only: Android refuses apps
+  hard links, so the 1,832 hard-link members of the guest image (terminfo and zoneinfo
+  aliases, `/usr/bin/ld`) were missing after extraction; they are now copied, and the
+  extractor run over the real image produces all 76,382 files.
 - Screen off and on, and the keyboard and touch path, with this build: rows D8 and D9
   are blocked. The tablet fell to its PIN keyguard on wake and the display stayed behind
   it; the session itself survived (same process, probe passing, window still open).
@@ -142,6 +151,14 @@ so the app offers integers only.
   change.
 
 ## Build and install
+
+To install the pre-release, download `omdroid-0.0.14-alpha.apk` (about 1.7 GB) from the
+[`v0.0.14-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) and sideload it: `adb install omdroid-0.0.14-alpha.apk`,
+or open the file from a file manager on the device. HyperOS and MIUI refuse `adb install`;
+see the end of this section. The first start extracts the guest; that took about
+two minutes on the test tablet.
+
+To build it yourself:
 
 ```bash
 git clone --recursive https://github.com/zweck/omdroid.git

@@ -58,7 +58,7 @@ CI (`.github/workflows/ci.yml`) is the gate — checkout `--recursive`, Temurin 
 docs/omarchy/tools/install.sh        # sideload; HyperOS refuses adb install
 ```
 
-Bump `versionCode` + `versionName` together in `app/build.gradle.kts`; tags look like `0.0.13-alpha`.
+Bump `versionCode` + `versionName` together in `app/build.gradle.kts`. A release is a `release: 0.0.N-alpha` commit on `main`, the tag `v0.0.N-alpha`, and a GitHub pre-release titled `Omdroid 0.0.N-alpha` with the debug APK attached as `omdroid-0.0.N-alpha.apk` and its sha256 in the notes.
 
 ## Conventions
 
