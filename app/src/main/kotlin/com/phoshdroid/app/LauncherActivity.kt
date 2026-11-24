@@ -23,6 +23,7 @@ import com.phoshdroid.app.extraction.AssetExtractor
 import com.phoshdroid.app.launch.DisplayGeometry
 import com.phoshdroid.app.launch.GuestOverlay
 import com.phoshdroid.app.launch.GuestOverlayAssets
+import com.phoshdroid.app.launch.KeyCapture
 import com.phoshdroid.app.launch.LaunchAction
 import com.phoshdroid.app.launch.LaunchDecision
 import com.phoshdroid.app.launch.LaunchReadiness
@@ -554,6 +555,38 @@ class LauncherActivity : AppCompatActivity() {
             // toolbar doesn't overlap phosh's usable area.
             .putBoolean("showAdditionalKbd", true)
             .putBoolean("additionalKbdVisible", true)
+            // Hardware keyboard and touchpad, r4-input K3 (docs/omarchy/r4-input-research.md
+            // §2.2). This block is the only place that can set them: LoriePreferences is
+            // android:enabled="false" in our manifest, so the submodule's own screen is
+            // unreachable in this APK.
+            // preferScancodes=true: every key goes to Xlorie as a keycode, so the guest's
+            // keymap owns layout and autorepeat instead of the guest receiving Unicode text.
+            .putBoolean("preferScancodes", true)
+            // showIMEWhileExternalConnected=false: the soft keyboard must not pop up over the
+            // desktop while the keyboard cover is attached.
+            .putBoolean("showIMEWhileExternalConnected", false)
+            // pointerCapture=false: absolute pointer — one cursor, the guest cursor follows the
+            // finger/touchpad and Android's pointer icon stays hidden by the app. Relative
+            // capture is not part of this round.
+            .putBoolean("pointerCapture", false)
+            // pauseKeyInterceptingWithEsc=false: Esc must reach the guest (vim, menus, htop).
+            // The way back to Android is the bottom-edge navigation gesture and the power
+            // button, not Esc.
+            .putBoolean("pauseKeyInterceptingWithEsc", false)
+            // filterOutWinkey=false: `true` drops Meta and every Meta-modified key before the
+            // X server sees it, which is exactly the SUPER this round is about.
+            .putBoolean("filterOutWinkey", false)
+            // enableAccessibilityServiceAutomatically=false: our own code enables the service
+            // (launch/KeyCapture.kt), so the shared accessibility list is merged in one
+            // unit-tested place instead of being overwritten by the submodule.
+            .putBoolean("enableAccessibilityServiceAutomatically", false)
+            // hardwareKbdScancodesWorkaround=false: intercept hardware keys before the IME so no
+            // input method can swallow SUPER. This is the single most likely typing regression
+            // (upstream issue 635) — if K4's typing test fails, set this back to `true` first.
+            .putBoolean("hardwareKbdScancodesWorkaround", false)
+            // enforceCharBasedInput=true: TYPE_NULL input connection, so no predictive,
+            // suggestion or CJK composition layer sits between the keys and the guest.
+            .putBoolean("enforceCharBasedInput", true)
             // Immersive sticky fullscreen — keeps Android nav bar hidden so bottom-edge
             // swipes go to phosh instead of being consumed by the Android home gesture.
             .putBoolean("fullscreen", true)
@@ -567,6 +600,16 @@ class LauncherActivity : AppCompatActivity() {
 
         // Phase 5: Start X11 server, then proot, then launch display activity
         statusText.text = getString(R.string.starting_desktop)
+
+        // Termux:X11's KeyInterceptor accessibility service is the only component in front of
+        // Android 16's own Meta handling (r4-input K2): without it a Meta press opens the app
+        // drawer and Meta+Tab / Meta+Esc become recents and back before the X server ever sees
+        // them, so SUPER never reaches Hyprland. Our code enables it — not the submodule's
+        // LoriePreferences switch — so the shared accessibility list is merged instead of
+        // overwritten. No grant, or a refused write, is a log line: the desktop then runs with
+        // Android's key handling exactly as before.
+        val keyCapture = withContext(Dispatchers.IO) { KeyCapture.enable(this@LauncherActivity) }
+        logLaunch("key-capture ${keyCapture.detail}")
 
         // Start the Termux:X11 server
         val tmpDir = File(prefixDir, "tmp")

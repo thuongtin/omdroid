@@ -60,5 +60,16 @@
             android:enabled="false"
             tools:replace="android:enabled" />
 
+        <!-- Termux:X11's KeyInterceptor accessibility service, relabelled for this APK.
+             The submodule declares it as "Termux:X11 KeyInterceptor", which is what
+             Settings → Accessibility would show; the label here is the name the user sees
+             when he allows restricted settings for the app, so it has to say Omdroid.
+             Only the label is replaced: the intent-filter, the BIND_ACCESSIBILITY_SERVICE
+             permission and the service config meta-data still come from the library. -->
+        <service
+            android:name="com.termux.x11.utils.KeyInterceptor"
+            android:label="@string/key_capture_label"
+            tools:replace="android:label" />
+
     </application>
 </manifest>

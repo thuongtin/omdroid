@@ -16,6 +16,9 @@
     <string name="error_desktop_not_started">The desktop did not start (%1$s).</string>
     <string name="action_start_again">Start again</string>
     <string name="welcome_toast">Swipe from the top for Omarchy. Access Omdroid settings from the notification.</string>
+    <!-- What Settings → Accessibility calls Termux:X11's KeyInterceptor in this app
+         (see the service redeclaration in AndroidManifest.xml). -->
+    <string name="key_capture_label">Omdroid keyboard capture</string>
 
     <string-array name="ui_scale_entries">
         <item>Auto</item>
