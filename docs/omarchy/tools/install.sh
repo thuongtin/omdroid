@@ -22,6 +22,14 @@ LOCAL_SHA=$(sha256sum "$APK" | cut -d' ' -f1)
 echo "apk $(stat -c %s "$APK") bytes sha256=$LOCAL_SHA"
 
 sh_() { adb -s "$T" shell "$@" 2>/dev/null | tr -d '\r'; }
+# The two grants the app needs after an install, and the proof they landed (r4-input K4):
+# POST_NOTIFICATIONS for the session notification, WRITE_SECURE_SETTINGS for the accessibility
+# service write the launcher does at bootstrap (launch: key-capture ...).
+grants() {
+    sh_ pm grant $PKG android.permission.POST_NOTIFICATIONS
+    sh_ pm grant $PKG android.permission.WRITE_SECURE_SETTINGS
+    echo "GRANTS write_secure_settings granted=$(sh_ dumpsys package $PKG | grep -c 'WRITE_SECURE_SETTINGS: granted=true')"
+}
 installed_sha() {
     local p
     p=$(sh_ pm path $PKG | head -1 | sed 's/^package://')
@@ -54,7 +62,7 @@ echo "== pm install from /data/local/tmp"
 adb -s "$T" push "$APK" /data/local/tmp/omdroid-install.apk 2>&1 | tail -1
 if sh_ pm install -r -t /data/local/tmp/omdroid-install.apk 2>&1 | grep -qx Success; then
     if [ "$(installed_sha)" = "$LOCAL_SHA" ]; then
-        sh_ pm grant $PKG android.permission.POST_NOTIFICATIONS
+        grants
         sh_ rm -f /data/local/tmp/omdroid-install.apk
         echo "INSTALLED sha256=$LOCAL_SHA $(sh_ dumpsys package $PKG | grep -m1 lastUpdateTime | sed 's/^ *//')"
         echo "INSTALL: PASS"
@@ -99,7 +107,7 @@ done
 tap_text '^Done$' || true
 sh_ input keyevent KEYCODE_HOME
 if [ "$ok" = 1 ]; then
-    sh_ pm grant $PKG android.permission.POST_NOTIFICATIONS
+    grants
     sh_ rm -f "$REMOTE"   # 1.7 GB of the user's storage; the next install pushes again
     echo "INSTALLED sha256=$LOCAL_SHA $(sh_ dumpsys package $PKG | grep -m1 lastUpdateTime | sed 's/^ *//')"
     echo "INSTALL: PASS"
