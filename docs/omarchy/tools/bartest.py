@@ -82,7 +82,11 @@ def snap(reset=False):
         d["ws"] = "?"
     layers = []
     try:
-        for level, items in json.loads(sec["j/layers"]).get("levels", {}).items():
+        lj = json.loads(sec["j/layers"])
+        # Hyprland answers {"<monitor>": {"levels": {...}}} — take the first monitor block.
+        block = lj if "levels" in lj else next(
+            (v for v in lj.values() if isinstance(v, dict) and "levels" in v), {})
+        for level, items in block.get("levels", {}).items():
             for it in items:
                 layers.append(it.get("namespace", "?"))
     except Exception:
@@ -141,6 +145,21 @@ def main():
             before["cursor"], after["cursor"],
         )))
         sys.stdout.flush()
+        if new != ["-"]:
+            # A popup appeared: close the Omarchy menu so the next target sees the bare bar. The
+            # keyboard panel has no close command — Escape dismisses it (KeyboardPanel.qml).
+            if any("keyboard-panel" in n for n in new):
+                subprocess.run(["adb", "-s", THE or "", "shell", "input", "keyevent", "111"],
+                               capture_output=True, text=True, timeout=30)
+                print("# dismissed keyboard panel with Escape")
+            for cmd in ("omarchy-menu close", "quickshell ipc call omarchy-menu close"):
+                r = subprocess.run([os.path.join(HERE, "sx.sh"), cmd],
+                                   capture_output=True, text=True, timeout=40)
+                if "rc=0" in r.stdout:
+                    print("# closed %s with %r" % (",".join(new), cmd))
+                    break
+            else:
+                print("# %s stayed open (no close command worked)" % ",".join(new))
 
 
 if __name__ == "__main__":

@@ -45,6 +45,26 @@ if [ "$(installed_sha)" = "$LOCAL_SHA" ]; then
     exit 0
 fi
 
+# Fast path first: the package manager installs straight from /data/local/tmp, with no taps and no
+# DocumentsUI (about 90 s against 4 minutes). It only needs "Install via USB" allowed for the shell,
+# and it must not read the APK from /sdcard: system_server has no SELinux access to fuse
+# ("Unable to open file", seen 2026-11-24). If it refuses, fall through to the on-device installer.
+sh_ appops set com.android.shell REQUEST_INSTALL_PACKAGES allow
+echo "== pm install from /data/local/tmp"
+adb -s "$T" push "$APK" /data/local/tmp/omdroid-install.apk 2>&1 | tail -1
+if sh_ pm install -r -t /data/local/tmp/omdroid-install.apk 2>&1 | grep -qx Success; then
+    if [ "$(installed_sha)" = "$LOCAL_SHA" ]; then
+        sh_ pm grant $PKG android.permission.POST_NOTIFICATIONS
+        sh_ rm -f /data/local/tmp/omdroid-install.apk
+        echo "INSTALLED sha256=$LOCAL_SHA $(sh_ dumpsys package $PKG | grep -m1 lastUpdateTime | sed 's/^ *//')"
+        echo "INSTALL: PASS"
+        exit 0
+    fi
+    echo "pm install said Success but base.apk is $(installed_sha) — falling back"
+fi
+sh_ rm -f /data/local/tmp/omdroid-install.apk
+echo "== falling back to the on-device installer"
+
 sh_ input keyevent KEYCODE_WAKEUP
 sh_ wm dismiss-keyguard
 sh_ am force-stop $PKG
