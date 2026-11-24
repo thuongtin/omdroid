@@ -10,6 +10,12 @@
 
 **Omarchy on unrooted Android, in a single APK.**
 
+> [!WARNING]
+> **Highly experimental.** Omdroid has run on one tablet, no build of it has been
+> released, and part of the current code is unit-tested only. Expect breakage. The guest
+> lives in the app's private storage, so uninstalling the app or clearing its data deletes
+> everything inside it.
+
 Omdroid runs Arch Linux ARM with [Omarchy](https://omarchy.org) -- Hyprland plus the
 Quickshell-based Omarchy shell -- inside an ordinary Android app. It is not a native
 compositor and not a virtual machine. An X server embedded in the app hosts
@@ -27,7 +33,7 @@ under the desktop -- is not in it; the screenshots further down are Android's ow
 
 ## Status
 
-Alpha, and honest about it. It has been run on exactly one device: a Xiaomi Pad 8 Pro
+Highly experimental. It has been run on exactly one device: a Xiaomi Pad 8 Pro
 (model 25091RP04G), Android 16 with HyperOS 3.0, a Snapdragon SM8750P with an Adreno GPU,
 a 3200x2136 panel and 12 GB of RAM. No Omarchy build has been released -- the releases on
 this repository are the older Phoshdroid builds, and this branch is built from source.
