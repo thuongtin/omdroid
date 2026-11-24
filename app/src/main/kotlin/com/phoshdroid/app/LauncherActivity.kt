@@ -533,14 +533,22 @@ class LauncherActivity : AppCompatActivity() {
         // there is no root-side prep script to feed. The launcher prepares the
         // runtime dir (SessionPrep); ProotService writes resolv.conf.
 
-        // Default Termux:X11 to direct-touch input mode — phone users expect finger
-        // taps to act as touches, not move a trackpad cursor. "3" = Direct touch.
+        // Termux:X11 input mode "2" = simulated touch: a finger tap moves the X cursor to
+        // the tap point and injects a real left-button click there, so the desktop sees a
+        // pointer press. Direct touch ("3", XI2 touch events) is what this used to set, but
+        // under cage the guest Hyprland is a Wayland client whose input comes from
+        // aquamarine's Wayland backend, which never creates a touch device (no wl_touch in
+        // aquamarine 0.14.0), so every touch is dropped before any surface sees it: the bar,
+        // menus and windows all ignore a finger. Measured on device in round 4, see
+        // docs/omarchy/r4-touch-report.md. Cost of "2": no true multitouch (two fingers =
+        // wheel scroll or right click, three = middle), long-press is the drag/select path,
+        // and the cursor follows the finger.
         // Also hide the additional keyboard toolbar so phosh owns the full surface
         // height — its lockscreen unlock gesture needs to originate from the bottom edge.
         androidx.preference.PreferenceManager
             .getDefaultSharedPreferences(this)
             .edit()
-            .putString("touchMode", "3")
+            .putString("touchMode", "2")
             // Keep the Termux:X11 shortcut toolbar (ESC, CTRL, arrows, etc.) visible.
             // We carve out a bottom gap below phosh anyway for the edge swipe so the
             // toolbar doesn't overlap phosh's usable area.
