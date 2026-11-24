@@ -1,0 +1,7 @@
+#!/bin/sh
+# Omdroid stub for omamobile-call-watch --observe.
+#
+# Upstream (derekross/omamobile, MIT) watches omatel's agent for an in-progress
+# call. There is no modem, no omatel and no systemd user unit inside proot, so
+# no call line is ever printed and the bar shows no call chip.
+exit 0

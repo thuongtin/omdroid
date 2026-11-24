@@ -1,0 +1,391 @@
+#!/bin/bash
+# Omdroid UI mode for the guest session: mobile (the Omamobile phone pieces
+# vendored in /etc/phoshdroid/omamobile) or desktop (stock Omarchy).
+#
+# start.sh calls this once, before omarchy-plugin-index.sh runs, because the
+# index is built once per session and the shell loads plugins from it.
+#
+# Switch: $HOME/.config/omdroid/ui holding `mobile` or `desktop`.
+# Missing or unreadable means mobile. Nothing here creates or rewrites it.
+#
+# No-clobber rule: every write is key-level and reversible, and a key is only
+# replaced or removed while it still holds exactly what this script wrote. A
+# file the user edited keeps the user's value; the script logs the skip. The
+# values it found before its first write live in
+# $HOME/.local/state/omdroid/ui/prior.*, which is what desktop restores.
+#
+# Dry run: OMDROID_ROOT points the whole script at a scratch copy of the guest
+# tree (root/home/omarchy, root/usr/share/omarchy, root/etc/phoshdroid,
+# root/usr/local/bin) instead of /.
+
+set -u
+
+root="${OMDROID_ROOT:-}"
+if [ -n "$root" ]; then
+  home="$root/home/omarchy"
+  omarchy_path="$root/usr/share/omarchy"
+  etc="$root/etc/phoshdroid"
+  local_bin="$root/usr/local/bin"
+else
+  home="${HOME:-/home/omarchy}"
+  omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
+  etc="/etc/phoshdroid"
+  local_bin="/usr/local/bin"
+fi
+
+config="$home/.config"
+state="$home/.local/state/omdroid/ui"
+mode_file="$config/omdroid/ui"
+theme_file="$config/omarchy/shell.toml"
+shell_json="$config/omarchy/shell.json"
+looknfeel="$config/hypr/looknfeel.lua"
+plugin_dir="$config/omarchy/plugins"
+vendor="$etc/omamobile"
+
+plugin_ids="omamobile.bar omamobile.quicksettings omamobile.launcher omamobile.back omamobile.switcher"
+panel_ids="omamobile.quicksettings omamobile.launcher omamobile.back omamobile.switcher"
+helper_names="omamobile-launch omamobile-home omamobile-browser-setup omamobile-cell-watch omamobile-call-watch"
+
+# The touch-sized theme pass, as section/key/value: a 44 logical px bar, 16 px
+# base type, 44 px control rows. All are shell.toml keys the shell documents
+# (docs/theming.md) and ~/.config/omarchy/shell.toml is the machine-level
+# override the shell watches live across theme switches.
+theme_keys="bar:size-horizontal:44 bar:scale-with-font:false font:base-size:16 spacing:control-height:44"
+
+log() {
+  printf 'omdroid-ui: %s\n' "$*"
+}
+
+# --------------------------------------------------------------- TOML helpers
+# Line-based, like Omarchy's own omarchy-display-text-size: only the named key
+# is touched, comments and ordering elsewhere survive.
+
+toml_value() { # section key -> value on stdout, empty when the key is absent
+  [ -f "$theme_file" ] || return 0
+  awk -v sec="$1" -v key="$2" '
+    /^[[:space:]]*\[/ { insec = ($0 ~ "^[[:space:]]*\\[" sec "\\]"); next }
+    insec && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      v = $0
+      sub(/^[^=]*=[[:space:]]*/, "", v)
+      sub(/[[:space:]]*(#.*)?$/, "", v)
+      print v
+      exit
+    }
+  ' "$theme_file"
+}
+
+toml_set() { # section key value
+  local sec="$1" key="$2" value="$3" tmp
+  [ -f "$theme_file" ] || : > "$theme_file"
+  tmp="$(mktemp "$state/theme.toml.XXXXXX")" || return 1
+  awk -v sec="$sec" -v key="$key" -v value="$value" '
+    function flush() { if (insec && !done) { print key " = " value; done = 1 } }
+    /^[[:space:]]*\[/ {
+      flush()
+      insec = ($0 ~ "^[[:space:]]*\\[" sec "\\]")
+      print
+      next
+    }
+    insec && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      if (!done) { print key " = " value; done = 1 }
+      next
+    }
+    { print }
+    END {
+      if (!done) {
+        if (!insec) {
+          if (NR > 0) print ""
+          print "[" sec "]"
+          insec = 1
+        }
+        print key " = " value
+      }
+    }
+  ' "$theme_file" > "$tmp" && mv -f "$tmp" "$theme_file"
+}
+
+toml_unset() { # section key expected — remove the key only while it holds expected
+  local sec="$1" key="$2" expected="$3" tmp
+  [ -f "$theme_file" ] || return 0
+  tmp="$(mktemp "$state/theme.toml.XXXXXX")" || return 1
+  awk -v sec="$sec" -v key="$key" -v expected="$expected" '
+    /^[[:space:]]*\[/ { insec = ($0 ~ "^[[:space:]]*\\[" sec "\\]"); print; next }
+    insec && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      v = $0
+      sub(/^[^=]*=[[:space:]]*/, "", v)
+      sub(/[[:space:]]*(#.*)?$/, "", v)
+      if (v == expected) next
+    }
+    { print }
+  ' "$theme_file" > "$tmp" && mv -f "$tmp" "$theme_file"
+  # Drop section headers this left empty, then an empty file.
+  tmp="$(mktemp "$state/theme.toml.XXXXXX")" || return 1
+  awk '
+    { lines[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (lines[i] ~ /^[[:space:]]*\[/) {
+          j = i + 1
+          while (j <= NR && lines[j] ~ /^[[:space:]]*$/) j++
+          if (j > NR || lines[j] ~ /^[[:space:]]*\[/) continue
+        }
+        if (lines[i] ~ /^[[:space:]]*$/ && !started) continue
+        if (lines[i] ~ /^[[:space:]]*$/) { if (blank) continue; blank = 1 } else { blank = 0 }
+        started = 1
+        print lines[i]
+      }
+    }
+  ' "$theme_file" > "$tmp" && mv -f "$tmp" "$theme_file"
+  if [ -f "$theme_file" ] && [ -z "$(tr -d '[:space:]' < "$theme_file")" ]; then
+    rm -f "$theme_file"
+    log "removed empty $theme_file"
+  fi
+}
+
+theme_apply() { # mobile|desktop
+  local mode="$1" key section name value current
+  if [ "$mode" = "mobile" ]; then
+    : > "$state/theme.keys.new"
+    for key in $theme_keys; do
+      section="${key%%:*}"
+      name="$(printf '%s' "$key" | cut -d: -f2)"
+      value="${key##*:}"
+      current="$(toml_value "$section" "$name")"
+      if [ -n "$current" ] && [ "$current" != "$value" ]; then
+        # Not ours: the user set this one (or it came from the theme). Left as
+        # it is, in this mode and in desktop.
+        log "shell.toml: [${section}] ${name} = ${current} is not ours; leaving it"
+        continue
+      fi
+      if [ -z "$current" ]; then
+        printf '%s.%s\n' "$section" "$name" >> "$state/theme.keys.new"
+      else
+        grep -qx "$section.$name" "$state/theme.keys" 2>/dev/null && printf '%s.%s\n' "$section" "$name" >> "$state/theme.keys.new"
+      fi
+      toml_set "$section" "$name" "$value"
+    done
+    mv -f "$state/theme.keys.new" "$state/theme.keys"
+    log "shell.toml: mobile sizes applied"
+  else
+    if [ ! -f "$state/theme.keys" ]; then
+      log "shell.toml: nothing to restore"
+      return 0
+    fi
+    while read -r key; do
+      [ -n "$key" ] || continue
+      section="${key%%.*}"
+      name="${key#*.}"
+      value=""
+      for k in $theme_keys; do
+        if [ "${k%%:*}" = "$section" ] && [ "$(printf '%s' "$k" | cut -d: -f2)" = "$name" ]; then
+          value="${k##*:}"
+        fi
+      done
+      [ -n "$value" ] || continue
+      toml_unset "$section" "$name" "$value"
+    done < "$state/theme.keys"
+    rm -f "$state/theme.keys"
+    log "shell.toml: mobile sizes removed"
+  fi
+}
+
+# ------------------------------------------------------------- shell.json ----
+# Surgical jq edits, the same way Omarchy's own omarchy-bar edits this file:
+# only bar.id, bar.quickSettings and our four plugin entries are touched.
+
+shell_json_apply() { # mobile|desktop
+  local mode="$1"
+  [ -f "$shell_json" ] || return 0
+  command -v jq >/dev/null 2>&1 || { log "no jq; shell.json untouched"; return 1; }
+  if [ "$mode" = "mobile" ]; then
+    if [ ! -f "$state/prior.shell-json" ]; then
+      jq -c '{id: (.bar.id // null), quickSettings: (.bar.quickSettings // null)}' \
+        "$shell_json" > "$state/prior.shell-json" || return 1
+    fi
+    local tmp
+    tmp="$(mktemp "$state/shell.json.XXXXXX")" || return 1
+    jq -S --arg bar "omamobile.bar" --arg qs "omamobile.quicksettings" \
+      --argjson panels '["omamobile.quicksettings","omamobile.launcher","omamobile.back","omamobile.switcher"]' '
+      .version = (.version // 1)
+      | .bar = ((.bar // {}) + {id: $bar, quickSettings: $qs})
+      | .plugins = (((.plugins // []) + ($panels | map({id: .}))) | unique_by(.id))
+    ' "$shell_json" > "$tmp" && mv -f "$tmp" "$shell_json" || return 1
+    log "shell.json: bar.id=omamobile.bar, four panels enabled"
+  else
+    local prior
+    if [ -f "$state/prior.shell-json" ]; then
+      prior="$(cat "$state/prior.shell-json")"
+    else
+      prior='{"id":null,"quickSettings":null}'
+    fi
+    local tmp
+    tmp="$(mktemp "$state/shell.json.XXXXXX")" || return 1
+    jq -S --argjson prior "$prior" \
+      --argjson panels '["omamobile.quicksettings","omamobile.launcher","omamobile.back","omamobile.switcher"]' '
+      .bar = (.bar // {})
+      | (if .bar.id == "omamobile.bar" then
+           (if $prior.id == null then del(.bar.id) else .bar.id = $prior.id end)
+         else . end)
+      | (if .bar.quickSettings == "omamobile.quicksettings" then
+           (if $prior.quickSettings == null then del(.bar.quickSettings)
+            else .bar.quickSettings = $prior.quickSettings end)
+         else . end)
+      | (if .bar == {} then del(.bar) else . end)
+      | .plugins = ((.plugins // []) | map(select((.id as $i | $panels | index($i)) | not)))
+    ' "$shell_json" > "$tmp" && mv -f "$tmp" "$shell_json" || return 1
+    rm -f "$state/prior.shell-json"
+    log "shell.json: stock bar and plugin list restored"
+  fi
+}
+
+# ----------------------------------------------------------- Hyprland rules --
+# One marked block appended to the user's looknfeel.lua (additive, never a
+# rewrite of existing lines) and removed whole on desktop.
+
+look_begin='-- >>> omdroid mobile ui >>>'
+look_end='-- <<< omdroid mobile ui <<<'
+
+looknfeel_apply() { # mobile|desktop
+  local mode="$1" tmp
+  if [ "$mode" = "mobile" ]; then
+    if [ ! -f "$looknfeel" ]; then
+      log "no $looknfeel; Hyprland gaps left alone"
+      return 0
+    fi
+    tmp="$(mktemp "$state/looknfeel.lua.XXXXXX")" || return 1
+    awk -v begin="$look_begin" -v end="$look_end" '
+      $0 == begin { skip = 1; next }
+      $0 == end { skip = 0; next }
+      !skip { print }
+    ' "$looknfeel" > "$tmp" || return 1
+    {
+      printf '%s\n' "$look_begin"
+      cat <<'LUA'
+-- Touch-sized, edge to edge: no gaps, no borders, fully opaque windows, and
+-- dialogs centred and capped to the screen. Written by /etc/phoshdroid/omdroid-ui.sh
+-- while ~/.config/omdroid/ui says mobile (or is absent).
+hl.config({ general = { gaps_in = 0, gaps_out = 0, border_size = 0 } })
+hl.window_rule({ match = { class = ".*" }, tag = "-default-opacity", opacity = "1 1" })
+hl.window_rule({
+  match = { modal = true },
+  maximize = false,
+  float = true,
+  center = true,
+  max_size = { "(monitor_w)", "(monitor_h)" },
+})
+LUA
+      printf '%s\n' "$look_end"
+    } >> "$tmp"
+    mv -f "$tmp" "$looknfeel"
+    log "looknfeel.lua: mobile rules in place"
+    sha256sum "$looknfeel" | awk '{print $1}' > "$state/looknfeel.sha256" 2>/dev/null
+  else
+    [ -f "$looknfeel" ] || return 0
+    tmp="$(mktemp "$state/looknfeel.lua.XXXXXX")" || return 1
+    awk -v begin="$look_begin" -v end="$look_end" '
+      $0 == begin { skip = 1; next }
+      $0 == end { skip = 0; next }
+      !skip { print }
+    ' "$looknfeel" > "$tmp" || return 1
+    mv -f "$tmp" "$looknfeel"
+    rm -f "$state/looknfeel.sha256"
+    log "looknfeel.lua: mobile rules removed"
+  fi
+}
+
+# ------------------------------------------------------------- plugin links --
+
+link_plugins() {
+  local id src dst
+  mkdir -p "$plugin_dir"
+  for id in $plugin_ids; do
+    src="$vendor/plugins/$id"
+    dst="$plugin_dir/$id"
+    if [ ! -f "$src/manifest.json" ]; then
+      log "missing vendored plugin $src"
+      continue
+    fi
+    if [ -L "$dst" ]; then
+      [ "$(readlink "$dst")" = "$src" ] && continue
+      ln -sfn "$src" "$dst" && log "relinked $id"
+    elif [ -e "$dst" ]; then
+      log "keeping $dst: a real directory, not our link"
+    else
+      ln -s "$src" "$dst" && log "linked $id"
+    fi
+  done
+}
+
+unlink_plugins() {
+  local id dst
+  for id in $plugin_ids; do
+    dst="$plugin_dir/$id"
+    if [ -L "$dst" ]; then
+      case "$(readlink "$dst")" in
+        "$vendor"/*) rm -f "$dst" && log "unlinked $id" ;;
+        *) log "keeping $dst: not our link" ;;
+      esac
+    fi
+  done
+}
+
+link_helpers() {
+  local name src dst
+  if ! mkdir -p "$local_bin" 2>/dev/null; then
+    log "cannot create $local_bin"
+    return 0
+  fi
+  for name in $helper_names; do
+    src="$vendor/bin/$name"
+    dst="$local_bin/$name"
+    [ -f "$src" ] || continue
+    chmod 755 "$src" 2>/dev/null
+    if [ -L "$dst" ]; then
+      [ "$(readlink "$dst")" = "$src" ] && continue
+      ln -sfn "$src" "$dst" && log "relinked $dst"
+    elif [ -e "$dst" ]; then
+      log "keeping $dst: not our link"
+    else
+      ln -s "$src" "$dst" 2>/dev/null || log "cannot link $dst"
+    fi
+  done
+}
+
+# --------------------------------------------------------------------- main --
+
+mkdir -p "$state" "$config/omdroid" 2>/dev/null
+
+mode="mobile"
+if [ -f "$mode_file" ]; then
+  mode="$(tr -d '[:space:]' < "$mode_file" 2>/dev/null)"
+  case "$mode" in
+    mobile | desktop) ;;
+    "")
+      mode="mobile"
+      ;;
+    *)
+      log "unknown mode '${mode}' in ${mode_file}; using mobile"
+      mode="mobile"
+      ;;
+  esac
+fi
+
+log "mode ${mode} (${mode_file})"
+
+case "$mode" in
+  mobile)
+    theme_apply mobile
+    shell_json_apply mobile
+    looknfeel_apply mobile
+    link_plugins
+    link_helpers
+    ;;
+  desktop)
+    theme_apply desktop
+    shell_json_apply desktop
+    looknfeel_apply desktop
+    unlink_plugins
+    ;;
+esac
+
+exit 0

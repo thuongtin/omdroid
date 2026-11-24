@@ -1,0 +1,7 @@
+#!/bin/sh
+# Omdroid stub for omamobile-browser-setup.
+#
+# Upstream (derekross/omamobile, MIT) fits a phone browser window to the screen
+# by rewriting the browser profile. Omdroid boots no browser profile of its own
+# and the bar runs this at every load, so the stub does nothing and succeeds.
+exit 0

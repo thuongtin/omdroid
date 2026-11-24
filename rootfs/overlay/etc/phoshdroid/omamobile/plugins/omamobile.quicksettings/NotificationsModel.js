@@ -1,0 +1,225 @@
+// SPDX-License-Identifier: MIT
+// The notification shade under the quick-settings sheet: Omarchy's
+// notification history, read from the files its notification service keeps.
+// Pure functions, so QuickSettings.qml can render plain objects and Node can
+// test them in test/notifications-model.js through module.exports.
+//
+// Omarchy's service (shell/plugins/notifications/Service.qml) writes one
+// single-line JSON file per notification: in ~/.local/state/omarchy/
+// notifications/ while its toast is on screen, then moved into history/
+// when it expires, is dismissed or is acted on, trimmed to the newest ten.
+// "This directory IS the history", as the service says; its IPC can replay
+// it as toasts (showHistory) but has no call that returns it. Each file is
+// named <timestamp>-<id>.json, the timestamp in milliseconds since the epoch.
+// One notification is taken away by that name through the service's forget
+// call (omamobile-omarchy patch 0019), never by deleting the file here.
+//
+// Omarchy 4.5 keeps the same notifications in two files instead (its
+// shell/plugins/notifications/Store.js): live.json, the toasts on screen,
+// and history.json, the closed ones, newest first. Each is one line, a JSON
+// array of rows named by a `key` ("n" and base-36 digits), with `ts`, when
+// the notification arrived, in seconds. Its forget call (patch 0019 for
+// 4.5) takes that key. parse() reads either layout: a line holding an array
+// is 4.5's, a line holding an object is one 4.0 file.
+
+var LIMIT = 10
+
+function str(value) {
+  return value === undefined || value === null ? "" : String(value)
+}
+
+// The body as one line of plain text. Omarchy keeps the sender's markup
+// (b, i, u, a and entities) and styles it when it draws a toast; the shade
+// shows text only.
+function plainBody(body) {
+  return str(body)
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"")
+    .replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+// Omarchy's own toasts carry their click action as a JSON argv (the
+// omarchy-exec-argv hint), which the files keep. The same structural check
+// as Omarchy's parseExecArgv: a non-empty array of strings whose program is
+// not empty and doesn't start with a dash. Null for anything else.
+function execArgv(value) {
+  var text = str(value)
+  if (!text) return null
+  var list = null
+  try { list = JSON.parse(text) } catch (error) { return null }
+  if (!Array.isArray(list) || list.length === 0) return null
+  for (var i = 0; i < list.length; i++)
+    if (typeof list[i] !== "string") return null
+  if (list[0] === "" || list[0].charAt(0) === "-") return null
+  return list
+}
+
+function entry(value) {
+  var v = value || {}
+  var timestamp = Number(v.timestamp || 0)
+  if (!isFinite(timestamp) || timestamp < 0) timestamp = 0
+  var id = v.originalId || v.id || 0
+  return {
+    key: String(timestamp) + "-" + String(id),
+    // The service's own name for the file (popupFileName: <timestamp>-
+    // <originalId>.json), which its forget call takes.
+    file: String(timestamp) + "-" + String(Number(v.originalId) || 0) + ".json",
+    app: str(v.app),
+    summary: str(v.summary).trim(),
+    body: plainBody(v.body),
+    glyph: str(v.glyph),
+    execArgv: str(v.execArgv),
+    urgency: typeof v.urgency === "number" ? v.urgency : 1,
+    timestamp: timestamp
+  }
+}
+
+// One row of Omarchy 4.5's live.json or history.json, in the shape entry()
+// gives a 4.0 file: the key is the row's own, and so is the name forget
+// takes (`file`); `ts` turns into milliseconds. Null for anything that
+// isn't a row with a key 4.5 itself would accept (Store.js KEY).
+function storeEntry(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  var key = str(value.key)
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(key)) return null
+  var ts = Number(value.ts)
+  var timestamp = isFinite(ts) && ts > 0 ? Math.round(ts * 1000) : 0
+  return {
+    key: key,
+    file: key,
+    app: str(value.app),
+    summary: str(value.summary).trim(),
+    body: plainBody(value.body),
+    glyph: str(value.glyph),
+    execArgv: str(value.execArgv),
+    urgency: typeof value.urgency === "number" ? value.urgency : 1,
+    timestamp: timestamp
+  }
+}
+
+// The concatenation of every history and on-screen file (`awk 1` over both
+// directories on 4.0, live.json and history.json on 4.5), newest first,
+// each notification once (a toast moving into history can be read in both
+// places), at most `limit`. Torn lines from a crash mid-write are skipped,
+// as Omarchy skips them.
+function parse(raw, limit) {
+  var max = typeof limit === "number" ? Math.max(0, limit) : LIMIT
+  var lines = str(raw).split("\n")
+  var seen = {}
+  var out = []
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim()
+    if (!line) continue
+    var value = null
+    try { value = JSON.parse(line) } catch (error) { continue }
+    var rows
+    if (Array.isArray(value)) rows = value.map(storeEntry)
+    else if (value && typeof value === "object") rows = [entry(value)]
+    else continue
+    for (var j = 0; j < rows.length; j++) {
+      var e = rows[j]
+      if (!e || (!e.summary && !e.body)) continue
+      if (seen[e.key]) continue
+      seen[e.key] = true
+      out.push(e)
+    }
+  }
+  out.sort(function(a, b) { return b.timestamp - a.timestamp })
+  return out.slice(0, max)
+}
+
+// What the shade shows: parse(), less the notifications swiped away.
+// `hidden` maps an entry's key to when it was swiped (ms). The service
+// deletes its file a moment later, so until a read no longer finds the
+// file, the row stays out; a mark older than graceMs (a forget that never
+// happened, say on an Omarchy without the forget call) lapses, and the row
+// comes back rather than staying hidden for a notification that is still
+// there. Returns the rows, the marks still needed and the forget name of
+// every notification read, shown or not (Clear all on 4.5 forgets them).
+function shown(raw, hidden, now, graceMs) {
+  var marks = hidden || {}
+  var grace = typeof graceMs === "number" ? graceMs : 15000
+  var all = parse(raw, Infinity)
+  var present = {}
+  for (var i = 0; i < all.length; i++) present[all[i].key] = true
+  var kept = {}
+  for (var key in marks) {
+    if (!marks.hasOwnProperty(key) || !present[key]) continue
+    if (Number(now) - Number(marks[key]) <= grace) kept[key] = marks[key]
+  }
+  var out = all.filter(function(e) { return !kept.hasOwnProperty(e.key) })
+  return { entries: out.slice(0, LIMIT), hidden: kept, files: all.map(function(e) { return e.file }) }
+}
+
+function without(entries, key) {
+  return (entries || []).filter(function(e) { return e && e.key !== key })
+}
+
+// How a sideways swipe on a row ends: -1 or 1 to fly off that side and
+// take the notification away, 0 to spring back. Past 35% of the row's
+// width, or a flick the same way at flingSpeed px/s or faster once it has
+// moved a tenth of the width (as Omarchy's toasts, patch 0017).
+function swipeOutcome(offset, velocity, width, flingSpeed) {
+  var w = Number(width), x = Number(offset), v = Number(velocity) || 0
+  if (!(w > 0) || !isFinite(x) || x === 0) return 0
+  var distance = Math.abs(x)
+  var flung = v * x > 0 && Math.abs(v) >= Number(flingSpeed) && distance >= w * 0.1
+  if (distance >= w * 0.35 || flung) return x < 0 ? -1 : 1
+  return 0
+}
+
+function newest(entries) {
+  var most = 0
+  var list = entries || []
+  for (var i = 0; i < list.length; i++)
+    if (list[i] && list[i].timestamp > most) most = list[i].timestamp
+  return most
+}
+
+// What a tap on a row runs: the toast's own action when Omarchy gave it one,
+// otherwise Omarchy's focus helper for the sending app (what a click on a
+// toast without a live action does). Null when there is nothing to do.
+function tapArgv(e) {
+  if (!e) return null
+  var argv = execArgv(e.execArgv)
+  if (argv) return argv
+  if (e.app) return ["omarchy-hyprland-focus-app", e.app]
+  return null
+}
+
+// How long ago, in a few characters: "now", "5 min", "3 h", "2 d".
+function ago(timestamp, now) {
+  var ms = Number(now) - Number(timestamp)
+  if (!isFinite(ms) || Number(timestamp) <= 0) return ""
+  var minutes = Math.floor(Math.max(0, ms) / 60000)
+  if (minutes < 1) return "now"
+  if (minutes < 60) return minutes + " min"
+  var hours = Math.floor(minutes / 60)
+  if (hours < 24) return hours + " h"
+  return Math.floor(hours / 24) + " d"
+}
+
+function title(count) {
+  return count > 0 ? "Notifications · " + count : "Notifications"
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    LIMIT: LIMIT,
+    plainBody: plainBody,
+    execArgv: execArgv,
+    entry: entry,
+    storeEntry: storeEntry,
+    parse: parse,
+    shown: shown,
+    without: without,
+    swipeOutcome: swipeOutcome,
+    newest: newest,
+    tapArgv: tapArgv,
+    ago: ago,
+    title: title
+  }
+}

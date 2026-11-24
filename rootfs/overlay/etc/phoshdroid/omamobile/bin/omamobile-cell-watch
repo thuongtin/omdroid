@@ -1,0 +1,8 @@
+#!/bin/sh
+# Omdroid stub for omamobile-cell-watch.
+#
+# Upstream (derekross/omamobile, MIT) streams ModemManager state as key=value
+# lines and the status bar parses them. proot has no modem and no ModemManager,
+# so printing nothing leaves the bar with no carrier icon, which is the truth.
+# Exit 0 (not an error) so the plugin's 5 s restart stays a silent fork.
+exit 0

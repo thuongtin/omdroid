@@ -63,8 +63,9 @@ android {
 }
 
 // The guest scripts travel with the APK (R3 H13). Keep this list identical to the
-// "Applying overlay" block in rootfs/package-omarchy-rootfs.sh: the same five
-// scripts plus fake-proc/, installed into the guest's /etc/phoshdroid/.
+// "Applying overlay" block in rootfs/package-omarchy-rootfs.sh: the same guest
+// scripts, fake-proc/, the UI-mode installer and the vendored Omamobile tree,
+// installed into the guest's /etc/phoshdroid/.
 // GuestOverlay.sync then rewrites whatever differs under
 // <prefix>/var/lib/proot-distro/installed-rootfs/omarchy before a session starts,
 // so an APK update reaches an existing install without wiping app data.
@@ -74,6 +75,8 @@ val syncGuestOverlay =
     tasks.register<Sync>("syncGuestOverlay") {
         from(rootProject.file("rootfs/overlay/etc/phoshdroid")) {
             include("start.sh", "session-child.sh", "omarchy-plugin-index.sh", "fit-x11.py", "omarchy-watch.py")
+            include("omdroid-ui.sh")
+            include("omamobile/**")
             include("fake-proc/**")
         }
         into(guestOverlayAssetDir.map { it.dir("etc/phoshdroid") })

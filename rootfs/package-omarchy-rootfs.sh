@@ -71,9 +71,23 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/omarchy-plugin-index.sh" "$WORK/stage/etc/pho
 cp -a "$OVERLAY_DIR/etc/phoshdroid/fit-x11.py" "$WORK/stage/etc/phoshdroid/fit-x11.py"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omarchy-watch.py" "$WORK/stage/etc/phoshdroid/omarchy-watch.py"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/fake-proc" "$WORK/stage/etc/phoshdroid/fake-proc"
+# UI mode: the switch reader/installer plus the Omamobile plugin trees it links
+# into ~/.config/omarchy/plugins at session start (docs/omarchy/r5-mobile-ui-report.md).
+cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-ui.sh" "$WORK/stage/etc/phoshdroid/omdroid-ui.sh"
+cp -a "$OVERLAY_DIR/etc/phoshdroid/omamobile" "$WORK/stage/etc/phoshdroid/omamobile"
 chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/session-child.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-plugin-index.sh" \
-    "$WORK/stage/etc/phoshdroid/omarchy-watch.py"
+    "$WORK/stage/etc/phoshdroid/omarchy-watch.py" \
+    "$WORK/stage/etc/phoshdroid/omdroid-ui.sh"
+# The vendored helpers go on the session PATH through /usr/local/bin, so the
+# bar and the launcher find them by bare name. The symlinks are image-time; the
+# scripts they point at are APK-synced into /etc/phoshdroid every start.
+chmod 755 "$WORK/stage/etc/phoshdroid/omamobile/bin"/*
+mkdir -p "$WORK/stage/usr/local/bin"
+for helper in omamobile-launch omamobile-home omamobile-browser-setup \
+    omamobile-cell-watch omamobile-call-watch; do
+    ln -sfn "/etc/phoshdroid/omamobile/bin/$helper" "$WORK/stage/usr/local/bin/$helper"
+done
 
 # The nested parent compositor. The bundle ships weston 14's patched x11 module
 # for the Termux host, but this project runs the parent INSIDE the guest, and

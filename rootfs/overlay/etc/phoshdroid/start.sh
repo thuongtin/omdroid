@@ -56,6 +56,13 @@ export XWAYLAND_NO_GLAMOR=1 NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
 mkdir -p /run/user/1000
 rm -f /run/user/1000/wayland-omarchy /run/user/1000/wayland-omarchy.lock
 
+# UI mode for this session: mobile (the Omamobile phone shell pieces vendored in
+# /etc/phoshdroid/omamobile) or the stock desktop. Reads $HOME/.config/omdroid/ui
+# and installs or removes the theme sizes, the Hyprland rules and the plugin
+# links, so the index built below sees the right plugin set. One line on
+# purpose: all of it lives in omdroid-ui.sh.
+bash /etc/phoshdroid/omdroid-ui.sh
+
 # Build the shell plugin index for this session. In proot mode Quickshell reads
 # this file instead of scanning, and upstream writes it only when uname -r
 # reports PRoot, which proot-distro does not. Without it the shell loads with
