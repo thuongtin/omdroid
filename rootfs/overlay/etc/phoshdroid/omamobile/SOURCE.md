@@ -25,8 +25,8 @@ stands on hardware, systemd or a service proot does not have (see the R5 researc
 
 ## Local changes
 
-**Upstream files are unmodified.** The five plugin trees and both `bin/` scripts are
-byte-identical to the commit above. Everything Omdroid needed was added beside them:
+**Upstream files are byte-identical to the commit above, except the ones listed under
+"Changed upstream files".** Everything else Omdroid needed was added beside them:
 
 | Added file | Why |
 |---|---|
@@ -34,6 +34,15 @@ byte-identical to the commit above. Everything Omdroid needed was added beside t
 | `bin/omamobile-cell-watch` | stub; no modem and no ModemManager inside proot. Prints nothing, so the bar shows no carrier icon instead of a restarting process that errors. |
 | `bin/omamobile-call-watch` | stub; no `omatel-agent` and no systemd user units. Same reason. |
 | `SOURCE.md` | this file |
+
+### Changed upstream files
+
+One line per upstream file Omdroid edits, with the device evidence that forced it
+(`docs/omarchy/r5-mobile-ui-device-report.md`).
+
+| File | Change | Why |
+|---|---|---|
+| `plugins/omamobile.switcher/Switcher.qml` | A card's `ScreencopyView` sits in a `Loader` and is created only when `OMARCHY_PROOT` is not `1`; under proot the card shows the app's icon and the window's title instead (`liveCopies`, `iconFor`). | Hyprland under proot offers `zwp_linux_dmabuf_v1` at version 3. Creating a `ScreencopyView` (one per open window, even with the switcher closed) makes Quickshell send `get_default_feedback`, a version 4 request: `wl_display` error, "Wayland connection experienced a fatal error", and the whole shell exits the moment any app opens. |
 
 Two upstream frictions were resolved without touching upstream code:
 

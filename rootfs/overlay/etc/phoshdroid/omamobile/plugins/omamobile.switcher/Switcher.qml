@@ -234,6 +234,16 @@ Item {
     return appName(toplevel)
   }
 
+  // Omdroid: live window copies (ScreencopyView) only outside proot; see the
+  // card. The icon is the one the drawer shows for the app's desktop entry.
+  readonly property bool liveCopies: Quickshell.env("OMARCHY_PROOT") !== "1"
+  function iconFor(toplevel) {
+    if (!toplevel) return ""
+    var entry = SwitcherModel.entryFor(toplevel.appId, DesktopEntries.applications.values || [])
+    var found = entry && entry.icon ? Quickshell.iconPath(entry.icon, true) : ""
+    return found || Quickshell.iconPath("application-x-executable", true)
+  }
+
   readonly property color foreground: Commons.Color.menu.text
   readonly property int touch: Math.max(44, Style.space(44))
 
@@ -385,15 +395,62 @@ Item {
           border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
           opacity: 1 - Math.min(0.8, Math.abs(drag.lift) / height)
 
-          ScreencopyView {
+          // Omdroid: a live copy only where the compositor can serve one. Under
+          // proot (OMARCHY_PROOT=1) Hyprland offers zwp_linux_dmabuf_v1 at
+          // version 3, and merely creating a ScreencopyView makes Quickshell
+          // ask it for get_default_feedback (version 4): a protocol error that
+          // ends the whole shell as soon as any window is open. There the card
+          // shows the app's icon and the window's title instead.
+          Loader {
             anchors.fill: parent
             anchors.margins: card.border.width
-            // No live copy of a window that is about to be closed: with the copy
-            // still running, the compositor ended it with the window and the
-            // shell's next request was a protocol error, which took the whole
-            // shell down (it restarted, home screen and all).
-            captureSource: root.opened && !root.closingAll && !card.closing ? slot.modelData : null
-            live: true
+            sourceComponent: root.liveCopies ? liveCopy : appFace
+          }
+
+          Component {
+            id: liveCopy
+            ScreencopyView {
+              // No live copy of a window that is about to be closed: with the copy
+              // still running, the compositor ended it with the window and the
+              // shell's next request was a protocol error, which took the whole
+              // shell down (it restarted, home screen and all).
+              captureSource: root.opened && !root.closingAll && !card.closing ? slot.modelData : null
+              live: true
+            }
+          }
+
+          Component {
+            id: appFace
+            Item {
+              Image {
+                id: faceIcon
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -Style.space(18)
+                width: Math.round(Math.min(parent.width, parent.height) * 0.3)
+                height: width
+                sourceSize.width: width
+                sourceSize.height: height
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                source: root.iconFor(slot.modelData)
+              }
+              Text {
+                anchors.top: faceIcon.bottom
+                anchors.topMargin: Style.space(16)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.margins: Style.space(16)
+                textFormat: Text.PlainText
+                text: slot.modelData ? (slot.modelData.title || "") : ""
+                horizontalAlignment: Text.AlignHCenter
+                maximumLineCount: 2
+                wrapMode: Text.Wrap
+                elide: Text.ElideRight
+                color: Qt.darker(root.foreground, 1.3)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+            }
           }
 
           // Tap to switch; hold for "Show with…" and "Move to its own screen".
