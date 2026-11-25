@@ -395,11 +395,10 @@ def run_pty(conn, argv, cwd, env, pw, spec):
     controlling = {"ok": True}
 
     def preexec():
+        # A failure here is reported back through Popen and handled by the retry
+        # below: the flag must be set in the PARENT, never in this forked child.
         os.setsid()
-        try:
-            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-        except OSError:
-            controlling["ok"] = False
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     try:
         try:
