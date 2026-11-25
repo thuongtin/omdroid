@@ -12,7 +12,7 @@ Scratch: `<scratch>/omarchy/r5/touch-device/`.
 | D0 device, stay-awake, `probe.sh -q` on the installed build | **PASS** | keyguard not showing, awake; `stay_on_while_plugged_in` was `0`, set `2` (read back `2`); installed base.apk `0a229e1a…1f80` (0.0.14-alpha + round-5 mobile UI); `probe.sh` `VERDICT: PASS` (root 3200x1971, monitor 1600x985 @2); baseline `j/devices` `touch: []`; Hyprland maps the image library sha `8a2a2cbe…135e` |
 | D1 new library loaded on the device (no APK change), `wl_touch` listed | **PASS** | image library renamed over (backup `files/r5-touch-backup/…orig`, sha `8a2a2cbe`); cold start handover +9.7 s, desktop PASS +9.2 s; `j/devices` **`touch: ["wl_touch"]`** (was `[]`); Hyprland maps inode 98028 = the new 1 775 168-byte file (sha `8514d2a6…`); `probe.sh -q` PASS; bar tap (mode 2 click) at 1600,44 opens `omamobile-quicksettings`, Escape closes it |
 | D2 delivery change + `touchMode = "3"`, gates, build, install | **PASS** | commits `27192a8` (build) + `73b7a0b` (feat); gate `compileDebugKotlin test lintDebug` BUILD SUCCESSFUL, `unit tests 63 failed 0`; `assembleDebug` 20 s, APK 1 715 699 122 B sha `56db6d52…8ba4`, carries `assets/guest-overlay/etc/phoshdroid/lib/libaquamarine.so.13` sha `8514d2a6…`; `install.sh` → `INSTALL: PASS` (installed sha = local); D1 swap undone first (`/opt` library back to `8a2a2cbe…`) |
-| D3 real touch proven (devices, positions, bar 9/9, focus, gestures, long press, two fingers) | **PASS** | `touch: [wl_touch]`, Hyprland maps `/etc/phoshdroid/lib/libaquamarine.so.13` (device sha = repo); positions 8/8 within **1 screen px** (constant −1 px from the X11 hop, no scale, no mirror); desktop bar **9/9** react to a touch tap (8 changes + ws1 tapped while active); focus by tap moves focus and `r5typed` lands only in the tapped window; mobile gestures **7/7** with quick swipes (back x=20 and x=3, pill home, dock → switcher, card flick closes, card tap, QS pull-down); card long press opens its actions; foot scrolls on a drag; **2 simultaneous touch points** reach a client (uinput MT screen) |
+| D3 real touch proven (devices, positions, bar 9/9, focus, gestures, long press, two fingers) | **PASS** | `touch: [wl_touch]`, Hyprland maps `/etc/phoshdroid/lib/libaquamarine.so.13` (device sha = repo); positions 8/8 within **1 screen px** (constant −1 px from the X11 hop, no scale, no mirror); desktop bar **9/9** react to a touch tap (ws1 checked from ws 3); focus by tap moves focus and `r5typed` lands only in the tapped window; mobile gestures **7/7** with quick swipes (back x=20 and x=3, pill home, dock → switcher, card flick closes, card tap, QS pull-down); card long press opens its actions; foot scrolls on a drag; **2 simultaneous touch points** reach a client (uinput MT screen) |
 | D4 regressions (keyboard, size change, desktop mode) | **PASS** | uhid SUPER+2: workspace 1 → **2**, SUPER+1 back, Android top unchanged; rotation to portrait: probe PASS (root 2136x3035 → 1068x1517), Hyprland pid 7641 unchanged, quickshell 7707 → 14466 (shell-only restart); `screen.sh reset`: probe PASS 3200x1971, density 352, auto-rotate on; desktop mode cold start PASS, stock bar, bar taps work by touch |
 | D5 decision: which `touchMode` ships | **`"3"` ships** | every D3 row passed on the D2 APK; nothing to revert |
 | D6 clean up | **PASS** | mode file removed (missing = mobile, as found), cold start PASS (mobile layers, clients 0); `stay_on_while_plugged_in` restored and read back **0**; containers `omdroid-aq-build`, `omdroid-aquamarine-builder` removed (no rebuild was needed), images kept; `probe.sh -q` PASS |
@@ -216,7 +216,7 @@ Hyprland default, so the touch workspace swipe is off in this config and was not
 | target (x) | ws | new layer | verdict |
 |---|---|---|---|
 | Omarchy button (45) | 1→1 | **`omarchy-menu`** | reacts |
-| workspace 1 (87) | 1→1 | - | tapped while workspace 1 was already active (no change expected) |
+| workspace 1 (87) | 3→**1** | - | reacts (checked from workspace 3 in a second desktop cold start, since 1 was already active in the sweep) |
 | workspace 2 (128) | 1→**2** | - | reacts |
 | workspace 3 (170) | 1→**3** | - | reacts |
 | workspace 4 (211) | 1→**4** | - | reacts |
@@ -229,6 +229,11 @@ Round 4 measured 0/9 in this mode before the patch. The cursor follows each touc
 3052 → 1525,12), the same −1 px as D3.2. In mobile mode the bar is one touch target (tap toggles
 quick settings, a pull opens it, `Bar.qml:450-466`): tap → `omamobile-quicksettings` (pre-check
 and D3.5).
+
+The ws1 check: stay-awake set to 2 again for it, `printf desktop > ~/.config/omdroid/ui`,
+`coldstart.sh 1 --tag ws1-desktop` (PASS), `hl.dsp.focus({ workspace = "3" })` → ws 3, touch tap
+87,26 → **ws 1**; mode file removed, `coldstart.sh 1 --tag ws1-mobile` → mobile layers, clients 0,
+`VERDICT: PASS`; stay-awake restored, read back `0`.
 
 **D3.4 focus by tap, typing.** Desktop mode, two byte-logger windows (`foot --app-id=r5a|r5b`
 running `/tmp/r5-bytelog.py`). `focustest.py touch`: `active_before=r5b` → tap 805,1011 →
