@@ -126,3 +126,20 @@ mobile mode, no test windows, stay-awake restored, `probe.sh -q` PASS.
 
 Final reply, at most 10 lines: S0-S7 with the decisive fact each, what still fails under sudo,
 the commits, the final APK sha256.
+
+
+---
+
+## AMENDMENT (parent, after launch): no device in this round; Phil tests the build by hand
+
+The tablet is not connected and Phil will test manually. So:
+- Skip every device step: no adb, no waiting for the tablet. S0 and S5 become `PENDING (Phil's
+  manual test)` rows; instead, write in the report a "Manual test for Phil" section: 8-10 short
+  steps he can do in a foot window on the tablet (what to type, what he must see), covering the
+  S5 list, plus how to read the broker's log if something fails (where it logs, one command).
+- Make the broker log to a file the user can read (e.g. `/tmp/omdroid-root/rootd.log`, one line
+  per request: time, argv[0], exit code) and the app log its start/exit to logcat as specified.
+- Do S1-S4 and S6-S7 as written. After S4, copy the APK to
+  `<scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk` and put its sha256 and the
+  commit it was built from in the report and your final reply. Do not delete or overwrite
+  `app/build/outputs/apk/debug/omdroid-0.0.15-alpha.apk` (the published release's file).
