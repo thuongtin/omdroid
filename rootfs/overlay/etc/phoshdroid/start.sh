@@ -61,6 +61,15 @@ export XWAYLAND_NO_GLAMOR=1 NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
 chmod 755 /etc/phoshdroid/sudo
 ln -sfn /etc/phoshdroid/sudo /usr/local/bin/sudo
 
+# build tools: makepkg calls fakeroot for its package step, and real fakeroot
+# needs SysV IPC, which Android does not have. The shim sends that step to the
+# same root broker instead. yay is the AUR helper the Omarchy scripts expect;
+# the shim installs yay-bin on first use. Both are linked here for the same
+# reason as sudo: an updated install rewrites /etc/phoshdroid only.
+chmod 755 /etc/phoshdroid/fakeroot /etc/phoshdroid/yay
+ln -sfn /etc/phoshdroid/fakeroot /usr/local/bin/fakeroot
+ln -sfn /etc/phoshdroid/yay /usr/local/bin/yay
+
 mkdir -p /run/user/1000
 rm -f /run/user/1000/wayland-omarchy /run/user/1000/wayland-omarchy.lock
 

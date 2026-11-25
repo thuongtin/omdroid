@@ -129,7 +129,27 @@ PENDING
 
 ## Y3. Host gate
 
-PENDING
+PASS.
+
+```
+$ ./gradlew :app:compileDebugKotlin :app:test :app:lintDebug --console=plain
+BUILD SUCCESSFUL in 2s
+325 actionable tasks: 19 executed, 306 up-to-date
+$ python3 docs/omarchy/tools/unit-count.py
+unit tests 98 failed 0
+```
+
+98, not the brief's 69: while this round was running, a parallel session committed the dock
+work (`d1bd409 feat(launcher): dock state, UI-mode pin and target-display geometry`, which
+added `DockStateTest` with 10 cases and grew `DisplayGeometryTest`/`UiModeTest`), so the
+tree the gate ran on carries 29 more tests than the r6-sudo report's 69. `unit-count.py`
+counts only `testDebugUnitTest`, so the number is the tree's, not a double count.
+
+One flake on the first attempt, unrelated to this change: `:app:lintDebug` died with
+`Cannot access output property 'partialResultsDirectory' ... NoSuchFileException:
+app/build/intermediates/android_test_lint_partial_results/debug/lintAnalyzeDebugAndroidTest/out/lint-partial.xml`
+— a stale Gradle intermediates directory. Removing that directory and re-running the same
+command turned it green.
 
 ## Y4. Build
 
@@ -137,7 +157,16 @@ PENDING
 
 ## Y5. README
 
-PENDING
+PASS.
+
+- `Known limits`: the `sudo` paragraph is followed by a `yay` paragraph — the shim, what the
+  first call installs (`yay-bin`, a prebuilt aarch64 binary, plus `base-devel` and `git` from
+  `core`), that it needs the network and takes a few minutes, where the log is, that `makepkg`
+  works because `fakeroot` is a shim to the same broker (real fakeroot needs SysV IPC Android
+  does not have), and the `arch=('x86_64')` refusal with `yay --mflags --ignorearch` as the
+  escape hatch and its warning.
+- `Not verified yet`: the sudo bullet's harness count is now 34 (7 fakeroot cases), and a new
+  bullet says exactly what the container run does not prove.
 
 ## Y6. Report
 

@@ -79,6 +79,12 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/omamobile" "$WORK/stage/etc/phoshdroid/omamob
 # the sudo client (docs/omarchy/launch-contract.md section 7).
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-rootd.py" "$WORK/stage/etc/phoshdroid/omdroid-rootd.py"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/sudo" "$WORK/stage/etc/phoshdroid/sudo"
+# Build tools: the client half of the broker protocol, the fakeroot shim makepkg
+# calls for packaging, and the yay shim that installs yay-bin on first use
+# (docs/omarchy/r6b-yay-report.md).
+cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid_root.py" "$WORK/stage/etc/phoshdroid/omdroid_root.py"
+cp -a "$OVERLAY_DIR/etc/phoshdroid/fakeroot" "$WORK/stage/etc/phoshdroid/fakeroot"
+cp -a "$OVERLAY_DIR/etc/phoshdroid/yay" "$WORK/stage/etc/phoshdroid/yay"
 # aquamarine with wl_touch (lib/README.md). start.sh puts /etc/phoshdroid/lib first
 # in LD_LIBRARY_PATH; the image copy in /opt/omarchy-android/aquamarine stays as is.
 cp -a "$OVERLAY_DIR/etc/phoshdroid/lib" "$WORK/stage/etc/phoshdroid/lib"
@@ -87,7 +93,10 @@ chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/sess
     "$WORK/stage/etc/phoshdroid/omarchy-watch.py" \
     "$WORK/stage/etc/phoshdroid/omdroid-ui.sh" \
     "$WORK/stage/etc/phoshdroid/omdroid-rootd.py" \
-    "$WORK/stage/etc/phoshdroid/sudo"
+    "$WORK/stage/etc/phoshdroid/omdroid_root.py" \
+    "$WORK/stage/etc/phoshdroid/sudo" \
+    "$WORK/stage/etc/phoshdroid/fakeroot" \
+    "$WORK/stage/etc/phoshdroid/yay"
 # The vendored helpers go on the session PATH through /usr/local/bin, so the
 # bar and the launcher find them by bare name. The symlinks are image-time; the
 # scripts they point at are APK-synced into /etc/phoshdroid every start.
@@ -100,6 +109,11 @@ done
 # sudo: image-time link; start.sh relinks it every session so an updated
 # install whose overlay sync only rewrote /etc/phoshdroid picks it up too.
 ln -sfn "/etc/phoshdroid/sudo" "$WORK/stage/usr/local/bin/sudo"
+# fakeroot and yay: same pattern. /usr/local/bin comes first in the session
+# PATH, so the shims win over the real fakeroot that base-devel installs and
+# over any /usr/bin/yay the AUR package leaves behind.
+ln -sfn "/etc/phoshdroid/fakeroot" "$WORK/stage/usr/local/bin/fakeroot"
+ln -sfn "/etc/phoshdroid/yay" "$WORK/stage/usr/local/bin/yay"
 
 # The nested parent compositor. The bundle ships weston 14's patched x11 module
 # for the Termux host, but this project runs the parent INSIDE the guest, and
