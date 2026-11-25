@@ -404,25 +404,56 @@ the `Mount /sdcard` switch.
 
 ## Credits
 
-Omdroid stands on work done by other people:
+Omdroid is glue around other people's open source work. The projects it is built on, and the
+licence each is distributed under:
 
-- [**BlackFireAlex/omarchy-android**](https://github.com/BlackFireAlex/omarchy-android)
-  -- the Arch Linux ARM guest payload and the patched Hyprland, aquamarine and Mesa
-  builds. Its bundle ships an MIT licence.
-- [**Omarchy**](https://omarchy.org) -- the shell, themes and commands the guest runs;
-  [**Quickshell**](https://quickshell.org) -- the QML toolkit that shell is built on.
+**The desktop**
+
+- [**Omarchy**](https://github.com/basecamp/omarchy) ([omarchy.org](https://omarchy.org)) --
+  the desktop itself: the shell, themes, menus, commands and Hyprland configuration the guest
+  runs. MIT.
+- [**BlackFireAlex/omarchy-android**](https://github.com/BlackFireAlex/omarchy-android) -- the
+  work that made Omarchy run under proot on Android at all: the Arch Linux ARM guest image, the
+  proot compatibility fixes, and the patched Hyprland, aquamarine and Mesa builds Omdroid ships
+  in its guest. MIT.
+- [**Hyprland**](https://github.com/hyprwm/Hyprland) -- the Wayland compositor, run nested.
+  BSD-3-Clause.
+- [**aquamarine**](https://github.com/hyprwm/aquamarine) -- Hyprland's backend library.
+  BSD-3-Clause. Omdroid ships it with two patches, the second adding the Wayland touch device
+  (`rootfs/patches/aquamarine/`, `rootfs/overlay/etc/phoshdroid/lib/`).
+- [**Quickshell**](https://quickshell.org) -- the QML shell toolkit the Omarchy shell is built
+  on. LGPL-3.0. It runs on [**Qt 6**](https://www.qt.io/) (LGPL-3.0 / GPL-3.0).
+- [**Mesa**](https://mesa3d.org), through
+  [**lfdevs/mesa-for-android-container**](https://github.com/lfdevs/mesa-for-android-container)
+  -- the Turnip/freedreno GPU drivers that talk to the Adreno GPU through KGSL. MIT and
+  BSD-3-Clause.
 - [**Omamobile**](https://github.com/derekross/omamobile) -- the phone bar, quick settings,
-  launcher, back gesture and recent-apps switcher, MIT; five plugin trees are vendored, with
-  the local changes listed in `rootfs/overlay/etc/phoshdroid/omamobile/SOURCE.md`.
-- [**Termux:X11**](https://github.com/termux/termux-x11) -- the in-process X server, GPLv3.
-- [**Termux**](https://github.com/termux/termux-app) -- terminal emulator and shared libraries, GPLv3 only.
-- [**cage**](https://github.com/cage-kiosk/cage) and
-  [**wlroots**](https://gitlab.freedesktop.org/wlroots/wlroots) -- the nested parent compositor.
-- [**aquamarine**](https://github.com/hyprwm/aquamarine) -- Hyprland's backend library,
-  BSD-3-Clause. Omdroid ships it with two patches, the second adding the Wayland touch
-  device (`rootfs/patches/aquamarine/`, `rootfs/overlay/etc/phoshdroid/lib/`).
-- [**proot**](https://proot-me.github.io/) -- the unprivileged-root trick that makes the stack possible.
-- [**Arch Linux ARM**](https://archlinuxarm.org) -- the guest distribution.
+  launcher, back gesture and recent-apps switcher of the mobile UI. MIT; five plugin trees are
+  vendored, with the local changes listed in `rootfs/overlay/etc/phoshdroid/omamobile/SOURCE.md`.
+
+**Between Android and the desktop**
+
+- [**Termux:X11**](https://github.com/termux/termux-x11) -- the X server embedded in the app,
+  with its touch, keyboard and key-interceptor code. GPL-3.0. Omdroid builds a fork,
+  [`zweck/termux-x11`](https://github.com/zweck/termux-x11) (`phoshdroid-integration` branch).
+- [**Termux**](https://github.com/termux/termux-app) -- the terminal emulator and shared
+  libraries the app uses. GPL-3.0 only, with Apache-2.0 parts. The app's own Termux prefix
+  (bash, proot and their libraries) comes from
+  [**termux-packages**](https://github.com/termux/termux-packages), each package under its own
+  licence.
+- [**PRoot**](https://proot-me.github.io/) (Termux's build) -- runs the whole guest as an
+  unprivileged user inside the app, with no root needed. GPL-2.0.
+- [**cage**](https://github.com/cage-kiosk/cage) on
+  [**wlroots**](https://gitlab.freedesktop.org/wlroots/wlroots) -- the small kiosk compositor
+  that turns the X server's window into a Wayland output for Hyprland. Both MIT.
+- [**Arch Linux ARM**](https://archlinuxarm.org) -- the guest distribution; every package in
+  the guest keeps its own licence (texts under `/usr/share/licenses` in the guest).
+
+**History**
+
+- Omdroid began as Phoshdroid, which ran [**postmarketOS**](https://postmarketos.org) with
+  [**Phosh**](https://gitlab.gnome.org/World/Phosh/phosh) the same way; the launcher and the
+  proot setup grew out of that work.
 
 Omdroid is not affiliated with Omarchy, Hyprland, Termux or any of the projects above.
 
