@@ -308,3 +308,12 @@ from `SO_PEERCRED` on a `socketpair()` to itself, and logs every refusal with th
 machine: before the fix A and B fail with exactly Phil's message; after it, same-app clients pass
 (plain and `proot -i 1000:1000`), the exit code passes through, and a client with another real uid
 (4242, in a container) is still refused (`refused peer uid 4242, accepts [0, 1000]`).
+
+Fixed build for Phil: the combined dock + sudo + yay APK (`d1aabce`) with only
+`assets/guest-overlay/etc/phoshdroid/omdroid-rootd.py` replaced by the `0863200` version, then
+zipaligned (16 KB pages) and re-signed with the same debug key (v3). The Gradle cache was unusable
+while the host's caches moved to another disk, so this was patched instead of rebuilt; every other
+entry's CRC equals the original's and every overlay file equals the tree at `0863200`.
+`omdroid-0.0.15-test2.apk`, 1,715,859,742 B, sha256
+`a239a8c5134f1d79ed0cbcd669d0b1049bc9cc5f8bf34aa9506c66a12fc407a0`.
+
