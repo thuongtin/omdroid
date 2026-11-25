@@ -79,11 +79,17 @@ warnings; see Known limits.
 
 Not verified yet:
 
-- `sudo`. The broker and the client pass their host-side harness (27 cases, including a pty,
+- `sudo`. The broker and the client pass their host-side harness (34 cases, including a pty,
   Ctrl+C and concurrent requests: `python3 docs/omarchy/tools/rootd-selftest.py`), but neither
   has run on a tablet: not `sudo id`, not a pacman install through it, not the interactive
   prompt, not `omarchy-pkg-add`. The steps that close this are in
   `docs/omarchy/r6-sudo-report.md`.
+- `yay` and `makepkg` end to end on the tablet. Their shims pass the same harness, and the
+  whole chain - base-devel, `yay-bin`, then a small AUR package installed, run and removed -
+  ran as uid 1000 against a root broker in an arm64 container of the guest image. What that
+  does not prove: two proots on the phone, Android's kernel under them, the device's network,
+  and the real `fakeroot` package having been installed first. `docs/omarchy/r6b-yay-report.md`
+  lists the rest; its "Manual test for Phil" closes it.
 - A clean install of a release. `v0.0.14-alpha` and `v0.0.15-alpha` have each been installed
   on the tablet only as an update over an existing guest and cold-started with `probe.sh`
   passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). The extractor fix is
@@ -363,6 +369,16 @@ and `omdroid-logo.txt`, which is the version for a terminal:
   so `sudo` grants no privilege Android did not already give the app. The desktop keeps
   uid 1000 on purpose, so files written through `sudo` still read as `omarchy`. Anything
   that needs real root still fails, `systemctl` above all.
+- `yay` is not in the image and no Arch Linux ARM repository carries it, so `yay` on `PATH`
+  is a shim: the first call installs `yay-bin` (a prebuilt aarch64 binary, nothing is
+  compiled) and every call after it hands over to the real binary. That first call also
+  installs `base-devel` and `git` from `core`, so it needs the network and takes a few
+  minutes; the progress lines name each step and the log is
+  `~/.cache/omdroid/yay-bootstrap.log`. `makepkg` works because `fakeroot` is a shim too:
+  real fakeroot needs SysV IPC, which Android's kernel does not have, so the package step
+  runs in the same fake-root broker as `sudo`. Many AUR packages declare `arch=('x86_64')`
+  only and are refused; `yay --mflags --ignorearch` skips that check, and then works only
+  when the sources really build on aarch64.
 - The bar's audio widget has no data: no `omarchy-proot-audio` binary exists in the
   payload. The PulseAudio-to-Android bridge is designed, never demonstrated.
 - Scale 1.5 is not accepted by this Hyprland build; the guest quantises it to 1.6, so
