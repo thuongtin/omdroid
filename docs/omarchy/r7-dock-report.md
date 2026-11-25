@@ -11,7 +11,7 @@ Scratch: `<scratch>/omarchy/r7/dock/`.
 | D0 | premises re-checked | **PASS** | 6 premises; 3 change the design, all below. |
 | D1 | a1 `DockState` + a3 geometry/scale, pure + tests | **PASS** | `unit tests 98 failed 0`; commit `d1bd409` |
 | D2 | a2 + pin, a4, a5, a7 wired into the launcher | **PASS** | Build + 98 tests + lint green; submodule `ac0cf73` |
-| D3 | b1 keep_process_alive in the termux-x11 submodule | PENDING | |
+| D3 | b1 keep_process_alive in the termux-x11 submodule | **PASS** | merged manifest `keep_process_alive=true`, `colorMode`; submodule `1fcc56c` |
 | D4 | c live UI switch in the guest (`omarchy-watch.py`) + dry run | PENDING | |
 | D5 | launch contract + README "Docking" | PENDING | |
 | D6 | full gate re-run + tree sha | PENDING | |
@@ -183,8 +183,31 @@ Gates: `:app:compileDebugKotlin :app:test :app:lintDebug` → **BUILD SUCCESSFUL
 the debug and release javac outputs, so the submodule Java really compiled into
 the APK.
 
-### D3 submodule manifest
-PENDING
+### D3. b1 in the submodule
+
+`termux-x11/app/src/main/AndroidManifest.xml`, on `phoshdroid-integration`,
+commit `1fcc56c`; the main repo's submodule pointer moves in the same commit as
+this section.
+
+- `com.samsung.android.multidisplay.keep_process_alive` `false` → **`true`**. The
+  X server lives in our process and the proot session is its child, so a process
+  kill on unplug takes the whole desktop with it. The flag dates from DeX 3.0 and
+  the research marks its effect on the Android 16 desktop-mode DeX as unproven —
+  that is milestone 6 on the phone.
+- `colorMode` added to `MainActivity`'s `configChanges` (research §3's first
+  defect). A display move changes the colour mode; the compatibility-mode doc
+  names colour mode, touchscreen and density as the restart triggers, and
+  `touchscreen`/`density`/`screenSize`/`smallestScreenSize`/`screenLayout` were
+  already there.
+
+Verified in the merged manifest the build actually produces
+(`app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml`):
+`keep_process_alive` `android:value="true"`, the `colorMode` entry on
+`com.termux.x11.MainActivity`, our `CAPTURE_KEYBOARD` permission and both
+`com.samsung.android.dex.launch*` meta-data lines. The second research defect
+(`handleHostSizeChanged(0,0)` on `surfaceDestroyed`) is **not** fixed: it is
+harmless while a real surface follows, and touching the touch-transform reset was
+out of this round's scope. Noted under "Risks still open".
 
 ### D4 guest live switch
 PENDING
