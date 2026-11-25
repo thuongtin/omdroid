@@ -12,10 +12,11 @@
 
 > [!WARNING]
 > **Highly experimental.** Omdroid has run on one tablet. Its only published build is the
-> [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release, and that exact APK has not been run on a device
-> yet: the measurements below come from the build before it. Expect breakage. The guest
-> lives in the app's private storage, so uninstalling the app or clearing its data deletes
-> everything inside it.
+> [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release; it has been installed once, as an update, and cold-started. The
+> mobile UI, the real touch path and the keyboard pass-through below are newer than that
+> release and no release carries them yet, so their measurements come from local builds
+> installed over it. Expect breakage. The guest lives in the app's private storage, so
+> uninstalling the app or clearing its data deletes everything inside it.
 
 Omdroid runs Arch Linux ARM with [Omarchy](https://omarchy.org) -- Hyprland plus the
 Quickshell-based Omarchy shell -- inside an ordinary Android app. It is not a native
@@ -51,11 +52,22 @@ first. Installing over it has not been tested.
 | Rotating, resizing and resetting in the foreground | four changes in a row, probe after each and again 4 s later | `VERDICT: PASS` in +2.6 to +2.7 s each, same process, `foot` still open | D6 |
 | Seven screen sizes, from a small phone to the native panel, including an odd height | one cold start per row with the display overridden | 7/7 PASS, hand-over unaided 2.6-3.2 s, X root equal to the prediction, monitor equal to the root rounded down to even | D7 |
 | A live size change is followed by restarting only the shell | guest watcher log and the layer sizes after the change | background layer back at the new logical size 2.4 s later, the open window stayed open | G4 |
+| A finger tap lands where it is put | `touchlog.c`, a full-screen layer surface that prints every `wl_touch` event, and one `input touchscreen tap` per point | 8/8 taps arrive as `wl_touch`, each within 1 screen px of the tap (a constant -1 px from the X11 hop), no scale and no mirror | touch D3.2 |
+| The stock bar reacts to a touch tap | `bartest.py touch 26`, all nine bar targets, one touch tap each | 9/9 react: five workspace switches, the Omarchy menu, three panels. Round 4 measured 0/9 in this mode | touch D3.3 |
+| The mobile gestures work as quick swipes, no hold | `input touchscreen swipe`, 100-200 ms per gesture, one DOWN/move stream/UP each | 7/7: back from x=20 and x=3, pill to home, dock to switcher, card flick closes a window, card tap switches, quick-settings pull-down. The dock swipe-up was 0/10 under simulated touch | touch D3.5, mobile R6 |
+| Two fingers reach a client as two touch points | a synthetic `uinput` multi-touch device moved two fingers 600 px in 20 steps, `touchlog` reading | ids 0 and 1 down at once, 42 motions, both tracked to the end; pointer emulation could only ever send one | touch D3.7 |
+| A hardware keyboard drives Omarchy | a `uhid` HID keyboard through Android InputReader and Termux:X11's key interceptor | SUPER+2/1/3 switch workspaces, SUPER+Return opens `foot`, SUPER+W closes it, Alt+Tab flips focus, Esc reaches the guest; Android's drawer, recents and back never fire | keys K5 |
+| Five Omamobile plugins load in the shell | the session's plugin scan file, `omarchy-shell shell listPlugins`, the shell's own log | 5 third-party entries, all five named and `omamobile.bar` active, 0 failed loads and 0 TypeError in 505 log lines | mobile M1, M2 |
+| The mobile UI switches to the stock session and back | one cold start per mode, `shell.json` compared with the image's stock file | desktop: stock bar 1600x26, 0 `omamobile` ids, `gaps 5 5 5 5`, 0 plugin links; mobile: 5 links and `gaps 0 0 0 0` | mobile M7 |
+| A cold start with the mobile UI hands over by itself | `coldstart.sh`, no nudge | unaided hand-over at +9.7 s, +10.3 s and +11.0 s, desktop PASS each time | touch D1, D3, mobile R7 |
 
 Rows D2-D7 are in `docs/omarchy/r3-device-report.md`; row G4 is in
-`docs/omarchy/r2-guest-report.md`. The D rows were measured on the first build that
+`docs/omarchy/r2-guest-report.md`. The `touch` rows are in `docs/omarchy/r5-touch-device-report.md`,
+the `keys` rows in `docs/omarchy/r4-input-report.md`, and the `mobile` rows in
+`docs/omarchy/r5-mobile-ui-device-report.md`. The D rows were measured on the first build that
 combined the rewritten app and the rewritten guest session, made just before the round 3
-host changes listed under "Not verified yet" went in.
+host changes listed under "Not verified yet" went in; the later rows come from the round 5
+builds, which start in about 10 s rather than 3.
 
 ![Cold starts at six screen sizes, drawn to the same scale](docs/screenshots/screen-sizes.jpg)
 
@@ -66,19 +78,73 @@ warnings; see Known limits.
 
 Not verified yet:
 
-- The released APK itself. It is this tree: the build measured above plus the round 3
-  host work and one extractor fix. Neither a fresh install nor an update with it has been
-  run on a device. The fix is checked on the build machine only: Android refuses apps
-  hard links, so the 1,832 hard-link members of the guest image (terminfo and zoneinfo
-  aliases, `/usr/bin/ld`) were missing after extraction; they are now copied, and the
-  extractor run over the real image produces all 76,382 files.
-- Screen off and on, and the keyboard and touch path, with this build: rows D8 and D9
-  are blocked. The tablet fell to its PIN keyguard on wake and the display stayed behind
-  it; the session itself survived (same process, probe passing, window still open).
-- The round 3 host work -- one launch decision, session-end reporting, the error screen,
-  guest scripts travelling inside the APK, and the names the user sees -- is unit-tested
-  only (H10-H15); it has not been run on a device.
+- A release with this round's work. `v0.0.14-alpha` itself has now been installed (as an
+  update, not a clean install) and cold-started 2/2 unaided with `probe.sh` passing (row T0
+  in `docs/omarchy/r4-touch-report.md`), but it is the pre-round build. The mobile UI, the
+  real touch path and the keyboard pass-through are in later local builds, and no release
+  carries them. The extractor fix is still checked on the build machine only, since an
+  update keeps the extracted guest: Android refuses apps hard links, so the 1,832 hard-link
+  members of the guest image (terminfo and zoneinfo aliases, `/usr/bin/ld`) were missing after
+  extraction; they are now copied, and the extractor run over the real image produces all
+  76,382 files.
+- Real fingers. Every touch so far was `adb shell input` or a synthetic `uinput` device:
+  Android InputReader and Termux:X11 see both like a finger, but with perfect straight-line
+  timing. Whether a human tap, flick and long press feel right has not been tried.
+- The keyboard cover. Only synthetic `uhid` HID keyboards have been used. The real cover's
+  firmware -- which device names it reports, whether its touchpad arrives as a touchpad, and
+  whether its Meta key is delivered at all -- is untested; `docs/omarchy/r4-input-report.md`
+  ends with the ten-minute checklist.
+- Pinch, rotate and three-finger gestures. Two points are proven to reach a client, not what
+  an app makes of them, and Hyprland's own touch workspace swipe
+  (`gestures:workspace_swipe_touch`) is off in this config and was not enabled.
+- The fresh-image path for the patched aquamarine. The packager copies `lib/` and that block
+  passes `bash -n`, but no guest image was repacked with it this round; on the device the
+  library came from the APK's overlay sync instead (row D3.1 in the touch report).
+- The idle lock. At 300 s idle the idle service runs `omarchy-system-lock` and it exits 0,
+  yet `omarchy-shell lock isLocked` stays false: under proot the lock timer fires and
+  nothing locks.
+- Installing Omdroid over an existing Phoshdroid. The package id is unchanged, so the APK
+  would replace the installed app; that update has still not been tried. Uninstall
+  Phoshdroid first.
+- Screen off and on: rows D8 and D9 are blocked. The tablet fell to its PIN keyguard on
+  wake and the display stayed behind it; the session itself survived (same process, probe
+  passing, window still open).
+- Session-end reporting and the error screen (H10-H15) are unit-tested only; the launch
+  decision and the guest-overlay sync run on the device in every cold start.
 - A foldable phone. It has never been tried.
+
+## Mobile UI
+
+The guest ships a phone-shaped UI, built from five plugin trees vendored from
+[Omamobile](https://github.com/derekross/omamobile) (MIT; the commit, the upstream files and the
+local changes are listed in `rootfs/overlay/etc/phoshdroid/omamobile/SOURCE.md`): a 44 px status
+bar, a pull-down quick-settings sheet, a dock with an app drawer and a home pill, an edge-swipe
+back gesture that sends Escape to the focused window (or goes home from a terminal), and a
+recent-apps switcher. Type is 16 px (stock 12), controls are 44 px (stock 28), windows tile with
+no gaps, the idle screensaver is off, and the pointer hides after a touch. Only these five are
+vendored: each of the others stands on hardware, systemd or a service that proot does not have.
+
+It is the default. The switch is one file, read at each session start, so it applies on the next
+start and never mid-session:
+
+```bash
+echo desktop > ~/.config/omdroid/ui   # the stock Omarchy session, next start
+echo mobile  > ~/.config/omdroid/ui   # the phone UI, next start
+rm ~/.config/omdroid/ui               # same as mobile
+```
+
+`desktop` puts the stock bar, sizes and gaps back, undoing only the keys and links the switch
+wrote. Under proot the switcher's cards are the app's icon and window title rather than live
+window copies, because a live copy needs a dmabuf version Hyprland does not offer here. Quick
+settings is honest about hardware the guest lacks: Wi-Fi, Bluetooth, mobile data, torch,
+fingerprint and the brightness slider are dimmed with their reason, while volume, Do Not
+Disturb, dark theme, clipboard, screenshot, rotation and stay-awake work.
+
+<img src="docs/screenshots/mobile-desktop.jpg" width="800" alt="The mobile UI's home screen on the tablet: the 44 px bar with a clock and a Wi-Fi-off icon, the wallpaper, and the Search apps dock above Android's extra-key bar">
+<img src="docs/screenshots/mobile-quicksettings.jpg" width="800" alt="The expanded quick-settings sheet: three columns of tiles on page one, every missing backend dimmed with its reason, and the notification shade">
+
+Both are Android screenshots of the round 5 build (row R8 in
+`docs/omarchy/r5-mobile-ui-device-report.md`).
 
 ## How it works
 
@@ -137,6 +203,26 @@ so the app offers integers only.
 
 ![Three terminals tiled in the session: fastfetch, the session's processes and themes, kernel and Hyprland versions](docs/screenshots/terminal.jpg)
 
+**Touch.** A finger reaches the guest as an X11 touch event: Termux:X11 runs in direct touch
+(`touchMode` "3") and Xlorie hands the touch to cage, whose wlroots X11 backend builds a
+`wlr_touch` and forwards it to its only client, the nested Hyprland. Hyprland's input, though,
+comes from aquamarine's Wayland backend, and aquamarine 0.14.0 had no `wl_touch` at all, so no
+touch device existed and a tap reached nothing (`hyprctl devices` printed `touch: []`). Omdroid
+ships a patched aquamarine (patch `0002` in `rootfs/patches/aquamarine/`, built by
+`rootfs/build-aquamarine.sh`) that binds `wl_seat.get_touch`, creates the device and normalises
+each contact to the output; the library travels in the APK and `start.sh` puts it first in
+`LD_LIBRARY_PATH` (`rootfs/overlay/etc/phoshdroid/lib/`). With it a tap lands within one screen
+pixel of the finger, swipes and long presses arrive as `wl_touch`, and two fingers arrive as two
+touch points.
+
+**Keyboard.** A hardware keyboard is intercepted before Android sees it by Termux:X11's
+`KeyInterceptor` accessibility service, which the app enables itself at launch by merging its
+component into `enabled_accessibility_services`; the one thing it needs from outside is
+`WRITE_SECURE_SETTINGS`, which `install.sh` grants. Every key is sent to Xlorie as a scancode
+(`preferScancodes`), so the guest's keymap owns layout and repeat: SUPER, Alt+Tab and Esc reach
+Hyprland, and Android's app drawer, recents and back gesture never fire. Without the grant the
+service is not enabled and the log says so (`launch: key-capture no WRITE_SECURE_SETTINGS`).
+
 ## Requirements
 
 - Android 12 (API 31) or newer, arm64.
@@ -193,16 +279,20 @@ change, or the package step appends to it and the next APK is twice the size;
 `build-chain.sh` does that for you.
 
 HyperOS and MIUI refuse `adb install` with `INSTALL_FAILED_USER_RESTRICTED`.
-`docs/omarchy/tools/install.sh` pushes the APK to `/sdcard/Download` and drives
-Android's own package installer by tapping the buttons it finds by their text, then
-compares the installed APK's sha256 with the local file. App data survives, so it is an
+`docs/omarchy/tools/install.sh` tries the package manager first (`pm install -r -t` from
+`/data/local/tmp`, about 90 s, no taps; it needs Install-via-USB allowed for the shell), and falls
+back to pushing the APK to `/sdcard/Download` and driving Android's own package installer by
+tapping the buttons it finds by their text. Either way it grants the permissions the app needs
+and compares the installed APK's sha256 with the local file. App data survives, so it is an
 update; the 1.7 GB push takes a few minutes.
 
 ## Developing and debugging on a device
 
 Every script takes the device from the `TABLET_SERIAL` environment variable (its adb
 serial) and stops if it is not set, so a second attached device is never picked by
-accident. The scripts are in `docs/omarchy/tools/`.
+accident. The scripts are in `docs/omarchy/tools/`. A cold start re-syncs the guest's
+`/etc/phoshdroid` files from the APK, so a fix pushed in by hand lasts only until the next
+start unless the APK carries it.
 
 | Tool | What it does |
 | --- | --- |
@@ -214,16 +304,23 @@ accident. The scripts are in `docs/omarchy/tools/`.
 | `gx.sh` | Runs a shell command in the guest as uid 1000, with no live session needed. |
 | `gpush.sh` | Copies one file into the extracted guest. |
 | `shot.sh` | Screenshots the tablet and prints numbers that judge the result without eyes. |
-| `install.sh` | Sideloads through the on-device installer and proves the installed APK is the local one. |
+| `install.sh` | Tries `pm install` from `/data/local/tmp` first, falls back to the on-device installer, grants the permissions, and proves the installed APK is the local one. |
+| `bartest.py` | Taps the nine targets on the desktop bar, one row of workspace / layer / client / cursor deltas as CSV per target. |
+| `focustest.py` | The focus-by-tap control: opens two windows, taps the unfocused one, prints whether focus moved. |
+| `xtap.py` | A real X pointer click injected from inside the guest (XTest), the ground truth when host injection is in doubt. |
+| `pixdiff.py` | How much two screenshots differ, and where: the numeric look at a before/after pair. |
+| `touchlog.c` | A full-screen layer surface that prints every `wl_touch` and `wl_pointer` event with logical coordinates; built in the aquamarine container (recipe in the file). |
 | `demo-capture.sh` | Records a short demo from inside the session with grim; works with the device locked. `demo-gif.sh` turns the frames into a GIF. |
 | `build-chain.sh` | Repacks the guest image, checks the overlay scripts inside it, assembles the APK, runs the unit tests. |
 
 ## Project layout
 
-- `app/` -- the Kotlin app: launcher, asset extraction, proot service, settings.
+- `app/` -- the Kotlin app: launcher, keyboard capture, asset extraction, proot service, settings.
 - `rootfs/` -- the guest packager `package-omarchy-rootfs.sh` and the overlay copied into
   the guest: `start.sh`, `session-child.sh`, `fit-x11.py`, `omarchy-watch.py`,
-  `omarchy-plugin-index.sh` and the fake `/proc` files.
+  `omarchy-plugin-index.sh`, `omdroid-ui.sh` (the mobile/desktop switch), `omamobile/` (the
+  vendored phone plugins), `lib/` (the patched aquamarine) and the fake `/proc` files.
+  `patches/aquamarine/` and `build-aquamarine.sh` produce that library.
 - `termux-x11/` -- the Xlorie X server; `termux-app/` -- emulator and shared libraries.
   Both are submodules on the `phoshdroid-integration` branch.
 - `docs/omarchy/` -- architecture, the launch contract, the payload audit, the reports and the tools;
@@ -261,6 +358,12 @@ and `omdroid-logo.txt`, which is the version for a terminal:
   the app offers 1 and 2.
 - A live size change, including a rotation, blinks the bar and the wallpaper for about
   2-3 s while the shell restarts. The session and its windows survive.
+- Every touch lands one screen pixel up and left of the finger: Xlorie scales the touch
+  against `width`, and the X server then spreads it over `0..width-1`. A finger cannot
+  resolve one pixel of this panel; the fix belongs in Termux:X11 and is not done.
+- In the mobile UI the stock Omarchy menu (SUPER+Space) ends above the dock and cuts its
+  last row until the list is scrolled. The menu scrolls, and this is stock menu behaviour
+  made tighter by the 16 px type.
 - Every start shows two Hyprland warning banners at the top right for a few seconds: one
   says `hyprland-guiutils` is not installed, the other that Hyprland was started without
   `start-hyprland`. They are in every cold-start screenshot above and are not yet
@@ -297,10 +400,16 @@ Omdroid stands on work done by other people:
   builds. Its bundle ships an MIT licence.
 - [**Omarchy**](https://omarchy.org) -- the shell, themes and commands the guest runs;
   [**Quickshell**](https://quickshell.org) -- the QML toolkit that shell is built on.
+- [**Omamobile**](https://github.com/derekross/omamobile) -- the phone bar, quick settings,
+  launcher, back gesture and recent-apps switcher, MIT; five plugin trees are vendored, with
+  the local changes listed in `rootfs/overlay/etc/phoshdroid/omamobile/SOURCE.md`.
 - [**Termux:X11**](https://github.com/termux/termux-x11) -- the in-process X server, GPLv3.
 - [**Termux**](https://github.com/termux/termux-app) -- terminal emulator and shared libraries, GPLv3 only.
 - [**cage**](https://github.com/cage-kiosk/cage) and
   [**wlroots**](https://gitlab.freedesktop.org/wlroots/wlroots) -- the nested parent compositor.
+- [**aquamarine**](https://github.com/hyprwm/aquamarine) -- Hyprland's backend library,
+  BSD-3-Clause. Omdroid ships it with two patches, the second adding the Wayland touch
+  device (`rootfs/patches/aquamarine/`, `rootfs/overlay/etc/phoshdroid/lib/`).
 - [**proot**](https://proot-me.github.io/) -- the unprivileged-root trick that makes the stack possible.
 - [**Arch Linux ARM**](https://archlinuxarm.org) -- the guest distribution.
 
