@@ -325,6 +325,8 @@ BUILD SUCCESSFUL in 1m 49s
   clears that directory; it had built at 12:54). Restored from the published release asset with
   `gh release download v0.0.15-alpha -p omdroid-0.0.15-alpha.apk`: sha256
   `c188e365…5032`, the value in the release notes, so the restored file is the published one.
+  (A later parallel build cleared the directory again at 13:05 and the same restore was repeated,
+  same sha256.)
 - The APK also carries the dock work that was committed to `main` before `6834e6c`
   (`d1bd409`); that is expected — the parent asked for the combined test build.
 
