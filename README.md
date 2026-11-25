@@ -11,11 +11,12 @@
 **Omarchy on unrooted Android, in a single APK.**
 
 > [!WARNING]
-> **Highly experimental.** Omdroid has run on one tablet. Its only published build is the
-> [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release; it has been installed once, as an update, and cold-started. The
-> mobile UI, the real touch path and the keyboard pass-through below are newer than that
-> release and no release carries them yet, so their measurements come from local builds
-> installed over it. Expect breakage. The guest lives in the app's private storage, so
+> **Highly experimental.** Omdroid has run on one tablet. The latest build is the
+> [`v0.0.15-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) pre-release, with the mobile UI, real touch and the
+> keyboard pass-through; it has been installed on that tablet as an update over the
+> earlier builds and cold-started, never as a clean install. Its touch and keyboard
+> measurements come from injected input, not fingers or a real keyboard cover, on local builds
+> of the same tree. Expect breakage. The guest lives in the app's private storage, so
 > uninstalling the app or clearing its data deletes everything inside it.
 
 Omdroid runs Arch Linux ARM with [Omarchy](https://omarchy.org) -- Hyprland plus the
@@ -37,7 +38,7 @@ under the desktop -- is not in it; the screenshots further down are Android's ow
 
 Highly experimental. It has been run on exactly one device: a Xiaomi Pad 8 Pro
 (model 25091RP04G), Android 16 with HyperOS 3.0, a Snapdragon SM8750P with an Adreno GPU,
-a 3200x2136 panel and 12 GB of RAM. The first Omdroid build is the [`v0.0.14-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) pre-release. Every earlier
+a 3200x2136 panel and 12 GB of RAM. The Omdroid builds are the `v0.0.14-alpha` and [`v0.0.15-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) pre-releases. Every earlier
 release on this repository is a Phoshdroid build -- postmarketOS with Phosh, a different
 guest under the same package id -- so do not install Omdroid over Phoshdroid: uninstall it
 first. Installing over it has not been tested.
@@ -78,11 +79,10 @@ warnings; see Known limits.
 
 Not verified yet:
 
-- A release with this round's work. `v0.0.14-alpha` itself has now been installed (as an
-  update, not a clean install) and cold-started 2/2 unaided with `probe.sh` passing (row T0
-  in `docs/omarchy/r4-touch-report.md`), but it is the pre-round build. The mobile UI, the
-  real touch path and the keyboard pass-through are in later local builds, and no release
-  carries them. The extractor fix is still checked on the build machine only, since an
+- A clean install of a release. `v0.0.14-alpha` and `v0.0.15-alpha` have each been installed
+  on the tablet only as an update over an existing guest and cold-started with `probe.sh`
+  passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). The extractor fix is
+  still checked on the build machine only, since an
   update keeps the extracted guest: Android refuses apps hard links, so the 1,832 hard-link
   members of the guest image (terminfo and zoneinfo aliases, `/usr/bin/ld`) were missing after
   extraction; they are now copied, and the extractor run over the real image produces all
@@ -238,8 +238,8 @@ service is not enabled and the log says so (`launch: key-capture no WRITE_SECURE
 
 ## Build and install
 
-To install the pre-release, download `omdroid-0.0.14-alpha.apk` (about 1.7 GB) from the
-[`v0.0.14-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.14-alpha) and sideload it: `adb install omdroid-0.0.14-alpha.apk`,
+To install the pre-release, download `omdroid-0.0.15-alpha.apk` (about 1.7 GB) from the
+[`v0.0.15-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) and sideload it: `adb install omdroid-0.0.15-alpha.apk`,
 or open the file from a file manager on the device. HyperOS and MIUI refuse `adb install`;
 see the end of this section. The first start extracts the guest; that took about
 two minutes on the test tablet.
