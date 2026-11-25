@@ -162,6 +162,27 @@ hop: Xlorie queues a touch as the valuator `x * 0xFFFF / width`
 only the integer part (`send_touch_down_event(output, ev->event_x >> 16, …)`,
 `backend/x11/input_device.c:245`, the same for motion at `:283`). Round 4 saw the same −1 on the
 cursor in this mode before the patch existed (tap 3052,26 → cursor 1525,12). Verdict **PASS
-within 1 screen px** (0.5 logical px, about 0.05 mm on this panel); a finger cannot resolve it.
+within 1 screen px** (0.5 logical px, under 0.1 mm on this panel); a finger cannot resolve it.
 Fix, for the Termux:X11 owner, not done here: scale against `width - 1` / `height - 1` in
 `cmdentrypoint.c:261-262`, then the truncation lands on the tapped pixel.
+
+**D3.5 mobile gestures, quick swipes with no hold** (`input touchscreen swipe … <ms>`, i.e. one
+DOWN, a stream of MOVEs, UP). Scripts and logs: scratch `d3-gestures-1.sh`/`-2.sh` and `.log`.
+Two windows open on workspace 1 (`foot`, and `foot --app-id=backtest` running a byte logger
+that writes every byte it receives to `/tmp/r5-backtest.log`).
+
+| Gesture | Injected | Result | Verdict |
+|---|---|---|---|
+| back from x = 20 | swipe 20,1000 → 420,1000, 150 ms | logger receives `1b` (Escape), focus stays on `backtest`, Android top unchanged | **PASS** |
+| back from x = 3 | swipe 3,1000 → 420,1000, 150 ms | second `1b`; Android back did not fire (top still the X11 activity) | **PASS** |
+| pill swipe goes home | swipe 1600,1915 → 1600,1765, 100 ms (75 logical px up) | workspace 1 → **2** (empty), `omamobile-home-strip` → `omamobile-dock` | **PASS** |
+| dock swipe-up opens the switcher | swipe 1600,1880 → 1600,1560, 120 ms | new layer **`omamobile-switcher` 1600x985**, two cards | **PASS** (0/10 under simulated touch in the mobile round) |
+| card flick closes a window | swipe 1600,1000 → 1600,300, 120 ms on the centred card | `clients` **2 → 1**, one card left | **PASS** |
+| card tap switches | tap 1600,1000 | workspace 2 → **1**, active `foot`, switcher closed | **PASS** |
+| quick-settings pull-down | swipe 1600,30 → 1600,600, 150 ms | new layer **`omamobile-quicksettings`**; Escape closes it | **PASS** |
+
+**D3.6 long press.** A still 1.2 s hold on a switcher card fires its QML long press: the actions
+sheet opens (`Foot` / `Show with…` "No other app is open" / `Cancel`, `shots/d3-card-hold.png`).
+A still 1.5 s hold on the home pill over an app does nothing: no layer, workspace and focus
+unchanged. That is the pill as built since `a44b0a1` (`longPressThreshold: root.voice ? 0.45 : 3600`,
+no voice plugin), so its long press is correctly inert.
