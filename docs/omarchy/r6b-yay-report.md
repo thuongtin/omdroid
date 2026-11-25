@@ -141,8 +141,9 @@ broker (on the phone both proots are one app uid and proot's fake_id0 rewrites `
 and the socket directory/socket chmod'ed 0755/0666 from the root side (on the phone the
 0700/0600 defaults already match the single app uid).
 
-**What ran, as uid 1000 (log: `/tmp/yay-test/chain.log`, `chain3.log` in the container; the
-copy kept here is `chain2.sh`/`chain3.sh`):**
+**What ran, as uid 1000** (the container was removed at the end of the round as the brief asks;
+the chain scripts are kept in the scratch dir as `chain2.sh`/`chain3.sh`, and everything below is
+quoted from that run):
 
 ```
 $ command -v sudo fakeroot yay makepkg
