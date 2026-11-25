@@ -626,10 +626,17 @@ Item {
   // omamobile-setup-user's steps), and `ensure` claims it atomically, so the
   // toast shows once even with two screens or two shells. A new marker for
   // 0.2.61: the earlier tips named the buttons and gestures this replaced.
-  readonly property string pillHintText: "Hold the pill to talk · double-tap for the keyboard"
+  // Omdroid: the voice bar (omamobile.voice) and the on-screen keyboard
+  // (omamobile.keyboard) are not ported, so without the voice plugin the hint
+  // names only what the pill does here, under its own done marker, so the
+  // corrected hint shows once even where the old one already did.
+  readonly property string pillHintText: root.voice
+    ? "Hold the pill to talk · double-tap for the keyboard"
+    : "Swipe up on the pill to go home · swipe up and hold for recent apps"
+  readonly property string pillHintMarker: root.voice ? "omamobile-pill-hint" : "omdroid-pill-hint"
   function pillHint() {
-    Quickshell.execDetached(["sh", "-c", "omarchy-done ensure omamobile-pill-hint && exec omarchy-notification-send -g \"$2\" \"$1\"",
-                             "sh", root.pillHintText, String.fromCodePoint(0xF036C)])
+    Quickshell.execDetached(["sh", "-c", "omarchy-done ensure \"$3\" && exec omarchy-notification-send -g \"$2\" \"$1\"",
+                             "sh", root.pillHintText, String.fromCodePoint(0xF036C), root.pillHintMarker])
   }
 
   // A moment after the strip shows, so a strip that only flashes up (or
