@@ -12,7 +12,7 @@ Scratch: `<scratch>/omarchy/r7/dock/`.
 | D1 | a1 `DockState` + a3 geometry/scale, pure + tests | **PASS** | `unit tests 98 failed 0`; commit `d1bd409` |
 | D2 | a2 + pin, a4, a5, a7 wired into the launcher | **PASS** | Build + 98 tests + lint green; submodule `ac0cf73` |
 | D3 | b1 keep_process_alive in the termux-x11 submodule | **PASS** | merged manifest `keep_process_alive=true`, `colorMode`; submodule `1fcc56c` |
-| D4 | c live UI switch in the guest (`omarchy-watch.py`) + dry run | PENDING | |
+| D4 | c live UI switch in the guest (`omarchy-watch.py`) + dry run | **PASS** | dry run 13/13, `RESULT: PASS (0 failures)` |
 | D5 | launch contract + README "Docking" | PENDING | |
 | D6 | full gate re-run + tree sha | PENDING | |
 | D7 | report complete (manual test, risks, not verified) | PENDING | |
@@ -209,8 +209,80 @@ Verified in the merged manifest the build actually produces
 harmless while a real surface follows, and touching the touch-transform reset was
 out of this round's scope. Noted under "Risks still open".
 
-### D4 guest live switch
-PENDING
+### D4. c — the live UI switch in the guest
+
+One file changed, `rootfs/overlay/etc/phoshdroid/omarchy-watch.py`; `omdroid-ui.sh`
+needed nothing (it is already idempotent and key-level), and `start.sh` was not
+touched (it belongs to the sibling agent).
+
+- `ui_mode()` reads `$HOME/.config/omdroid/ui`; missing or unknown means
+  `mobile`, the same default `omdroid-ui.sh` uses.
+- `switch_ui(mode)` runs, in this order: `omdroid-ui.sh`, then
+  `omarchy-plugin-index.sh` (the shell reads the scan file, not a live directory),
+  then `omarchy-restart-shell` through the existing rate-limited `act()`/`settle()`
+  path, then a Hyprland config reload for the `looknfeel.lua` half.
+- The main loop checks the mode at the top of every 0.25 s pass, before the
+  readiness gate, so a change that arrives while Hyprland is still starting is
+  applied rather than dropped. One log line for the change, one for the switch.
+- No new IPC: the host writes the file, the guest watches it (research §5c). The
+  root broker socket stays a root-only channel.
+
+**`hyprctl reload` decision.** It is run **only when the enabled monitor already
+equals the even-rounded X root** (`st["mon_is_root"]`), and skipped with a log line
+otherwise. Reason: reload re-applies the start-time output mode (project notes),
+so after a genuine size change it would fight `fit-x11.py`; when the sizes agree,
+the mode it re-applies is the current one, so it is harmless and the looknfeel
+block lands. If it is skipped, the watcher's own size logic owns the size and the
+next shell restart carries the looknfeel.
+
+Two environment overrides were added for the dry run and are documented in the
+module docstring: `OMARCHY_WATCH_LOG`/`OMDROID_WATCH_UI_SCRIPT`/
+`OMDROID_WATCH_INDEX_SCRIPT`. In the guest they are unset and the defaults are
+`/tmp/omarchy-watch.log`, `/etc/phoshdroid/omdroid-ui.sh`,
+`/etc/phoshdroid/omarchy-plugin-index.sh`.
+
+**Dry run** — `<scratch>/omarchy/r7/dock/dryrun.py`, log
+`dryrun.out` beside it. Scratch guest = the round-5 extracted tree (92 MB) with
+the packager step simulated (repo copies of `omdroid-ui.sh`,
+`omarchy-plugin-index.sh`, `omamobile/` into its `/etc/phoshdroid`). Every
+Hyprland path is unreachable by construction: `XDG_RUNTIME_DIR` is an empty
+scratch dir and `DISPLAY=:99`, so `evaluate()` answers `no X display` and the
+switch reports the restart as deferred. `python3 -m py_compile` and `bash -n` on
+the touched scripts: clean.
+
+```
+switch_ui(mobile) baseline: omdroid-ui rc=0; plugin-index rc=0; shell restart deferred: no X display
+      baseline  links=5 bar=omamobile.bar plugins=4 toml=True looknfeel=True index=5
+PASS  baseline is the mobile UI
+PASS  the hand-edited key from round 5 is still left alone        [base-size = 18]
+      switch_ui(desktop): omdroid-ui rc=0; plugin-index rc=0; shell restart deferred: no X display
+      desktop   links=0 bar=None plugins=0 toml=False looknfeel=False index=0
+PASS  desktop: plugin links removed
+PASS  desktop: shell.json stock again
+PASS  desktop: touch theme keys removed
+PASS  desktop: looknfeel block stripped
+PASS  desktop: index has no omamobile plugins
+      switch_ui(mobile): omdroid-ui rc=0; plugin-index rc=0; shell restart deferred: no X display
+      mobile    links=5 bar=omamobile.bar plugins=4 toml=True looknfeel=True index=5
+PASS  mobile: the five links are back
+PASS  mobile: bar, panels, theme and looknfeel back
+PASS  mobile: index lists the five plugins again
+PASS  a switch writes nothing but the mode file (idempotent second run)
+PASS  loop: one ui line per change
+PASS  loop: the switch ran for both
+PASS  loop: readiness is still reported
+RESULT: PASS (0 failures)
+```
+
+The last four checks come from the watcher's **real loop**, started in a daemon
+thread and fed the same file changes: its log has exactly one
+`ui mode mobile -> desktop` and one `ui mode desktop -> mobile`, two
+`ui switch: omdroid-ui rc=0` lines, and its readiness line (`waiting: no X
+display`) is unaffected — the UI switch does not disturb the marker logic.
+
+The round-5 tree still carries a hand-edited `base-size = 18`; the switch left it
+alone in both directions, which is one more run of the no-clobber rule on top of
+round 5's own U5.
 
 ### D5 docs
 PENDING
