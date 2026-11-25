@@ -14,6 +14,10 @@ class PhoshdroidApp : Application() {
         // size from MainActivity, where LauncherActivity's own onResume
         // would never fire.
         DisplayShiftMonitor(this).register()
+        // Dock edge (r7): a monitor appearing or disappearing writes the guest's
+        // UI mode, hides the extra-key bar and re-launches the X activity on the
+        // monitor when a session is already running.
+        DockMonitor(this).register()
     }
 
     private fun createNotificationChannel() {

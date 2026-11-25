@@ -21,6 +21,10 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.phoshdroid.app.extraction.AssetExtractor
 import com.phoshdroid.app.launch.DisplayGeometry
+import com.phoshdroid.app.launch.DisplayLaunch
+import com.phoshdroid.app.launch.DockState
+import com.phoshdroid.app.launch.DockStatus
+import com.phoshdroid.app.launch.DockStatusReader
 import com.phoshdroid.app.launch.GuestOverlay
 import com.phoshdroid.app.launch.GuestOverlayAssets
 import com.phoshdroid.app.launch.KeyCapture
@@ -29,6 +33,7 @@ import com.phoshdroid.app.launch.LaunchDecision
 import com.phoshdroid.app.launch.LaunchReadiness
 import com.phoshdroid.app.launch.ReadyDecision
 import com.phoshdroid.app.launch.SessionPrep
+import com.phoshdroid.app.launch.UiModeFile
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.launch.XGeometry
 import com.phoshdroid.app.proot.ProotCommandBuilder
@@ -280,8 +285,26 @@ class LauncherActivity : AppCompatActivity() {
      * Without (3) an empty XLORIE_WIDTH/HEIGHT propagates into the guest's
      * start.sh, which writes an empty `mode=` line and the compositor falls
      * back to wlroots' default 1024x768.
+     *
+     * Docked (a3), every input comes from the TARGET display instead: the X
+     * activity runs full screen on the monitor at the monitor's density, and the
+     * extra-key bar is hidden (a7), so there is no bottom gap.
      */
     private fun computeGeometry(): XGeometry {
+        val rows = extraKeyRows()
+        val dock = dockStatus()
+        val dockedDisplay = dock.display
+        if (dock.docked && dockedDisplay != null && dockedDisplay.width > 0 && dockedDisplay.height > 0) {
+            winWidth = dockedDisplay.width
+            winHeight = dockedDisplay.height
+            return DisplayGeometry.forDisplay(
+                displayWidth = dockedDisplay.width,
+                displayHeight = dockedDisplay.height,
+                densityDpi = dockedDisplay.densityDpi,
+                extraKeyRows = rows,
+                extraKeysShown = false,
+            )
+        }
         val metrics = windowManager.currentWindowMetrics
         val bounds = metrics.bounds
         var width = bounds.width()
@@ -314,14 +337,6 @@ class LauncherActivity : AppCompatActivity() {
         val extraKeysShown =
             preferences.getBoolean("showAdditionalKbd", false) &&
                 preferences.getBoolean("additionalKbdVisible", false)
-        // Same accessor Termux:X11 uses for the bar height. It is null before
-        // MainActivity has created its Prefs in this process (its static prefs
-        // field is set in MainActivity.onCreate), so fall back to the default
-        // config's two rows.
-        val rows =
-            runCatching {
-                com.termux.x11.utils.TermuxX11ExtraKeys.getExtraKeysInfo()?.matrix?.size
-            }.getOrNull() ?: DisplayGeometry.DEFAULT_EXTRA_KEY_ROWS
 
         return DisplayGeometry.compute(
             windowWidth = width,
@@ -341,14 +356,18 @@ class LauncherActivity : AppCompatActivity() {
         // first hand-over this activity instance sees; predict the geometry now
         // so the margins match the running X root.
         if (geometry.width <= 0) geometry = computeGeometry()
+        val dock = dockStatus()
         try {
             val waylandIntent =
                 Intent(this, Class.forName("com.termux.x11.MainActivity"))
                     .putExtra("phoshdroid_top_padding_px", 0)
                     .putExtra("phoshdroid_bottom_padding_px", geometry.bottomGap)
                     .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
-            startActivity(waylandIntent)
-            logLaunch("handover done")
+            // a4: docked, the X activity belongs on the monitor. A refusal (a
+            // private display, or a device without secondary-display activities)
+            // falls back to exactly the old launch.
+            val onTarget = DisplayLaunch.start(this, waylandIntent, dock.launchDisplayId)
+            logLaunch("handover done display=${dock.launchDisplayId ?: "default"} on-target=$onTarget")
             finish()
             @Suppress("DEPRECATION")
             overridePendingTransition(0, 0)
@@ -356,6 +375,26 @@ class LauncherActivity : AppCompatActivity() {
             android.util.Log.e("Phoshdroid", "Failed to forward to MainActivity", e)
             statusText.text = "Display failed: ${e.message}"
         }
+    }
+
+    /** The dock state right now (a1), from the Android edge. */
+    private fun dockStatus(): DockStatus = DockStatusReader.read(this)
+
+    /**
+     * Same accessor Termux:X11 uses for the bar height. It is null before
+     * MainActivity has created its Prefs in this process (its static prefs
+     * field is set in MainActivity.onCreate), so fall back to the default
+     * config's two rows.
+     */
+    private fun extraKeyRows(): Int =
+        runCatching {
+            com.termux.x11.utils.TermuxX11ExtraKeys.getExtraKeysInfo()?.matrix?.size
+        }.getOrNull() ?: DisplayGeometry.DEFAULT_EXTRA_KEY_ROWS
+
+    /** a3: the scale is resolved against the display the desktop will be on. */
+    private fun targetDensityDpi(dock: DockStatus): Int {
+        val fromDisplay = if (dock.docked) dock.display?.densityDpi ?: 0 else 0
+        return if (fromDisplay > 0) fromDisplay else resources.displayMetrics.densityDpi
     }
 
     private fun restartApp() {
@@ -546,15 +585,22 @@ class LauncherActivity : AppCompatActivity() {
         // needs a hold first) is the fallback for that case.
         // Also hide the additional keyboard toolbar so phosh owns the full surface
         // height — its lockscreen unlock gesture needs to originate from the bottom edge.
+        //
+        // The dock state is read once here, before any of it is written, because
+        // the extra-key bar is a phone affordance: docked (a7) means no bar, no
+        // bottom gap, and the desktop UI — the same preference the geometry
+        // prediction below reads back, so the two agree.
+        val dock = dockStatus()
+        android.util.Log.i("Phoshdroid", DockState.logLine(dock))
         androidx.preference.PreferenceManager
             .getDefaultSharedPreferences(this)
             .edit()
             .putString("touchMode", "3")
-            // Keep the Termux:X11 shortcut toolbar (ESC, CTRL, arrows, etc.) visible.
-            // We carve out a bottom gap below phosh anyway for the edge swipe so the
-            // toolbar doesn't overlap phosh's usable area.
-            .putBoolean("showAdditionalKbd", true)
-            .putBoolean("additionalKbdVisible", true)
+            // Keep the Termux:X11 shortcut toolbar (ESC, CTRL, arrows, etc.) visible
+            // on the phone. Docked it is hidden: a monitor has a real keyboard, and
+            // its 165 px would come straight out of the X root.
+            .putBoolean("showAdditionalKbd", !dock.docked)
+            .putBoolean("additionalKbdVisible", !dock.docked)
             // Hardware keyboard and touchpad, r4-input K3 (docs/omarchy/r4-input-research.md
             // §2.2). This block is the only place that can set them: LoriePreferences is
             // android:enabled="false" in our manifest, so the submodule's own screen is
@@ -654,15 +700,20 @@ class LauncherActivity : AppCompatActivity() {
         // Start the guest while the user still sees this loading screen
         // (logo + "Starting desktop…").
         android.util.Log.e("Phoshdroid", "Starting ProotService...")
+        // a2: the guest UI mode for this session, written before start.sh reads it
+        // (omdroid-ui.sh runs once per session). The pin rule lives in UiMode: a
+        // pinned mode is never overwritten.
+        val ui = UiModeFile(rootfsDir).apply(dock.docked)
+        logLaunch("ui ${ui.effective} ${ui.reason}")
         ProotService.start(
             this,
             launchWidth,
             launchHeight,
-            // The scale follows the density unless the user chose one
-            // (contract section 4); the service receives the integer.
+            // The scale follows the density of the display the desktop will be on
+            // (a3) unless the user chose one (contract section 4).
             UiScale.resolve(
                 PhoshdroidPreferences(this).uiScale,
-                resources.displayMetrics.densityDpi,
+                targetDensityDpi(dock),
                 minOf(winWidth, winHeight),
             ),
         )

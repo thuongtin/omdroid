@@ -14,6 +14,14 @@
          settings after install. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- a5. Modern keyboard capture (Android 16.1 / API 36.1): while our window
+         is focused it receives keys before the system processes its shortcuts,
+         which is what Meta (SUPER) needs. protectionLevel="normal", so this line
+         grants it at install; the platform ignores an unknown permission, and the
+         call itself is reflection (compileSdk 35 has neither the permission
+         constant nor the LayoutParams method). Termux:X11's accessibility
+         KeyInterceptor stays in place as the fallback. -->
+    <uses-permission android:name="android.permission.CAPTURE_KEYBOARD" />
 
     <application
         android:name=".PhoshdroidApp"
@@ -52,7 +60,17 @@
             android:name="com.termux.x11.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            tools:replace="android:exported,android:launchMode" />
+            tools:replace="android:exported,android:launchMode">
+            <!-- Samsung DeX / desktop mode: 0x0 launch bounds mean "full screen"
+                 (developer.samsung.com/samsung-dex/modify-optional.html). Without
+                 it DeX opens the desktop in a free-form window on the monitor. -->
+            <meta-data
+                android:name="com.samsung.android.dex.launchwidth"
+                android:value="0" />
+            <meta-data
+                android:name="com.samsung.android.dex.launchheight"
+                android:value="0" />
+        </activity>
 
         <!-- Prevent LoriePreferences from auto-launching -->
         <activity
