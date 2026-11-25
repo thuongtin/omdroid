@@ -1441,7 +1441,9 @@ Item {
   // Wider than tall: the phone on its side.
   readonly property bool wide: window.width > window.height
   // Tile columns from the sheet's width: two upright, three on its side.
-  readonly property int tileColumns: Math.max(2, Math.min(4, Math.floor(content.width / 180)))
+  // Omdroid: 240 px a column (upstream 180), so a 1600 px tablet gets three
+  // columns whose labels fit at 16 px type instead of four that cut them.
+  readonly property int tileColumns: Math.max(2, Math.min(4, Math.floor(content.width / 240)))
   readonly property int pageRows: {
     var most = 0
     for (var i = 0; i < tilePages.length; i++) most = Math.max(most, tilePages[i].length)
