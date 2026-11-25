@@ -534,22 +534,22 @@ class LauncherActivity : AppCompatActivity() {
         // there is no root-side prep script to feed. The launcher prepares the
         // runtime dir (SessionPrep); ProotService writes resolv.conf.
 
-        // Termux:X11 input mode "2" = simulated touch: a finger tap moves the X cursor to
-        // the tap point and injects a real left-button click there, so the desktop sees a
-        // pointer press. Direct touch ("3", XI2 touch events) is what this used to set, but
-        // under cage the guest Hyprland is a Wayland client whose input comes from
-        // aquamarine's Wayland backend, which never creates a touch device (no wl_touch in
-        // aquamarine 0.14.0), so every touch is dropped before any surface sees it: the bar,
-        // menus and windows all ignore a finger. Measured on device in round 4, see
-        // docs/omarchy/r4-touch-report.md. Cost of "2": no true multitouch (two fingers =
-        // wheel scroll or right click, three = middle), long-press is the drag/select path,
-        // and the cursor follows the finger.
+        // Termux:X11 input mode "3" = direct touch: each finger reaches the X server as an XI2
+        // touch point, cage turns it into wl_touch for the nested Hyprland, and the patched
+        // aquamarine the APK syncs to /etc/phoshdroid/lib (rootfs/overlay/etc/phoshdroid/lib,
+        // patch 0002) gives Hyprland the touch device that aquamarine 0.14.0 lacked. So a tap,
+        // a quick flick, a swipe with no hold and a second finger all arrive as real touch,
+        // which the mobile UI gestures (dock swipe-up, back edge, card flicks) need. Measured
+        // on device in round 5, see docs/omarchy/r5-touch-device-report.md. Without that
+        // library Hyprland has no touch device and every touch is dropped (round 4,
+        // docs/omarchy/r4-touch-report.md); "2" (simulated touch: a tap is a click, a drag
+        // needs a hold first) is the fallback for that case.
         // Also hide the additional keyboard toolbar so phosh owns the full surface
         // height — its lockscreen unlock gesture needs to originate from the bottom edge.
         androidx.preference.PreferenceManager
             .getDefaultSharedPreferences(this)
             .edit()
-            .putString("touchMode", "2")
+            .putString("touchMode", "3")
             // Keep the Termux:X11 shortcut toolbar (ESC, CTRL, arrows, etc.) visible.
             // We carve out a bottom gap below phosh anyway for the edge swipe so the
             // toolbar doesn't overlap phosh's usable area.
