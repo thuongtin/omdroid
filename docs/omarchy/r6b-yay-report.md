@@ -8,12 +8,12 @@ Head at start: `c8691a5`.
 | Step | What | Status |
 |---|---|---|
 | Y0 | Premises: yay-bin aarch64, makepkg fakeroot calls, fakeroot IPC mode | PASS (sources below) |
-| Y1 | Shared module, refactored sudo, fakeroot shim, yay shim, selftest cases | PASS (34/34 on the build machine) |
-| Y2 | End-to-end on aarch64 in the arm64 guest image (qemu, two simulated proots) | PENDING |
-| Y3 | Host gate (compile, test, lint, unit-count) | PENDING |
-| Y4 | Build APK, sha256 | PENDING |
-| Y5 | README | PENDING |
-| Y6 | Report + manual test for Phil | PENDING |
+| Y1 | Shared module, refactored sudo, fakeroot shim, yay shim, selftest cases | PASS (35/35 on the build machine) |
+| Y2 | End-to-end on aarch64 in the arm64 guest image (qemu, two simulated proots) | PASS (3 findings, one a real `sudo -k` bug) |
+| Y3 | Host gate (compile, test, lint, unit-count) | PASS (98 tests, 0 failed) |
+| Y4 | Build APK, sha256 | PASS (`7a42c3d1…` from tree `6834e6c`) |
+| Y5 | README | PASS |
+| Y6 | Report + manual test for Phil | PASS |
 
 ## Y0. Premises
 
@@ -81,8 +81,10 @@ PASS.
   frames, tracks `SIGWINCH`, restores the terminal on every exit path and returns the broker's exit
   code.
 - `rootfs/overlay/etc/phoshdroid/sudo` — same options, same environment, same messages; it now builds
-  the request and calls `omdroid_root.relay(..., "sudo")`. Nothing else changed, which the old cases
-  confirm (all 27 still pass).
+  the request and calls `omdroid_root.relay(..., "sudo")`. One behaviour changed later in the round,
+  from a Y2 finding: `-k` alone is still a no-op, but `-k <command>` now runs the command, as sudo
+  does (makepkg installs with `sudo -k pacman -U`). The old cases all still pass (27 unchanged, plus
+  the new `-k` case and 7 fakeroot ones: 35/35).
 - `rootfs/overlay/etc/phoshdroid/fakeroot` (new) — `fakeroot [--] cmd...` sends the command to the
   broker with `keep_env: true`, the caller's cwd, its stdio (pty when stdin is a tty) and
   `FAKEROOTKEY` set (`setdefault`, so a nested call keeps the outer key); target user `root`
@@ -125,7 +127,142 @@ PASS fakeroot_unsupported_option_is_an_error
 
 ## Y2. End-to-end on aarch64
 
-PENDING
+PASS, with three findings (one of them a real bug in the round-6 `sudo`).
+
+**Setup.** Container `omdroid-yay-test` from `omdroid-guest:0.0.14` — arm64, running under
+qemu-user binfmt, `uname -m` = `aarch64`, Arch Linux ARM. proot cannot run under qemu-user, so
+the two proots are simulated with real uids: the broker as the container's root (what `-0`
+gives it on the phone) and the client side as `omarchy`, uid 1000. The overlay files were copied
+to `/etc/phoshdroid/` and linked into `/usr/local/bin` exactly as the packager and `start.sh`
+do. Two harness-only adjustments, neither needed on a device: `--allow-peer-uid 1000` on the
+broker (on the phone both proots are one app uid and proot's fake_id0 rewrites `SO_PEERCRED`),
+and the socket directory/socket chmod'ed 0755/0666 from the root side (on the phone the
+0700/0600 defaults already match the single app uid).
+
+**What ran, as uid 1000 (log: `/tmp/yay-test/chain.log`, `chain3.log` in the container; the
+copy kept here is `chain2.sh`/`chain3.sh`):**
+
+```
+$ command -v sudo fakeroot yay makepkg
+/usr/local/bin/sudo   /usr/local/bin/fakeroot   /usr/local/bin/yay   /usr/sbin/makepkg
+$ type -a fakeroot
+fakeroot is /usr/local/bin/fakeroot      <- the shim wins over the real package
+fakeroot is /usr/sbin/fakeroot
+fakeroot is /usr/bin/fakeroot
+$ sudo id
+uid=0(root) gid=0(root) groups=0(root)
+$ sudo pacman -Sy --noconfirm
+:: Synchronizing package databases...
+ core downloading... extra downloading... alarm downloading... aur downloading...
+$ fakeroot -v
+fakeroot version 1.37.2 (omdroid shim: fake root through the root broker)
+$ fakeroot -- id
+uid=0(root) gid=0(root) groups=0(root)
+$ fakeroot -- sh -c 'echo FAKEROOTKEY=$FAKEROOTKEY; echo PWD=$PWD; echo MYVAR=$MYVAR'
+FAKEROOTKEY=558      PWD=/tmp/yay-test      MYVAR=from-session
+$ yay --version                       # first call: the bootstrap
+yay: no AUR helper in this guest yet - first run installs yay-bin (base-devel plus a prebuilt
+     binary, a few minutes)
+yay: progress and the full log: /home/omarchy/.cache/omdroid/yay-bootstrap.log
+yay: installing base-devel and git
+... error: failed to prepare transaction (could not satisfy dependencies) ...   <- finding 1
+yay: base-devel here would upgrade the guest's pacman and sudo; installing the build tools
+     directly, the guest's libraries stay as they are
+yay: the guest's mirrors do not carry flex right now; installing the rest        <- finding 2
+Packages (26) ... Total Installed Size: 452.31 MiB
+yay: fetching yay-bin from the AUR
+yay: building and installing yay-bin
+==> Entering fakeroot environment...
+==> Starting package()...
+==> Finished making: yay-bin 13.1.0-1
+==> Installing package yay-bin with pacman -U...
+installing yay-bin...
+yay v13.1.0 - libalpm v16.0.1
+$ yay -S --noconfirm cbonsai          # an AUR package that compiles
+Sync Make Dependency (1): scdoc-1.11.5-1
+AUR Explicit (1): cbonsai-1.4.2-1
+==> Entering fakeroot environment...
+cc -march=armv8-a -O2 ... cbonsai.c -lpanelw -lncursesw -o cbonsai
+==> Finished making: cbonsai 1.4.2-1
+==> Installing package cbonsai with pacman -U...
+installing cbonsai...
+$ cbonsai -p                          # the package runs
+        &&&& ... &&&&&&&&\&&&&&/&&& ... (tree drawn)
+$ yay -Qi cbonsai
+Name : cbonsai   Version : 1.4.2-1   Architecture : any   Depends On : gcc ncurses
+$ yay -R --noconfirm cbonsai
+removing cbonsai...
+$ pacman -Q cbonsai
+error: package 'cbonsai' was not found
+$ time yay --version                  # second call: no bootstrap
+yay v13.1.0 - libalpm v16.0.1         real 0m0.613s
+```
+
+Why `cbonsai`: it is AUR-only (the repositories have no `cbonsai`), `arch=('any')` so aarch64 is
+not refused, it compiles a single C file with gcc in seconds — so the run also proves that the
+`base-devel` tools really reached the guest and that `package()` builds inside the fakeroot
+shim — and `cbonsai -p` draws one tree and exits, so it can be run without a terminal.
+(`yay -S pfetch` was the first choice and installed the *repository* package `pfetch-rs`, which
+proves nothing about the AUR path.)
+
+**Finding 1 — `pacman -S --needed base-devel` needs a system upgrade on the shipped image.**
+The image has `openssl 3.6.4-1`; Arch Linux ARM's repositories are now on `openssl 4.1.0-1`, so
+today's `base-devel` meta package (a real package in ALARM core, `1-2`, `Depends On: ... pacman
+... sudo ...`) cannot be installed without replacing the base system:
+
+```
+error: failed to prepare transaction (could not satisfy dependencies)
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by cryptsetup
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by curl
+:: installing openssl (4.1.0-1) breaks dependency 'libssl.so=3-64' required by curl
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by libarchive
+:: installing openssl (4.1.0-1) breaks dependency 'libssl.so=3-64' required by libngtcp2
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by libsasl
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by openssh
+:: installing openssl (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by pacman
+:: installing openssl (4.1.0-1) breaks dependency 'libssl.so=3-64' required by socat
+```
+
+Resolving each of base-devel's dependencies on its own (`pacman -Sp --print-format '%n' <dep>`)
+shows that only two of them drag `openssl 4` in: `pacman` (the package manager itself) and
+`sudo`. Every other one — `archlinux-keyring autoconf automake binutils bison debugedit
+fakeroot file findutils flex gawk gcc gettext grep groff gzip libtool m4 make patch pkgconf sed
+texinfo which` — resolves without touching an installed package. So the bootstrap installs that
+list instead (minus `pacman` and `sudo`: the guest has pacman, and its sudo is the broker
+client), and the transaction really is "new packages only": the log shows `warning: binutils …
+is up to date -- skipping` and the same for file, findutils, gawk, gettext, grep, libtool, sed
+and which. **No system upgrade, ever**: the guest's Hyprland/aquamarine/Mesa in `/opt` are
+pinned against the image's libraries. (Before that rule existed I did try one `pacman -Syu` in
+the container, allowed by the parent for the container only; it died on mirror retrieval
+errors and upgraded nothing — `pacman -Q openssl` still says `3.6.4-1`.)
+
+**Finding 2 — the mirrors did not carry `flex-2.7.6-1`.** The synced `core` database lists
+`flex 2.7.6-1`; `mirror.archlinuxarm.org` redirects to `va.us.mirror…` which 404s, and
+`de/eu/dk/tw/sg/us` mirrors, `mirror.umd.edu`, `ftp.osuosl.org` and `mirror.rackspace.com` 404
+it too (checked with `curl -r 0-100`). One failed transaction is the whole bootstrap failing
+over a package the build does not need, so `install_pacman()` retries once with `--ignore` for
+exactly the package names pacman reported as `failed retrieving file`, and prints which ones it
+skipped. `flex` was the only casualty; `gcc`, `make`, `fakeroot` and `git` all installed, which
+is why `cbonsai` could compile.
+
+**Finding 3 — `sudo -k <command>` did nothing, and that silently broke every install.** makepkg
+installs what it builds with `run_pacman -U` → `sudo -k pacman -U <pkg>` (makepkg line 242).
+The round-6 client treated *any* `-k` as "reset the timestamp, exit 0", so makepkg printed
+`==> Installing package yay-bin with pacman -U...` and returned success while nothing was
+installed: `/usr/bin/yay` was missing, `pacman -Q yay-bin` empty, and `pacman.log` had no `-U`
+line at all — the only visible symptom was the shim's own `pacman finished but /usr/bin/yay is
+missing`. sudo's own meaning is "-k with a command: run the command, ignore the cached
+credentials", so `-k` is now a no-op only when it stands alone; `sudo -k echo installed` is a
+new selftest case (35/35). On a tablet this would have made every `yay -S` and every
+`omarchy-pkg-aur-add` appear to succeed without installing anything.
+
+**What this does NOT prove.** The two-proot setup on the phone (the shared `/tmp` bind, proot's
+`SO_PEERCRED` rewriting, one real uid under both), Android's kernel under all of it (this ran on
+the host's `7.2.15-1-omarchy`), that the real `fakeroot` fails in the guest with an IPC error
+(that is inference from `CONFIG_SYSVIPC` and this project's own `shmget` ENOSYS measurement —
+the container never ran the real one), the device's network and mirror set, what a *very* old
+guest pacman database does (`pacman -Sy` is part of the bootstrap, which covers it), and every
+ownership question (the container's root really is uid 0, proot's fake root is not).
 
 ## Y3. Host gate
 
@@ -153,7 +290,40 @@ command turned it green.
 
 ## Y4. Build
 
-PENDING
+PASS.
+
+Built from a **separate worktree at `6834e6c`**, not from the round's checkout: a parallel session
+was committing the dock work in that same checkout (`d1bd409`, `dbb3f71`) and had `app/src` edits
+uncommitted at build time, so assembling the working tree would have baked half-finished,
+uncommitted code into the APK Phil installs.
+
+```
+git worktree add --detach <scratch>/omarchy/r6/yay/build-tree 6834e6c
+git submodule update --init --recursive
+ln -s <repo>/app/src/main/assets/rootfs.bin    app/src/main/assets/rootfs.bin
+ln -s <repo>/app/src/main/assets/bootstrap.bin app/src/main/assets/bootstrap.bin
+cp <repo>/local.properties .
+rm -f app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleDebug --console=plain
+BUILD SUCCESSFUL in 1m 49s
+134 actionable tasks: 134 executed
+```
+
+- APK: **1,715,756,194 bytes**, sha256
+  **`7a42c3d1fdf0acf4e05f0b0cf147a4fdac7e45a33521b6d06f384cbc689028fc`**, tree `6834e6c`.
+  Copy: `<scratch>/omarchy/r6/yay/omdroid-sudo-yay-test.apk` (same sha256).
+- The overlay is really inside it (`unzip -l app-debug.apk | grep guest-overlay`):
+  `fakeroot` 4,422 B, `yay` 8,886 B, `omdroid_root.py` 6,348 B, `sudo` 7,642 B,
+  `start.sh` 6,913 B, `omdroid-rootd.py` 18,373 B — byte counts identical to the committed files.
+  `GuestOverlay` walks the asset tree, so the three new files reach an existing install on the
+  next cold start even though `rootfs.bin` was not repacked.
+- `omdroid-0.0.15-alpha.apk` was already gone from the main checkout's
+  `app/build/outputs/apk/debug/` when this step began (a parallel session's `assembleDebug`
+  clears that directory; it had built at 12:54). Restored from the published release asset with
+  `gh release download v0.0.15-alpha -p omdroid-0.0.15-alpha.apk`: sha256
+  `c188e365…5032`, the value in the release notes, so the restored file is the published one.
+- The APK also carries the dock work that was committed to `main` before `6834e6c`
+  (`d1bd409`); that is expected — the parent asked for the combined test build.
 
 ## Y5. README
 
@@ -170,4 +340,110 @@ PASS.
 
 ## Y6. Report
 
-PENDING
+PASS. The sections below are the deliverable: the manual test, the design as built, what still
+fails, the commits and the APK.
+
+## Manual test for Phil
+
+This extends "Manual test for Phil" in `docs/omarchy/r6-sudo-report.md`; steps 1-10 there (install,
+`sudo id`, pipes, pacman, the interactive prompt, Ctrl+C, `omarchy-pkg-add/remove`, ownership, the
+broker log, broker death) still apply unchanged and are not repeated. These are the yay/makepkg
+steps on top of them.
+
+1. Install this build and cold start — the same three commands as sudo step 1, with
+   `<scratch>/omarchy/r6/yay/omdroid-sudo-yay-test.apk`
+   (sha256 `7a42c3d1fdf0acf4e05f0b0cf147a4fdac7e45a33521b6d06f384cbc689028fc`, ~1.7 GB).
+   Must see `INSTALL: PASS` with that sha256 and `VERDICT: PASS` from `probe.sh -q`.
+2. `fakeroot` resolves to the shim, not the package:
+   ```
+   command -v fakeroot     # /usr/local/bin/fakeroot
+   fakeroot -v             # fakeroot version 1.37.2 (omdroid shim: fake root through the root broker)
+   fakeroot -- id          # uid=0(root) gid=0(root) groups=0(root)
+   ```
+   If it says the root broker is not running, the second proot died: sudo step 10 has the log
+   commands.
+3. `yay --version` — **the first call bootstraps**, so let it run in a terminal and read the
+   progress lines. Expected, in order: `yay: no AUR helper in this guest yet …`, then
+   `yay: installing base-devel and git`, then today's expected twist
+   `yay: base-devel here would upgrade the guest's pacman and sudo; installing the build tools
+   directly, the guest's libraries stay as they are`, then ~85 MiB of downloads / ~450 MiB
+   installed (several minutes on the tablet), `yay: fetching yay-bin from the AUR`,
+   `yay: building and installing yay-bin`, and finally `yay v13.1.0 - libalpm v16.0.1`.
+   The whole log is `~/.cache/omdroid/yay-bootstrap.log`. A second `yay --version` must return
+   immediately — that is the proof the bootstrap did not re-run.
+4. An AUR package that actually compiles:
+   ```
+   yay -S --noconfirm cbonsai    # one C file through gcc, then package() in the fakeroot shim
+   cbonsai -p                    # draws a tree and exits
+   yay -Qi cbonsai               # Name: cbonsai  Version: 1.4.2-1
+   yay -R --noconfirm cbonsai
+   pacman -Q cbonsai             # error: package 'cbonsai' was not found
+   ```
+   If `cbonsai -p` answers `ncurses: cannot initialize terminal type`, `TERM` is unset in that
+   window — not a package problem.
+5. Omarchy's own AUR scripts (this is the user-facing case):
+   ```
+   omarchy-pkg-aur-add cbonsai   # calls yay -S --noconfirm --needed
+   omarchy-pkg-remove cbonsai
+   ```
+   No `yay: command not found`, no password prompt, and the package is there and then gone
+   (`pacman -Q cbonsai`).
+6. Where to look when it fails:
+   - `~/.cache/omdroid/yay-bootstrap.log` — every step's output; the last line of a failed run
+     names the step.
+   - `tail -20 /tmp/omdroid-root/rootd.log` — one line per request, `<time> <argv[0]> exit=<code>`;
+     `pacman` lines with `exit=0` around a `bash` line are the `makepkg -U` install.
+   - `sudo pacman -Q gcc make fakeroot git` — did the build tools land? (all four must be there)
+   - `ls -l /usr/bin/yay; command -v yay` — is the real binary installed, and is the shim first?
+   - If the message says the guest image cannot install the build tools without a system upgrade,
+     the repositories have moved past the image again: the bootstrap stops there on purpose and
+     never upgrades the guest, whose Hyprland/aquamarine/Mesa are pinned builds.
+
+## Design as built
+
+From the outside, nothing changed for the user: `sudo`, `fakeroot` and `yay` are plain commands in
+`/usr/local/bin`, all three links to `/etc/phoshdroid/…` that the image makes and `start.sh`
+refreshes every session, and all three reach the broker ProotService already starts.
+
+- `omdroid_root.py` is the client half of the broker protocol (request, frames, stdin pump, pty
+  window size, raw mode, exit code) that `sudo` and `fakeroot` both import, so the wire format
+  lives in one file.
+- `fakeroot` sends its command to the broker as `root` with `keep_env: true`, the caller's cwd,
+  the caller's stdio (pty when stdin is a tty) and `FAKEROOTKEY` set, which is exactly what
+  makepkg's `-F` re-entry checks for. `-v` prints a fakeroot-shaped line, `-h` prints usage,
+  `-s/-i` and the IPC-selection flags are refused by name rather than silently ignored.
+- `yay` execs `/usr/bin/yay` once it exists; otherwise it takes a `flock`, syncs the databases,
+  installs the build environment (the base-devel meta package, or its dependency list minus
+  `pacman`/`sudo` when the meta package would upgrade the base system; skipping only packages
+  some mirror cannot serve), clones `yay-bin` into `~/.cache/omdroid/`, runs `makepkg -si`, and
+  execs the result. Every step is echoed and appended to one log, and a failure is one line plus
+  that log's path.
+- The guest's `sudo` fix: `-k` alone stays a no-op (`sudo -k` in a `.logout` file must not break),
+  `-k <command>` runs the command, which is what makepkg does when it installs a built package.
+
+## What still fails or is missing
+
+- The real `/usr/bin/fakeroot` from `base-devel` is installed but unusable: run it directly
+  (`/usr/bin/fakeroot ls`) and it should die on SysV IPC, because Android's kernel has
+  `CONFIG_SYSVIPC` off. Not measured on a device; the shim is what makepkg calls, so nothing
+  needs it.
+- AUR packages that declare only `arch=('x86_64')` are refused; `yay --mflags --ignorearch` skips
+  the check and then only works if the sources really build on aarch64.
+- `yay -S` of anything that would need a base-system upgrade hits the same dependency conflict and
+  stops; Omdroid does not upgrade the guest for you.
+- `systemctl`, `mount` and everything else from the sudo report's "What still fails under sudo"
+  is unchanged.
+
+## Commits
+
+- `5562ea5` feat(rootfs): fakeroot and yay shims on the fake-root broker
+- `baf7b40` feat(rootfs): ship the fakeroot and yay shims and link them into PATH
+- `ceb51dc` docs: yay and makepkg in the guest
+- `6834e6c` fix(rootfs): run the command after sudo -k, and keep yay off a system upgrade
+- the docs commit that carries this report's final sections
+
+## Final APK
+
+`7a42c3d1fdf0acf4e05f0b0cf147a4fdac7e45a33521b6d06f384cbc689028fc` (1,715,756,194 bytes), built
+from tree `6834e6c`; copy at
+`<scratch>/omarchy/r6/yay/omdroid-sudo-yay-test.apk`.
