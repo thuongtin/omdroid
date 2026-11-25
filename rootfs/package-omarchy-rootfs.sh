@@ -75,13 +75,19 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/fake-proc" "$WORK/stage/etc/phoshdroid/fake-p
 # into ~/.config/omarchy/plugins at session start (docs/omarchy/r5-mobile-ui-report.md).
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-ui.sh" "$WORK/stage/etc/phoshdroid/omdroid-ui.sh"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omamobile" "$WORK/stage/etc/phoshdroid/omamobile"
+# Fake root for Omarchy's scripts: the broker the host's second proot runs and
+# the sudo client (docs/omarchy/launch-contract.md section 7).
+cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-rootd.py" "$WORK/stage/etc/phoshdroid/omdroid-rootd.py"
+cp -a "$OVERLAY_DIR/etc/phoshdroid/sudo" "$WORK/stage/etc/phoshdroid/sudo"
 # aquamarine with wl_touch (lib/README.md). start.sh puts /etc/phoshdroid/lib first
 # in LD_LIBRARY_PATH; the image copy in /opt/omarchy-android/aquamarine stays as is.
 cp -a "$OVERLAY_DIR/etc/phoshdroid/lib" "$WORK/stage/etc/phoshdroid/lib"
 chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/session-child.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-plugin-index.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-watch.py" \
-    "$WORK/stage/etc/phoshdroid/omdroid-ui.sh"
+    "$WORK/stage/etc/phoshdroid/omdroid-ui.sh" \
+    "$WORK/stage/etc/phoshdroid/omdroid-rootd.py" \
+    "$WORK/stage/etc/phoshdroid/sudo"
 # The vendored helpers go on the session PATH through /usr/local/bin, so the
 # bar and the launcher find them by bare name. The symlinks are image-time; the
 # scripts they point at are APK-synced into /etc/phoshdroid every start.
@@ -91,6 +97,9 @@ for helper in omamobile-launch omamobile-home omamobile-browser-setup \
     omamobile-cell-watch omamobile-call-watch; do
     ln -sfn "/etc/phoshdroid/omamobile/bin/$helper" "$WORK/stage/usr/local/bin/$helper"
 done
+# sudo: image-time link; start.sh relinks it every session so an updated
+# install whose overlay sync only rewrote /etc/phoshdroid picks it up too.
+ln -sfn "/etc/phoshdroid/sudo" "$WORK/stage/usr/local/bin/sudo"
 
 # The nested parent compositor. The bundle ships weston 14's patched x11 module
 # for the Termux host, but this project runs the parent INSIDE the guest, and

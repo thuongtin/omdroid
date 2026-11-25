@@ -55,6 +55,12 @@ export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_RT=1
 export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland SDL_VIDEODRIVER=wayland
 export XWAYLAND_NO_GLAMOR=1 NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
 
+# Fake root: the sudo client ships in the overlay and the broker is the second
+# proot the host app starts. chmod because the APK overlay sync only marks .sh
+# and .py files executable, and this one has no suffix.
+chmod 755 /etc/phoshdroid/sudo
+ln -sfn /etc/phoshdroid/sudo /usr/local/bin/sudo
+
 mkdir -p /run/user/1000
 rm -f /run/user/1000/wayland-omarchy /run/user/1000/wayland-omarchy.lock
 

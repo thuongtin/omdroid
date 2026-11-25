@@ -10,7 +10,7 @@ Head at start: `cf872ed`.
 | S0 | Premises on device: second proot `-0`, pacman, session survives | PENDING (Phil's manual test) |
 | S1 | Broker + client + host-side harness | PASS (27/27 on the build machine) |
 | S2 | Host side: `buildRootBrokerCommand` + `ProotService` + gate | PASS |
-| S3 | Overlay plumbing (files, lists, start.sh, launch contract) | PENDING |
+| S3 | Overlay plumbing (files, lists, start.sh, launch contract) | PASS |
 | S4 | Build APK, sha256 | PENDING |
 | S5 | Device proof (all sudo paths) | PENDING (Phil's manual test) |
 | S6 | README paragraph | PENDING |
@@ -95,7 +95,22 @@ Gate (`./gradlew :app:compileDebugKotlin :app:test :app:lintDebug --console=plai
 
 ## S3. Overlay plumbing
 
-PENDING
+PASS.
+
+- `app/build.gradle.kts` `syncGuestOverlay`: `include("omdroid-rootd.py", "sudo")`, so both files
+  reach the APK's `assets/guest-overlay/etc/phoshdroid/` and `GuestOverlay` re-syncs them into an
+  existing install on the next cold start. (`GuestOverlay` marks `.py` files 755; `sudo` has no
+  suffix, which is why `start.sh` chmods it — see below.)
+- `rootfs/package-omarchy-rootfs.sh` overlay block: copies both files, adds them to the
+  `chmod 755` list, and creates `/usr/local/bin/sudo -> /etc/phoshdroid/sudo` at image time, next
+  to the omamobile helper links.
+- `rootfs/overlay/etc/phoshdroid/start.sh`: `chmod 755 /etc/phoshdroid/sudo` then
+  `ln -sfn /etc/phoshdroid/sudo /usr/local/bin/sudo` before the session starts, so an updated
+  install whose overlay sync only rewrote `/etc/phoshdroid` still gets the command. No
+  apostrophes in the added comments. `bash -n` on both scripts: SYNTAX_OK.
+- `docs/omarchy/launch-contract.md`: section 5 step 2 now names the second proot, and the new
+  section 7 is the interface: the host starts the broker proot, the socket path and modes, the
+  request log, the guest link, and that it is fake root with no real privilege and no systemd.
 
 ## S4. Build
 

@@ -76,6 +76,7 @@ val syncGuestOverlay =
         from(rootProject.file("rootfs/overlay/etc/phoshdroid")) {
             include("start.sh", "session-child.sh", "omarchy-plugin-index.sh", "fit-x11.py", "omarchy-watch.py")
             include("omdroid-ui.sh")
+            include("omdroid-rootd.py", "sudo")
             include("omamobile/**")
             include("fake-proc/**")
             include("lib/**")

@@ -60,8 +60,9 @@ this Hyprland build accepts.
 
 1. Host: wipe `<prefix>/tmp/omarchy-runtime/` (it is `XDG_RUNTIME_DIR`: nothing in it is meant to
    survive a session) and stale `<prefix>/tmp/proot-*` entries; keep the logs in `<prefix>/tmp`.
-2. Host: start the X server, then the proot guest with `/etc/phoshdroid/start.sh`. No host-side
-   Wayland compositor is started (weston is gone; cage inside the guest is the parent).
+2. Host: start the X server, then the proot guest with `/etc/phoshdroid/start.sh`, and alongside
+   it the fake-root broker proot (section 7). No host-side Wayland compositor is started (weston
+   is gone; cage inside the guest is the parent).
 3. Guest `start.sh`: build the plugin index, remove a stale ready marker, start the resize helper
    and the ready/resize watcher, exec `dbus-run-session ... cage -- session-child.sh`.
 4. Guest `session-child.sh`: wait (bounded, no fixed sleep) until cage's window equals the X root,
@@ -77,3 +78,30 @@ this Hyprland build accepts.
   (watcher: one line per state change, with a timestamp). Guest `/tmp` = `<prefix>/tmp`.
 - Host: logcat tag `Phoshdroid`, lines starting `launch:` carry the phase name and milliseconds
   since process start.
+
+## 7. Fake root (`sudo`)
+
+The desktop stays as it is: uid 1000 (`-i 1000:1000`), so files the session writes belong to
+`omarchy` and git/ssh/ownership checks keep working. The image has no `sudo` package (setuid does
+not work under proot) and `su`/`run0`/`pkexec` cannot help, but 70 of Omarchy's scripts in
+`/usr/share/omarchy/bin` call `sudo` — `omarchy-pkg-add`, `omarchy-pkg-remove`,
+`omarchy-refresh-pacman`, timezone, and the `sudo pacman|tee|sed|rm|cp|mkdir|env` uses inside them.
+
+- **Host**: `ProotService` starts a SECOND proot as part of the session: the login command with
+  exactly three differences — `-0` (fake root) instead of `-i 1000:1000`, `-w /root`, and
+  `/usr/bin/python3 /etc/phoshdroid/omdroid-rootd.py` as the program. Same rootfs, same binds,
+  same `--kill-on-exit`, so both proots see `<prefix>/tmp` as `/tmp`. It stops with the session.
+  Logs: `session: root-broker started` and `session: root-broker exited <code>` under logcat tag
+  `ProotService`; the broker's own output is mirrored to `<prefix>/tmp/root-broker.log`.
+  A broker that is missing or dies changes nothing else: the desktop and the session lifecycle
+  never depend on it.
+- **Socket**: `/tmp/omdroid-root/sock` in the guest (directory 0700, socket 0600), one request per
+  connection, concurrent connections allowed. One line per request in
+  `/tmp/omdroid-root/rootd.log`: time, `argv[0]`, exit code.
+- **Guest**: `/etc/phoshdroid/sudo` is linked to `/usr/local/bin/sudo` at image time, and again by
+  `start.sh` every session so an updated install picks it up. It sends argv, cwd, a whitelisted
+  environment and either the caller's terminal (a pty, so Ctrl+C/Z and window size behave) or
+  plain pipes with stdin streamed. It never asks for a password.
+- **What it is**: fake root only. Everything still runs as the Android app's own uid inside its
+  private storage, so `sudo` grants no privilege it did not already have. `systemctl` still does
+  not work (there is no systemd in this guest).
