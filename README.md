@@ -79,6 +79,11 @@ warnings; see Known limits.
 
 Not verified yet:
 
+- `sudo`. The broker and the client pass their host-side harness (27 cases, including a pty,
+  Ctrl+C and concurrent requests: `python3 docs/omarchy/tools/rootd-selftest.py`), but neither
+  has run on a tablet: not `sudo id`, not a pacman install through it, not the interactive
+  prompt, not `omarchy-pkg-add`. The steps that close this are in
+  `docs/omarchy/r6-sudo-report.md`.
 - A clean install of a release. `v0.0.14-alpha` and `v0.0.15-alpha` have each been installed
   on the tablet only as an update over an existing guest and cold-started with `probe.sh`
   passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). The extractor fix is
@@ -352,6 +357,12 @@ and `omdroid-logo.txt`, which is the version for a terminal:
 - There is no systemd inside the guest. proot cannot be PID 1, so the Omarchy user
   units never start, and NetworkManager, polkit and every command that calls
   `systemctl` fail. The desktop, the bar and the wallpaper do not depend on them.
+- `sudo` exists and never asks for a password, but it is fake root. A second proot of the
+  same guest runs as root (`-0`) behind a Unix socket, and the `sudo` client sends it the
+  command; everything still runs as the Android app's own uid inside its private storage,
+  so `sudo` grants no privilege Android did not already give the app. The desktop keeps
+  uid 1000 on purpose, so files written through `sudo` still read as `omarchy`. Anything
+  that needs real root still fails, `systemctl` above all.
 - The bar's audio widget has no data: no `omarchy-proot-audio` binary exists in the
   payload. The PulseAudio-to-Android bridge is designed, never demonstrated.
 - Scale 1.5 is not accepted by this Hyprland build; the guest quantises it to 1.6, so

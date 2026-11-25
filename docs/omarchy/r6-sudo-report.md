@@ -11,10 +11,10 @@ Head at start: `cf872ed`.
 | S1 | Broker + client + host-side harness | PASS (27/27 on the build machine) |
 | S2 | Host side: `buildRootBrokerCommand` + `ProotService` + gate | PASS |
 | S3 | Overlay plumbing (files, lists, start.sh, launch contract) | PASS |
-| S4 | Build APK, sha256 | PENDING |
+| S4 | Build APK, sha256 | PASS |
 | S5 | Device proof (all sudo paths) | PENDING (Phil's manual test) |
-| S6 | README paragraph | PENDING |
-| S7 | Report + cleanup | PENDING |
+| S6 | README paragraph | PASS |
+| S7 | Report + cleanup | PASS |
 
 ## S0. Premises
 
@@ -114,32 +114,184 @@ PASS.
 
 ## S4. Build
 
-PENDING
+PASS.
+
+```
+rm -f app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleDebug --console=plain
+BUILD SUCCESSFUL in 21s
+```
+
+- `app/build/outputs/apk/debug/app-debug.apk`: 1,715,714,706 bytes, sha256
+  `f7d2db15cf871a539942b328115f31dd408cb1219e1f8443eb25de2f957be6e1`, built from the tree of
+  commit `4528cc3` (the build ran just before that commit landed; no file changed in between).
+- The overlay really is inside it: `unzip -l app-debug.apk | grep guest-overlay` lists
+  `assets/guest-overlay/etc/phoshdroid/omdroid-rootd.py` (17,726 B), `.../sudo` (12,176 B) and
+  `.../start.sh` (6,374 B).
+- Copy for Phil: `<scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk`, same sha256.
+- `assembleDebug` clears `app/build/outputs/apk/debug/`, and the release's local copy
+  `omdroid-0.0.15-alpha.apk` sat in that directory. It was restored from the published asset
+  (`gh release download v0.0.15-alpha`): 1,715,700,378 bytes, sha256
+  `c188e3657282c99797de65a7f1287121bc5bbde74484a3d7e40996d392995032`, which is the sha256 in the
+  release notes, so the restored file is byte-identical to the published one.
 
 ## S5. Device proof
 
-PENDING
+PENDING (Phil's manual test). The tablet was not on adb this round (`adb devices` listed nothing
+for `<tablet serial>`), and the parent's amendment moved every device step to a manual test. Each item
+of the original list is a step in "Manual test for Phil" below, in the same order; nothing in
+that list has been run on a device.
+
+Two premises the harness cannot cover, both caught by manual step 2:
+
+- `sudo id` assumes the broker proot itself starts: `-0` on the same rootfs, `-w /root` (0750,
+  root-owned — enterable only as fake root), and `/usr/bin/python3` present (the image has
+  python3.14). If any of those fails, the desktop still runs and `sudo` answers with its one-line
+  error; `session: root-broker exited <code>` in logcat names the failure.
+- `sudo -u omarchy` assumes proot's fake_id0 emulates `setuid`/`setgid` for the child
+  (`Popen(user=, group=)`). Plain `sudo` never calls setuid — the broker already has fake id 0, so
+  the code passes no ids when they equal `os.getuid()` — so only this path depends on it. If it
+  is refused, `sudo -u omarchy id` fails cleanly with `sudo: id: Permission denied` (exit 126).
 
 ## S6. README
 
-PENDING
+PASS.
 
-## S7. Cleanup
+- `Known limits`: a `sudo` paragraph — it exists, never asks for a password, is fake root inside
+  the app's sandbox with no real privilege, the desktop stays uid 1000 so written files read as
+  `omarchy`, and `systemctl` still fails.
+- `Not verified yet`: a `sudo` bullet — the 27-case host harness passes, but no tablet has run
+  `sudo id`, a pacman install, the interactive prompt or `omarchy-pkg-add`; it points at this
+  report for the closing steps.
 
-PENDING
+## S7. Report + cleanup
+
+PASS. No session was started this round, so nothing of mine is running; no test windows were
+opened; the repo tree is clean apart from the parent's amended brief
+(`docs/omarchy/brief-r6-sudo.md`, not mine to commit). The runnable artefact for the manual test
+is the scratch APK named in S4.
 
 ## Design
 
-TBD after S0.
+Two proots of the same guest, one socket between them.
+
+**Host.** `ProotService.startSession()` starts the broker before the desktop:
+`buildRootBrokerCommand()` = the login command with `-0` for `-i 1000:1000`, `-w /root` and
+`/usr/bin/python3 /etc/phoshdroid/omdroid-rootd.py` as the program, same rootfs and binds, same
+`--kill-on-exit`, same environment (`PROOT_LOADER`, `LD_LIBRARY_PATH`, `PROOT_TMP_DIR`). A monitor
+thread logs `session: root-broker started` / `session: root-broker exited <code>` and mirrors the
+output to `<prefix>/tmp/root-broker.log`; `stopSession()` destroys it. Nothing in the session's
+lifecycle depends on it: a broker that cannot start, or dies, is a log line.
+
+**Socket.** `/tmp/omdroid-root/sock` inside the guest. Both proots bind `<prefix>/tmp` as `/tmp`,
+so the client in the session and the broker in the root proot see the same file. Directory 0700,
+socket 0600; `SO_PEERCRED` must name this app's uid. One request per connection, a thread per
+connection, so a long `pacman -S` never blocks another `sudo`. One line per request in
+`/tmp/omdroid-root/rootd.log`.
+
+**Protocol.** One JSON line (`argv`, `cwd`, `env`, `env_extra`, `user`, `tty`, `keep_env`), then
+frames `">BI"` channel+length: 0 stdin, 1 stdout, 2 stderr, 3 exit code, 4 window size,
+5 error text. Pipe mode streams stdin and keeps stdout/stderr apart; pty mode allocates a pty,
+sets the caller's window size, relays bytes both ways (Ctrl+C/Z travel as bytes and the pty's
+line discipline turns them into signals; when proot refuses `setsid` the broker signals the child
+itself), and resizes on `SIGWINCH`. Exit code is `128+signal` when the child was killed.
+
+**Guest.** `/etc/phoshdroid/sudo` is linked to `/usr/local/bin/sudo` at image time and again by
+`start.sh` every session (the overlay sync only chmods `.sh`/`.py`, so start.sh chmods this one).
+It parses sudo's options, builds the default environment (`HOME=/root`, `USER=LOGNAME=root`,
+`SUDO_USER`, `SUDO_UID`, `SUDO_GID`, `SUDO_COMMAND`, the session's `PATH`, `TERM`, `LANG`,
+`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DISPLAY`), puts its own terminal in raw mode when stdin is
+a tty, and prints one line and exits 1 when the broker is not there.
+
+**Why the desktop keeps uid 1000.** With `-0` on the session, every file the desktop wrote would
+read as root and tools that check ownership (git's safe.directory, ssh's key permissions, apps
+that refuse to run as root) would break. Fake root only where a script asked for it.
+
+## Manual test for Phil
+
+Install the scratch APK, then run these in a foot window. 1 is on the build machine; 2-10 are in
+the guest.
+
+1. Install, cold start, size probe:
+   ```bash
+   cd ~/Development/personal/proot-post
+   export TABLET_SERIAL=<tablet serial>
+   docs/omarchy/tools/install.sh <scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk
+   docs/omarchy/tools/coldstart.sh 1
+   docs/omarchy/tools/probe.sh -q
+   ```
+   Must see `INSTALL: PASS` with sha256 `f7d2db15...`, the mobile desktop, `VERDICT: PASS`.
+2. Identity, no password:
+   ```
+   sudo id                # uid=0(root) gid=0(root) groups=0(root)
+   sudo -u omarchy id     # uid=1000(omarchy) gid=1000(omarchy)
+   sudo false; echo $?    # 1
+   ```
+   No password prompt anywhere. If `sudo id` prints the one-line "root broker is not running"
+   error, the broker proot did not start: see the log commands below.
+3. Pipes and separate streams:
+   ```
+   echo hi | sudo tee /etc/omdroid-sudo-test
+   cat /etc/omdroid-sudo-test        # hi
+   sudo rm /etc/omdroid-sudo-test
+   ls /etc/omdroid-sudo-test         # No such file or directory  (this is the pass)
+   ```
+4. pacman through fake root:
+   ```
+   sudo pacman -Sy
+   sudo pacman -S --noconfirm sl && sl -h
+   sudo pacman -R --noconfirm sl
+   ```
+   Sync without a lock error, `sl -h` prints usage, `sl` removed. This also proves the second
+   proot `-0` can run pacman at all.
+5. The interactive prompt through the pty: `sudo pacman -S sl`, answer `n` and Enter at
+   `Proceed with installation? [Y/n]`. Your `n` must be echoed once, the transaction must abort,
+   and the prompt must come back — that is the pty path from a real terminal.
+6. Ctrl+C: `sudo sleep 100`, then Ctrl+C. The prompt comes back at once (exit 130) and typing
+   still echoes (the terminal is restored).
+7. Omarchy's own scripts:
+   ```
+   omarchy-pkg-add sl
+   omarchy-pkg-remove sl
+   ```
+   Both succeed, no `sudo: command not found`.
+8. Ownership: `sudo touch ~/from-root; ls -l ~/from-root` must read `omarchy omarchy`, never
+   `root root`.
+9. Broker log: `tail -5 /tmp/omdroid-root/rootd.log` — one line per request above,
+   `<time> <argv[0]> exit=<code>`.
+10. Broker death and recovery: `ps -eo pid,args | grep [o]mdroid-rootd` for the PID, `kill <pid>`,
+    then `sudo id` must print exactly
+    `sudo: the root broker is not running (start the Omdroid session)` and exit 1 while the
+    desktop keeps working (`probe.sh -q` still PASS). Restart the session (`coldstart.sh 1`) and
+    `sudo id` must be root again.
+
+If something fails, in this order: `adb -s $TABLET_SERIAL logcat -d -s ProotService:* | grep
+root-broker` (host: started / exited), `adb -s $TABLET_SERIAL shell run-as com.phoshdroid.app cat
+files/usr/tmp/root-broker.log` (the broker's own output), `... cat
+files/usr/tmp/omdroid-root/rootd.log` (the request log), and `sudo -i` if you need a root shell
+to look around.
 
 ## What still fails under sudo
 
-TBD.
+- `systemctl ...` — no systemd in the guest. Expected message (not measured this round):
+  `System has not been booted with systemd as init system (PID 1). Can't operate.` Fake root does
+  not create a PID 1, so every Omarchy script that calls `systemctl` keeps failing.
+- Anything that needs a real kernel capability or a real root uid from Android's point of view:
+  `mount`, opening `/sys/devices` (Android denies it to the app — `sudo btop` aborts exactly as
+  it does without sudo), changing a file's owner to a real uid, hostname changes.
+- `su`, `run0`, `pkexec` remain unusable; the sudo client is the only root path.
+- setuid binaries in the guest still do not work under proot; `sudo` never uses setuid.
 
 ## Commits
 
-TBD.
+- `d9b9e61` feat(rootfs): fake-root broker and sudo client for the guest
+- `83d9e25` feat(proot): start a fake-root broker proot with the session
+- `7e0960b` feat(rootfs): ship the sudo client and link it into PATH
+- `4528cc3` fix(rootfs): retry the broker pty without a controlling terminal
+- the docs commit that carries this report (README S6 + this report)
 
 ## Final APK sha256
 
-TBD.
+`f7d2db15cf871a539942b328115f31dd408cb1219e1f8443eb25de2f957be6e1` (1,715,714,706 bytes), built
+from the tree of `4528cc3`; copy at
+`<scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk`.
