@@ -105,3 +105,69 @@ not work under proot) and `su`/`run0`/`pkexec` cannot help, but 70 of Omarchy's 
 - **What it is**: fake root only. Everything still runs as the Android app's own uid inside its
   private storage, so `sudo` grants no privilege it did not already have. `systemctl` still does
   not work (there is no systemd in this guest).
+
+## 8. Docking (monitor, keyboard, mouse)
+
+A monitor appearing is a dock; it going away is an undock. Neither is a reason to restart the
+session (section 3 keeps a live size change alive too), and neither is a reason to lose an open
+window.
+
+**Who decides.** The host: `app/src/main/kotlin/com/phoshdroid/app/launch/DockState.kt` is the
+pure rule — an external, non-default display docks the device, presentation displays first, public
+before private. Android's `UI_MODE_TYPE_DESK` is reported in the `dock:` log line but never docks
+on its own (a charging stand sets it, and flipping the phone to the desktop layout with no monitor
+attached would be a regression). Input devices are reported, never a trigger.
+
+**The UI mode file.** The host owns `~/.config/omdroid/ui` in the guest
+(`<rootfs>/home/omarchy/.config/omdroid/ui`) and writes `desktop` while docked, `mobile` when not,
+at two moments: before a session starts (before `start.sh` runs `omdroid-ui.sh`) and on a dock
+change while one runs. It writes nothing when the file already holds that mode.
+
+**The pin.** `~/.config/omdroid/ui-pin`, in the same directory, holds the user's choice: `auto`
+(the default when the file is missing or unreadable), `mobile` or `desktop`. While it names a mode
+the host never writes `ui` at all, so a hand-chosen mode survives every dock and undock:
+
+```bash
+echo desktop > ~/.config/omdroid/ui-pin   # keep the stock desktop UI, even on the phone
+echo mobile  > ~/.config/omdroid/ui-pin   # keep the phone UI, even on the monitor
+echo auto    > ~/.config/omdroid/ui-pin   # follow the dock again
+```
+
+`omdroid-ui.sh` keeps reading only `ui`, so the guest needed no change for the pin.
+
+**The live switch.** `omarchy-watch.py` polls `ui` (every 0.25 s). On a change it runs
+`omdroid-ui.sh`, rebuilds the plugin index the shell reads at start, restarts only the shell (the
+same rate-limited path a size change already used) and, when the monitor already equals the X root,
+reloads Hyprland's config for the `looknfeel.lua` half. Windows survive; the session, the X server
+and their PIDs are untouched. An older guest image applies a mode change at the next session start
+instead — same file, one start later.
+
+**Where the desktop is drawn.** Docked, the host starts `com.termux.x11.MainActivity` with
+`ActivityOptions.setLaunchDisplayId(target)`. A private target display, a device without
+`FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS`, or any refusal falls back to the plain launch, and the
+user then opens Omdroid from the monitor itself — the activity runs on the display it is opened on,
+which is research route 1 and always works. If a monitor appears while a session is already
+running, the host re-launches the same `singleTask` activity with that display id; no second X
+activity can be created, and the X root follows the surface the view lands on.
+
+**Keyboard, mouse, bar.** Docked: `showAdditionalKbd=false` (the extra-key bar is a phone
+affordance, and its height comes straight out of the X root), and the X activity asks for Android
+16.1's keyboard capture — `<uses-permission android:name="android.permission.CAPTURE_KEYBOARD"/>`
+plus `LayoutParams.setKeyboardCaptureEnabled(true)` by reflection, because neither is in the
+compileSdk 35 SDK — so Meta reaches Hyprland instead of opening the system's own shortcut. On a
+platform without it the reflection logs once and Termux:X11's accessibility `KeyInterceptor` stays
+the key path. Undocked: the bar and its gap come back.
+
+**Surviving the unplug.** The `termux-x11` submodule manifest sets
+`com.samsung.android.multidisplay.keep_process_alive=true`: the in-process X server and the proot
+session live in our process, so a Samsung teardown on unplug would take the whole desktop with it.
+Unplugged, Android migrates the window to the built-in display, the guest switches back to
+`mobile`, and the same session is there when Omdroid is next opened. Not yet proven on a device.
+
+**Logs.** `adb logcat -s Phoshdroid:* | grep dock:` — one line per change:
+`dock: docked display=2 1920x1080@213 kbd=1 mouse=1` (a private target adds ` private`; `kbd` and
+`mouse` are 1 when Android sees a physical keyboard/mouse), and `dock: undocked`. A dock change
+that writes the mode file also logs `dock: ui desktop written (docked)`, and a launch that goes to
+a monitor logs `launch: handover done display=2 on-target=true`. Guest side,
+`/tmp/omarchy-watch.log` gets `ui mode mobile -> desktop` and
+`ui switch: omdroid-ui rc=0; plugin-index rc=0; …`.

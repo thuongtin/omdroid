@@ -157,6 +157,38 @@ Disturb, dark theme, clipboard, screenshot, rotation and stay-awake work.
 Both are Android screenshots of the round 5 build (row R8 in
 `docs/omarchy/r5-mobile-ui-device-report.md`).
 
+## Docking
+
+**Built and unit-tested, not yet tried with a real monitor.** The design: plug the phone into a
+monitor and the desktop moves there, in the `desktop` UI; unplug it and the session keeps running
+while Android is normal again, with the same desktop waiting when you open Omdroid in the `mobile`
+UI. Nothing restarts: the monitor is just where the X surface is drawn, and the guest's UI mode is
+a file the shell re-reads in place.
+
+- **Plug.** Android reports the display, the app writes `desktop` into the guest's
+  `~/.config/omdroid/ui`, the watcher re-applies `omdroid-ui.sh` + the plugin index and restarts
+  only the shell (about 2.4 s, windows and session untouched), and the X activity is started on —
+  or re-launched onto — the monitor with `setLaunchDisplayId`. The phone screen stays Android. The
+  extra-key bar is hidden (the monitor has a real keyboard) and, on Android 16.1+, the window asks
+  for keyboard capture so <kbd>Super</kbd> reaches Hyprland instead of opening the system's own
+  shortcut.
+- **Unplug.** Android migrates the window back to the built-in display, the app writes `mobile`,
+  the shell switches back in place. The X server and the proot session are in the app's process,
+  and the manifest asks Samsung to keep that process alive across the teardown.
+- **The pin.** The dock decides by default; `~/.config/omdroid/ui-pin` overrides it, so
+  `echo desktop > ~/.config/omdroid/ui-pin` keeps the stock desktop UI on the phone and
+  `echo mobile > ~/.config/omdroid/ui-pin` keeps the phone UI on the monitor. `echo auto >` (or
+  deleting the file) follows the dock again. `~/.config/omdroid/ui` itself is host-owned while the
+  pin is `auto`.
+- **Not proven yet.** Whether the running window really moves to the monitor instead of merely
+  coming to the front on the phone, whether unplug survives Samsung's teardown, and whether an
+  Android build without the keyboard-capture API still delivers Meta through the accessibility
+  service. Those are the dock round's device items; `docs/omarchy/r7-dock-report.md` has the log
+  lines to check and what each one means.
+
+The interface between the app and the guest (the mode file, the pin, the log lines) is in
+`docs/omarchy/launch-contract.md` §8.
+
 ## How it works
 
 ```mermaid
