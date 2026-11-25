@@ -79,7 +79,7 @@ warnings; see Known limits.
 
 Not verified yet:
 
-- `sudo`. The broker and the client pass their host-side harness (34 cases, including a pty,
+- `sudo`. The broker and the client pass their host-side harness (35 cases, including a pty,
   Ctrl+C and concurrent requests: `python3 docs/omarchy/tools/rootd-selftest.py`), but neither
   has run on a tablet: not `sudo id`, not a pacman install through it, not the interactive
   prompt, not `omarchy-pkg-add`. The steps that close this are in

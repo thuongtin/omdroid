@@ -108,12 +108,14 @@ PASS.
   device never passes it; the container test needs it because it has no proot to rewrite
   `SO_PEERCRED` (Y0). Comment in the file says exactly that.
 - `docs/omarchy/tools/rootd-selftest.py` — 7 new fakeroot cases (full env passed, `FAKEROOTKEY` set,
-  cwd, exit code, stdin, `-v`/`--version`, no command, and `-s` refused) on top of the 27 sudo ones.
+  cwd, exit code, stdin, `-v`/`--version`, no command, and `-s` refused) on top of the 27 sudo ones,
+  plus `reset_timestamp_with_a_command_runs_it` for the `-k` fix found in Y2.
 
 Harness result on this machine (`python3 docs/omarchy/tools/rootd-selftest.py`):
 
 ```
 PASS argv_passthrough ... broker_absent_fails_fast        (the 27 sudo cases, unchanged)
+PASS reset_timestamp_with_a_command_runs_it
 PASS fakeroot_full_env_is_passed
 PASS fakeroot_cwd_is_the_callers
 PASS fakeroot_exit_code_passes_through
@@ -122,7 +124,7 @@ PASS fakeroot_version
 PASS fakeroot_no_command_is_a_usage_error
 PASS fakeroot_unsupported_option_is_an_error
 
-34/34 passed
+35/35 passed
 ```
 
 ## Y2. End-to-end on aarch64
@@ -337,6 +339,10 @@ PASS.
   escape hatch and its warning.
 - `Not verified yet`: the sudo bullet's harness count is now 34 (7 fakeroot cases), and a new
   bullet says exactly what the container run does not prove.
+- `docs/omarchy/launch-contract.md` section 7 gained one bullet naming the two extra clients of
+  the same broker (`fakeroot`, `yay`). The host/guest interface itself is unchanged — same socket,
+  same request format, same three-difference broker command — so this is documentation of the
+  guest side, not a contract change.
 
 ## Y6. Report
 

@@ -102,6 +102,14 @@ not work under proot) and `su`/`run0`/`pkexec` cannot help, but 70 of Omarchy's 
   `start.sh` every session so an updated install picks it up. It sends argv, cwd, a whitelisted
   environment and either the caller's terminal (a pty, so Ctrl+C/Z and window size behave) or
   plain pipes with stdin streamed. It never asks for a password.
+- **Two more clients of the same broker** (same socket, same request format, so nothing above
+  changes): `/etc/phoshdroid/fakeroot`, linked as `/usr/local/bin/fakeroot`, runs its command as
+  the target user with the FULL environment (plus `FAKEROOTKEY`, which makepkg's `-F` re-entry
+  checks) because that is what makepkg calls for its package step; and `/etc/phoshdroid/yay`,
+  linked as `/usr/local/bin/yay`, which is not a broker client itself but installs `yay-bin` on
+  first use through `makepkg` and `sudo`. Both links are made by the packager and remade by
+  `start.sh`, and `/usr/local/bin` comes first in the session `PATH` so the fakeroot shim wins
+  over the real package.
 - **What it is**: fake root only. Everything still runs as the Android app's own uid inside its
   private storage, so `sudo` grants no privilege it did not already have. `systemctl` still does
   not work (there is no systemd in this guest).
