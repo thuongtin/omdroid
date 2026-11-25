@@ -412,6 +412,31 @@ unlink_app_icons() {
   return 0
 }
 
+# ------------------------------------------------------- idle screensaver --
+
+# Omarchy's idle service runs omarchy-launch-screensaver after idle.screensaver
+# seconds. That needs xdg-terminal-exec to name the terminal and ttfx to draw,
+# and this guest ships neither (nor the branding text it animates), so every
+# idle period ended in a "Screensaver only runs in Alacritty, Foot, Ghostty,
+# or Kitty" notification and no screensaver. Android already owns the screen
+# timeout, so in both modes the screensaver is turned off with Omarchy's own
+# flag (what `omarchy-toggle screensaver-off` writes), once: the record in
+# $state says we set it, so a user who turns it back on keeps it on.
+toggles="$home/.local/state/omarchy/toggles"
+
+screensaver_off() {
+  local flag="$toggles/screensaver-off" mark="$state/screensaver-off.ours"
+  [ -e "$flag" ] && return 0
+  if [ -e "$mark" ]; then
+    log "screensaver: turned back on by the user; leaving it on"
+    return 0
+  fi
+  if mkdir -p "$toggles" && : > "$flag"; then
+    : > "$mark"
+    log "screensaver: off (no xdg-terminal-exec or ttfx in this guest)"
+  fi
+}
+
 # --------------------------------------------------------------------- main --
 
 mkdir -p "$state" "$config/omdroid" 2>/dev/null
@@ -441,6 +466,7 @@ case "$mode" in
     link_plugins
     link_helpers
     link_app_icons
+    screensaver_off
     ;;
   desktop)
     theme_apply desktop
@@ -448,6 +474,7 @@ case "$mode" in
     looknfeel_apply desktop
     unlink_plugins
     unlink_app_icons
+    screensaver_off
     ;;
 esac
 
