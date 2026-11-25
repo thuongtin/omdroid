@@ -24,6 +24,8 @@ import java.io.File
  */
 class ProotService : Service() {
     private var prootProcess: Process? = null
+    private var brokerProcess: Process? = null
+    private var commandBuilder: ProotCommandBuilder? = null
     private var manager: ProotDistroManager? = null
 
     private var stopping = false
@@ -39,15 +41,16 @@ class ProotService : Service() {
         super.onCreate()
         val nativeLibDir = applicationInfo.nativeLibraryDir
         android.util.Log.e("ProotService", "nativeLibDir=$nativeLibDir")
-        val commandBuilder =
+        val builder =
             ProotCommandBuilder(
                 nativeLibDir = nativeLibDir,
                 prefixDir = prefixDir,
                 distroName = DISTRO_NAME,
             )
+        commandBuilder = builder
         manager =
             ProotDistroManager(
-                commandBuilder = commandBuilder,
+                commandBuilder = builder,
                 installedRootfsDir = File(prefixDir, "var/lib/proot-distro/installed-rootfs"),
                 distroName = DISTRO_NAME,
             )
@@ -118,7 +121,75 @@ class ProotService : Service() {
         File(prefixDir, "tmp").mkdirs()
         writeResolvConf()
 
+        startBroker()
         startProot()
+    }
+
+    /**
+     * Starts the fake-root broker: a second proot of the same rootfs with `-0`
+     * instead of the session's `-i 1000:1000`, running
+     * /etc/phoshdroid/omdroid-rootd.py. The guest's `sudo` client talks to it
+     * over a Unix socket under the shared /tmp, and it is the only way anything
+     * in the desktop can become root (the image has no sudo, and setuid does
+     * not work under proot).
+     *
+     * It is deliberately decoupled from the desktop: a broker that fails to
+     * start, or dies later, is logged and nothing else. The session runs either
+     * way, and `sudo` answers with its one-line error while it is gone.
+     */
+    private fun startBroker() {
+        val builder = commandBuilder ?: return
+        if (brokerProcess != null) return
+        val env =
+            builder.buildEnvironment(
+                width = width,
+                height = height,
+                scale = scale,
+                refreshMhz = refreshMhz,
+                bindSdcard = bindSdcard,
+            )
+        val process =
+            try {
+                ProcessBuilder(builder.buildRootBrokerCommand(bindSdcard))
+                    .redirectErrorStream(true)
+                    .apply { environment().putAll(env) }
+                    .start()
+            } catch (e: Exception) {
+                android.util.Log.w("ProotService", "session: root-broker failed to start: ${e.message}")
+                return
+            }
+        brokerProcess = process
+        android.util.Log.i("ProotService", "session: root-broker started")
+        Thread({
+            val output =
+                try {
+                    process.inputStream.bufferedReader().readText()
+                } catch (e: java.io.IOException) {
+                    "<root-broker read interrupted: ${e.message}>"
+                }
+            val code =
+                try {
+                    process.waitFor()
+                } catch (_: InterruptedException) {
+                    -1
+                }
+            android.util.Log.i("ProotService", "session: root-broker exited $code: $output")
+            try {
+                File(prefixDir, "tmp/root-broker.log").writeText("exit=$code\n$output")
+            } catch (_: Exception) {
+            }
+        }, "RootBrokerMonitor").start()
+    }
+
+    private fun stopBroker() {
+        val process = brokerProcess ?: return
+        brokerProcess = null
+        try {
+            process.destroy()
+            process.waitFor()
+        } catch (_: Exception) {
+        }
+        android.util.Log.i("ProotService", "session: root-broker stopped")
     }
 
     private fun startProot() {
@@ -240,6 +311,7 @@ class ProotService : Service() {
             proc.waitFor()
         }
         prootProcess = null
+        stopBroker()
     }
 
     /**

@@ -9,7 +9,7 @@ Head at start: `cf872ed`.
 |---|---|---|
 | S0 | Premises on device: second proot `-0`, pacman, session survives | PENDING (Phil's manual test) |
 | S1 | Broker + client + host-side harness | PASS (27/27 on the build machine) |
-| S2 | Host side: `buildRootBrokerCommand` + `ProotService` + gate | PENDING |
+| S2 | Host side: `buildRootBrokerCommand` + `ProotService` + gate | PASS |
 | S3 | Overlay plumbing (files, lists, start.sh, launch contract) | PENDING |
 | S4 | Build APK, sha256 | PENDING |
 | S5 | Device proof (all sudo paths) | PENDING (Phil's manual test) |
@@ -68,7 +68,30 @@ concurrency case holds a `sleep 1.5` request in flight while a second `sudo echo
 
 ## S2. Host side
 
-PENDING
+PASS.
+
+- `ProotCommandBuilder.buildRootBrokerCommand()` sits next to `buildLoginCommand()` and both go
+  through one private `buildCommand(identityArgs, workDir, program, bindSdcard)`, so the only
+  differences are exactly the documented three: `-0` for `-i 1000:1000`, `-w /root` for
+  `-w /home/omarchy`, and `/usr/bin/python3 /etc/phoshdroid/omdroid-rootd.py` for
+  `/bin/bash /etc/phoshdroid/start.sh`. The shared `$prefix/tmp:/tmp` bind is what puts the
+  broker's socket where the session's `sudo` can reach it. `BROKER_SCRIPT` is a constant on the
+  class so the name lives in one place.
+- `ProotService`: `startBroker()` runs before `startProot()` in `startSession()`, with the same
+  environment the session gets (so `PROOT_LOADER`, `LD_LIBRARY_PATH` and `PROOT_TMP_DIR` are the
+  session's), and logs `session: root-broker started`. A `RootBrokerMonitor` thread drains its
+  output, logs `session: root-broker exited <code>: <output>` and mirrors it to
+  `<prefix>/tmp/root-broker.log`. `stopSession()` (and so `onDestroy`) destroys it and logs
+  `session: root-broker stopped`. A broker that fails to start or dies later only logs: nothing
+  in the session's lifecycle depends on it.
+- `RootBrokerCommandTest` (6 cases): the broker command equals the login command after exactly
+  the three substitutions, carries `-0` and never `-i`/`1000:1000`, shares `/prefix/tmp:/tmp`,
+  keeps the same rootfs and fake-proc shadows, follows the sdcard bind, and the login command
+  still runs the session script as uid 1000.
+
+Gate (`./gradlew :app:compileDebugKotlin :app:test :app:lintDebug --console=plain`):
+`BUILD SUCCESSFUL in 13s`; `python3 docs/omarchy/tools/unit-count.py` -> `unit tests 69 failed 0`
+(was 63 before this round).
 
 ## S3. Overlay plumbing
 

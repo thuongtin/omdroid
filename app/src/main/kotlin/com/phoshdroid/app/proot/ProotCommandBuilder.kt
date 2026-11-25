@@ -24,18 +24,51 @@ class ProotCommandBuilder(
     fun buildLoginCommand(
         startupScript: String,
         bindSdcard: Boolean = false,
+    ): List<String> =
+        buildCommand(
+            identityArgs = listOf("-i", "1000:1000"),
+            workDir = "/home/omarchy",
+            program = listOf("/bin/bash", startupScript),
+            bindSdcard = bindSdcard,
+        )
+
+    /**
+     * The fake-root broker, started next to the session by [ProotService].
+     *
+     * Everything matches [buildLoginCommand] — same rootfs, same binds, same
+     * `--kill-on-exit` — except the identity (`-0`, fake root, instead of the
+     * session's `-i 1000:1000`), the working directory (`/root`, which the
+     * session's uid 1000 cannot enter) and the program. The shared
+     * `$prefix/tmp:/tmp` bind is what lets the guest's `sudo` client reach the
+     * broker's socket at `/tmp/omdroid-root/sock` from the other proot.
+     */
+    fun buildRootBrokerCommand(bindSdcard: Boolean = false): List<String> =
+        buildCommand(
+            identityArgs = listOf("-0"),
+            workDir = "/root",
+            program = listOf("/usr/bin/python3", BROKER_SCRIPT),
+            bindSdcard = bindSdcard,
+        )
+
+    private fun buildCommand(
+        identityArgs: List<String>,
+        workDir: String,
+        program: List<String>,
+        bindSdcard: Boolean,
     ): List<String> {
         val cmd =
             mutableListOf(
                 prootPath,
                 "--kill-on-exit",
                 "--link2symlink",
-                "-i",
-                "1000:1000",
-                "-w",
-                "/home/omarchy",
-                "-r",
-                rootfsDir,
+            )
+        cmd.addAll(identityArgs)
+        cmd.add("-w")
+        cmd.add(workDir)
+        cmd.add("-r")
+        cmd.add(rootfsDir)
+        cmd.addAll(
+            listOf(
                 "-b",
                 "/dev",
                 "-b",
@@ -69,7 +102,8 @@ class ProotCommandBuilder(
                 "$fakeProc/uptime:/proc/uptime",
                 "-b",
                 "$fakeProc/cpuinfo:/proc/cpuinfo",
-            )
+            ),
+        )
 
         if (bindSdcard) {
             cmd.add("-b")
@@ -78,8 +112,7 @@ class ProotCommandBuilder(
             cmd.add("/sdcard:/sdcard")
         }
 
-        cmd.add("/bin/bash")
-        cmd.add(startupScript)
+        cmd.addAll(program)
 
         return cmd
     }
@@ -158,5 +191,10 @@ class ProotCommandBuilder(
             env["OMARCHY_SHARE"] = "storage"
         }
         return env
+    }
+
+    companion object {
+        /** The broker the rootfs overlay installs; ProotService runs it as the root proot's program. */
+        const val BROKER_SCRIPT = "/etc/phoshdroid/omdroid-rootd.py"
     }
 }
