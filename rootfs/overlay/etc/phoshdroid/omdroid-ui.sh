@@ -265,6 +265,9 @@ looknfeel_apply() { # mobile|desktop
 -- dialogs centred and capped to the screen. Written by /etc/phoshdroid/omdroid-ui.sh
 -- while ~/.config/omdroid/ui says mobile (or is absent).
 hl.config({ general = { gaps_in = 0, gaps_out = 0, border_size = 0 } })
+-- Real touch (wl_touch) moves the pointer to each finger; hide it on a touch,
+-- as a phone does. A mouse brings it back. The stock config sets this false.
+hl.config({ cursor = { hide_on_touch = true } })
 hl.window_rule({ match = { class = ".*" }, tag = "-default-opacity", opacity = "1 1" })
 hl.window_rule({
   match = { modal = true },
