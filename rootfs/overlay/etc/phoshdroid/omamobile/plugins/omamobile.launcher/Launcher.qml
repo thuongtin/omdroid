@@ -1149,7 +1149,7 @@ Item {
     // the voice bar (held), as on the pill over an app.
     TapHandler {
       id: pillTouch
-      longPressThreshold: 0.45
+      longPressThreshold: root.voice ? 0.45 : 3600
       onTapped: pill.tapped()
       onLongPressed: pill.held()
     }
@@ -1217,7 +1217,7 @@ Item {
     TapHandler {
       id: doubleTap
       property bool lastOwn: false
-      longPressThreshold: 0.45
+      longPressThreshold: root.voice ? 0.45 : 3600
       onLongPressed: {
         if (swipeArea.onOwnKey(doubleTap.point.position.x, doubleTap.point.position.y)) return
         root.voiceHold()

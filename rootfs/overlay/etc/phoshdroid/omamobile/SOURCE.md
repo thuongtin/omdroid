@@ -43,6 +43,7 @@ One line per upstream file Omdroid edits, with the device evidence that forced i
 | File | Change | Why |
 |---|---|---|
 | `plugins/omamobile.switcher/Switcher.qml` | A card's `ScreencopyView` sits in a `Loader` and is created only when `OMARCHY_PROOT` is not `1`; under proot the card shows the app's icon and the window's title instead (`liveCopies`, `iconFor`). | Hyprland under proot offers `zwp_linux_dmabuf_v1` at version 3. Creating a `ScreencopyView` (one per open window, even with the switcher closed) makes Quickshell send `get_default_feedback`, a version 4 request: `wl_display` error, "Wayland connection experienced a fatal error", and the whole shell exits the moment any app opens. |
+| `plugins/omamobile.launcher/Launcher.qml` | The search pill's and the home pill's `TapHandler.longPressThreshold` is `root.voice ? 0.45 : 3600`: no long press unless the voice plugin is loaded. | `omamobile.voice` is not ported. Under simulated touch every swipe starts with a hold, so the long press fired `voice start` into nothing before each drag (device log, round 5). |
 
 Two upstream frictions were resolved without touching upstream code:
 
