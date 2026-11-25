@@ -1715,16 +1715,30 @@ Item {
 
             Row {
               anchors.centerIn: parent
-              spacing: Style.spacing.md
+              spacing: 0
               visible: root.tilePages.length > 1
 
+              // Omdroid: each dot is a finger-sized target (a tap there goes
+              // to that page) and the current page reads as a wide pill;
+              // upstream drew 7 px dots with nothing to hit.
               Repeater {
                 model: root.tilePages.length
-                delegate: Rectangle {
-                  width: Math.max(6, Style.space(7))
+                delegate: Item {
+                  width: Math.max(44, Style.space(44))
                   height: width
-                  radius: width / 2
-                  color: index === pager.currentIndex ? Commons.Color.accent : Util.alpha(root.foreground, 0.3)
+
+                  Rectangle {
+                    anchors.centerIn: parent
+                    height: Math.max(10, Style.space(10))
+                    width: index === pager.currentIndex ? height * 2.6 : height
+                    radius: height / 2
+                    color: index === pager.currentIndex ? Commons.Color.accent : Util.alpha(root.foreground, 0.45)
+                    Behavior on width { NumberAnimation { duration: 120 } }
+                  }
+
+                  TapHandler {
+                    onTapped: pager.currentIndex = index
+                  }
                 }
               }
             }
