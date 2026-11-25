@@ -295,3 +295,16 @@ to look around.
 `f7d2db15cf871a539942b328115f31dd408cb1219e1f8443eb25de2f957be6e1` (1,715,714,706 bytes), built
 from the tree of `4528cc3`; copy at
 `<scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk`.
+
+## Device finding: `sudo id` answered "peer is not this app" (fixed)
+
+Phil's first `sudo id` on the phone printed `omdroid-rootd: peer is not this app`. Cause: the broker
+compared the client's `SO_PEERCRED` uid with its own `getuid()`. Inside the broker's `proot -0`,
+`getuid()` is faked to 0, but `SO_PEERCRED` is filled in by the kernel and proot does not rewrite it,
+so the client showed the real app uid and never matched. `rootd-selftest.py` could not see this: it
+runs the broker without proot. Fix: the broker also accepts the kernel's view of its own uid, read
+from `SO_PEERCRED` on a `socketpair()` to itself, and logs every refusal with the uid it saw.
+`docs/omarchy/tools/rootd-proot-check.sh` runs the broker under a real `proot -0` on the build
+machine: before the fix A and B fail with exactly Phil's message; after it, same-app clients pass
+(plain and `proot -i 1000:1000`), the exit code passes through, and a client with another real uid
+(4242, in a container) is still refused (`refused peer uid 4242, accepts [0, 1000]`).

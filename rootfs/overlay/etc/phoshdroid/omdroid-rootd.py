@@ -49,12 +49,35 @@ MAX_FRAME = 1 << 16
 DEFAULT_SOCKET = "/tmp/omdroid-root/sock"
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Uids whose SO_PEERCRED may connect. On the device both proots are the same
-# app uid and proot's fake_id0 reports it with the fake ids, so this is our own
-# getuid() alone. The host-side harness has no proot: the client runs as an
-# ordinary user while the broker is root, so it names that uid with
-# --allow-peer-uid. Nothing on the device passes that option.
+def kernel_uid():
+    """Our own uid as the kernel sees it, which proot -0 does not hide.
+
+    proot fakes getuid() (0 under -0) but not SO_PEERCRED, which the kernel
+    fills in with the real app uid. Reading SO_PEERCRED on a socketpair to
+    ourselves gives that real uid, the one a client of the same app shows.
+    """
+    left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        cred = left.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+        )
+        return struct.unpack("3i", cred)[1]
+    finally:
+        left.close()
+        right.close()
+
+
+# Uids whose SO_PEERCRED may connect: this app only. On the device both proots
+# run as the same app uid, and SO_PEERCRED reports it unfaked while getuid()
+# inside the broker answers 0, so the set holds the kernel view of our own uid
+# (and getuid() for a broker started without proot). The host-side harness runs
+# the client as another user while the broker is real root, so it names that uid
+# with --allow-peer-uid. Nothing on the device passes that option.
 PEER_UIDS = {os.getuid()}
+try:
+    PEER_UIDS.add(kernel_uid())
+except OSError:
+    pass
 
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -549,6 +572,7 @@ def handle(sock):
             )
             _pid, peer_uid, _peer_gid = struct.unpack("3i", cred)
             if peer_uid not in PEER_UIDS:
+                log_request("refused peer uid %d, accepts %s" % (peer_uid, sorted(PEER_UIDS)), 1)
                 fail(conn, b"omdroid-rootd: peer is not this app\n", 1)
                 return
         except OSError:
