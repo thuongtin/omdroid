@@ -46,4 +46,20 @@ class UiScaleTest {
     fun `an unknown stored value falls back to auto`() {
         assertEquals(2, UiScale.resolve("garbage", densityDpi = 352, shorterWindowEdgePx = 2136))
     }
+
+    @Test
+    fun `a 1080p monitor at 160 dpi resolves to 1`() {
+        // a3: the monitor's density decides, not the phone's.
+        assertEquals(1, UiScale.auto(densityDpi = 160, shorterWindowEdgePx = 1080))
+    }
+
+    @Test
+    fun `a 4K monitor at 320 dpi resolves to 2`() {
+        assertEquals(2, UiScale.auto(densityDpi = 320, shorterWindowEdgePx = 2160))
+    }
+
+    @Test
+    fun `a 4K monitor at 160 dpi resolves to 1`() {
+        assertEquals(1, UiScale.auto(densityDpi = 160, shorterWindowEdgePx = 2160))
+    }
 }

@@ -26,6 +26,39 @@ object DisplayGeometry {
     /** Termux:X11's default extra-key config has two rows. */
     const val DEFAULT_EXTRA_KEY_ROWS = 2
 
+    /**
+     * The same prediction for the display the X activity will be drawn on (a3):
+     * the display's own real metrics and density, not the launcher's window.
+     *
+     * A display's real size is what a full-screen, immersive X activity gets, so
+     * a 4K monitor predicts 3840x2160 at its own density instead of the phone's
+     * window at the phone's density. Insets default to 0 because an external
+     * display has no cutout; the caller passes the target display's own insets
+     * when it has them.
+     */
+    fun forDisplay(
+        displayWidth: Int,
+        displayHeight: Int,
+        densityDpi: Int,
+        extraKeyRows: Int,
+        extraKeysShown: Boolean,
+        insetLeft: Int = 0,
+        insetTop: Int = 0,
+        insetRight: Int = 0,
+        insetBottom: Int = 0,
+    ): XGeometry =
+        compute(
+            windowWidth = displayWidth,
+            windowHeight = displayHeight,
+            density = densityDpi.coerceAtLeast(0) / 160f,
+            extraKeyRows = extraKeyRows,
+            extraKeysShown = extraKeysShown,
+            insetLeft = insetLeft,
+            insetTop = insetTop,
+            insetRight = insetRight,
+            insetBottom = insetBottom,
+        )
+
     fun compute(
         windowWidth: Int,
         windowHeight: Int,
