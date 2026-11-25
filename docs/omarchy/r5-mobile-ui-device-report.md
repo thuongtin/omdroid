@@ -169,7 +169,7 @@ Real touch shipped in between (`docs/omarchy/r5-touch-device-report.md`): the gu
 | R4 pointer after touch | **PASS** | The stock `~/.config/hypr/looknfeel.lua:20` sets `hide_on_touch = false`. Before: an arrow is drawn at the last tap (`shots/r4-cursor-ab.png`, left). Fix `d5cc16d`: the mobile block sets `cursor = { hide_on_touch = true }`. On the device, reset at runtime to `false` → `omdroid-ui.sh` rewrites the block → Hyprland reloads to `bool: true` → two taps → no arrow at the tapped spot (`shots/r2r4-check.png`, left). Desktop mode drops the block, so the stock `false` returns. |
 | R5 quick-settings page dots | **PASS** | `2cfe009`: each dot is a `Style.space(44)` target (59 logical, 117 screen px at 16 px type) with a 10 px dot; the current page is a wide accent pill (`shots/r5-dots-1.png`). A tap on the other dot at (862,1000) moved the accent pill from x 948-1015 to **830-897** and turned the tile page (20367 sampled tile-area pixels changed, `r5-dots-2.png`). |
 | R6 quick swipes, look again | **PASS** (nothing needs a hold) | Real touch, `input touchscreen swipe … 120-200 ms`, no hold anywhere. Dock swipe-up → switcher **3/3**. Pill short swipe → home (workspace 1 → 2, dock back). Pill long swipe → recents. Card flick up → its window closes (`clients 1 → 0`). Back from x = **20** and from x = **4** → Escape (`1b`) in the test window. Bar pull-down → quick settings, sheet swipe-up → closed. Tap dock → drawer, swipe down → closed; a swipe up leaves it open (19 apps fit, nothing to scroll). Look (`shots/r6-look.png`): drawer icons 18/19 (Discord ships no PNG); quick settings fine. The shade still lists screensaver notices and the old pill hint from before the fixes (history, cleared in R8). No new defect of mine. |
-| R7 own build, re-proof | PENDING | |
+| R7 own build, re-proof | **PASS** | APK `1cbbd184be02e6bb6398b0fb7d1fc74755493c47fd45b427461bde9910e5a7da`, assembled in the foreground from the tree at `e6c75cc`. That tree holds `6b31334`, `9229e3b`, `d5cc16d`, `2cfe009` and the real-touch `73b7a0b`. The APK's overlay files match the repo and the guest (`omdroid-ui.sh` `1d37f149`, `Launcher.qml` `c9a19919`, `QuickSettings.qml` `0907c3d6`, `Switcher.qml` `afcee6cc`). `INSTALL: PASS`; cold start `VERDICT: PASS` (handover 11.0 s, desktop 10.4 s); `touch: [wl_touch]`. Before the cold start the screensaver flag, its record and the pill marker were deleted, so the APK's own scripts had to set them again. Re-proofs on this build: **R1** the session log says `screensaver: off` and the flag is back (idle watch below). **R2** the Notify reads "Swipe up on the pill…" and the marker is claimed. **R3** one swipe makes System fully visible (`shots/r7-check.png`, right). **R4** `hide_on_touch bool: true` from the config, and no arrow at the tap (`r7-check.png`, left). **R5** a dot tap moved the pill from x 959-1004 to 841-886. **R6** pill short swipe → home; long → recents; card flick closes the window; back from x = 20 → `1b`; dock swipe-up → switcher; pull-down → sheet; swipe-up closes it; dock tap → drawer; swipe-down closes it. |
 | R8 screenshots, finish | PENDING | |
 
 ## R1. Why the screensaver notification fired
@@ -188,3 +188,24 @@ modes with Omarchy's own flag, `~/.local/state/omarchy/toggles/screensaver-off` 
 terminal and exits quietly (`:9-11`). It is set once and recorded in
 `~/.local/state/omdroid/ui/screensaver-off.ours`, so a user who turns the screensaver back on
 keeps it on.
+
+## Round 2 findings (not fixed, not mine or not asked)
+
+- **The idle lock does not lock.** At 300 s idle the idle service ran `omarchy-system-lock`
+  (`lock-system: lock-timeout`, exit 0), yet `omarchy-shell lock isLocked` stayed `false`. On a
+  touch tablet that suits Android's own lock screen, but the shell's lock timer fires for
+  nothing under proot.
+- The Omarchy menu keeps the stock hover highlight under the last touch point (after a swipe the
+  row under the finger stays highlighted). This is cosmetic, and it is stock `Menu.qml`.
+- Wi-Fi tile state `NetworkManager no…` is still cut at three columns. Discord has no icon (the
+  image ships no PNG for `omarchy-discord`).
+- Notification history persists across sessions. The screensaver notices and the old pill hint
+  from before the fixes stayed in the shade until cleared (R8 cleared them with the
+  `notifications clear` IPC; they were all test or system notices).
+
+## Round 2 tools
+
+`<scratch>/omarchy/r5/device/`: `r1mon.sh` (`dbus-monitor` on `Notify` for 610 s
+inside the session, start/end stamps), `r7proof.sh` (the R2-R6 re-proof sequence above, real
+touch through `adb shell input touchscreen`), `layers.sh` (layers, clients, workspace in one
+line). These are scratch tools, not in the repo.
