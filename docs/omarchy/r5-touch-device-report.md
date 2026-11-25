@@ -10,7 +10,7 @@ Scratch: `<scratch>/omarchy/r5/touch-device/`.
 | Step | Status | Decisive fact |
 |---|---|---|
 | D0 device, stay-awake, `probe.sh -q` on the installed build | **PASS** | keyguard not showing, awake; `stay_on_while_plugged_in` was `0`, set `2` (read back `2`); installed base.apk `0a229e1a…1f80` (0.0.14-alpha + round-5 mobile UI); `probe.sh` `VERDICT: PASS` (root 3200x1971, monitor 1600x985 @2); baseline `j/devices` `touch: []`; Hyprland maps the image library sha `8a2a2cbe…135e` |
-| D1 new library loaded on the device (no APK change), `wl_touch` listed | PENDING | |
+| D1 new library loaded on the device (no APK change), `wl_touch` listed | **PASS** | image library renamed over (backup `files/r5-touch-backup/…orig`, sha `8a2a2cbe`); cold start handover +9.7 s, desktop PASS +9.2 s; `j/devices` **`touch: ["wl_touch"]`** (was `[]`); Hyprland maps inode 98028 = the new 1 775 168-byte file (sha `8514d2a6…`); `probe.sh -q` PASS; bar tap (mode 2 click) at 1600,44 opens `omamobile-quicksettings`, Escape closes it |
 | D2 delivery change + `touchMode = "3"`, gates, build, install | PENDING | |
 | D3 real touch proven (devices, positions, bar 9/9, focus, gestures, long press, two fingers) | PENDING | |
 | D4 regressions (keyboard, size change, desktop mode) | PENDING | |
@@ -41,3 +41,28 @@ installed base.apk sha256 0a229e1aaf35f7f093a79f70791bc450e222d3523490950067925f
 `NEEDED libaquamarine.so.13`, so the `LD_LIBRARY_PATH` order alone decides which copy loads.
 `ProotCommandBuilder.kt:122` also sets an `LD_LIBRARY_PATH`, but `start.sh:37` replaces it: the
 live Hyprland's environment reads `/opt/omarchy-android/mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib`.
+
+### D1 the new library on the device, no APK change
+
+The quickest change a cold start does not undo: `GuestOverlay` only writes `etc/phoshdroid` files,
+so the image library itself was swapped (a rename, so the running Hyprland kept its old inode):
+
+```
+adb push libaquamarine.so.0.14.0 (8514d2a6…, 1 775 168 B) /data/local/tmp/aq-r5-new.so
+run-as: cp -p <guest>/opt/omarchy-android/aquamarine/lib/libaquamarine.so.0.14.0 files/r5-touch-backup/libaquamarine.so.0.14.0.orig
+        sha256 8a2a2cbe…135e (the image library)
+        cp aq-r5-new.so <lib>/libaquamarine.so.0.14.0.r5new; chmod 700; mv … libaquamarine.so.0.14.0
+        sha256 <lib>/libaquamarine.so.0.14.0 -> 8514d2a65f2e10bb75d74a97cd3bc97db52f06bc19ecd0a47395aa9fdae66191
+./coldstart.sh 1 --tag d1   handover +9.7 s (auto), desktop PASS +9.2 s, foreign activity 0,
+                            log: launch: ready marker 8939ms, handover done 8953ms
+./hc.sh j/devices           mice [wl_pointer]  keyboards [wl_keyboard]  touch [wl_touch]  (0x7790ef2d00)
+/proc/<Hyprland 29231>/maps libaquamarine.so.0.14.0 inode 98028
+stat                        inode 98028, 1775168 bytes  (the backup is inode 220556, 1661600 bytes)
+./probe.sh -q               VERDICT: PASS
+input touchscreen tap 1600 44 (touchMode 2 = a click)
+                            new layer omamobile-quicksettings 0,0 1600x985, cursor 800,22
+                            (shots/d1-qs-open.png); keyevent 111 (Escape) closes it (0 quicksettings layers)
+```
+
+The patched library loads, Hyprland starts on it, and the touch device exists. Under simulated
+touch the X server sends pointer events only, so nothing reaches `wl_touch` yet.
