@@ -351,6 +351,67 @@ link_helpers() {
   done
 }
 
+# ---------------------------------------------------------------- app icons --
+
+# Web-app entries in ~/.local/share/applications name a bare icon (Icon=hey)
+# that no icon theme has: their PNGs sit beside them as icons/<entry>.png, a
+# folder neither the shell icon index (*/apps/* under the XDG icon dirs, see
+# AppLibrary.qml) nor the Qt theme lookup reads, so the drawer drew them
+# blank (14 of 19 entries on the tablet, 13 of them with a PNG there). Mobile
+# links each such PNG into
+# ~/.local/share/icons/hicolor/512x512/apps/<Icon>.png, never over a theme or
+# pixmap icon of that name; desktop removes exactly the links that point into
+# applications/icons.
+apps_dir="$home/.local/share/applications"
+icon_links="$home/.local/share/icons/hicolor/512x512/apps"
+
+link_app_icons() {
+  local entry stem icon png dst made=0
+  [ -d "$apps_dir/icons" ] || return 0
+  for entry in "$apps_dir"/*.desktop; do
+    [ -f "$entry" ] || continue
+    stem="$(basename "$entry" .desktop)"
+    png="$apps_dir/icons/$stem.png"
+    [ -f "$png" ] || continue
+    icon="$(sed -n 's/^Icon=//p' "$entry" | head -n 1)"
+    case "$icon" in "" | */* | *" "*) continue ;; esac
+    if compgen -G "$root/usr/share/icons/hicolor/*/apps/$icon.*" > /dev/null ||
+      compgen -G "$root/usr/share/pixmaps/$icon.*" > /dev/null; then
+      continue
+    fi
+    dst="$icon_links/$icon.png"
+    if [ -L "$dst" ]; then
+      [ "$(readlink "$dst")" = "$png" ] && continue
+      case "$(readlink "$dst")" in
+        "$apps_dir/icons/"*) ln -sfn "$png" "$dst" ;;
+        *) log "keeping $dst: not our link"; continue ;;
+      esac
+    elif [ -e "$dst" ]; then
+      log "keeping $dst: not our link"
+      continue
+    else
+      mkdir -p "$icon_links" && ln -s "$png" "$dst" || continue
+    fi
+    made=$((made + 1))
+  done
+  if [ "$made" -gt 0 ]; then log "app icons: linked $made web-app icons"; fi
+}
+
+unlink_app_icons() {
+  local dst gone=0
+  [ -d "$icon_links" ] || return 0
+  for dst in "$icon_links"/*.png; do
+    [ -L "$dst" ] || continue
+    case "$(readlink "$dst")" in
+      "$apps_dir/icons/"*) rm -f "$dst" && gone=$((gone + 1)) ;;
+    esac
+  done
+  if [ "$gone" -gt 0 ]; then log "app icons: removed $gone links"; fi
+  # Only the folders this created, and only while empty.
+  rmdir "$icon_links" "${icon_links%/apps}" "$home/.local/share/icons/hicolor" "$home/.local/share/icons" 2>/dev/null
+  return 0
+}
+
 # --------------------------------------------------------------------- main --
 
 mkdir -p "$state" "$config/omdroid" 2>/dev/null
@@ -379,12 +440,14 @@ case "$mode" in
     looknfeel_apply mobile
     link_plugins
     link_helpers
+    link_app_icons
     ;;
   desktop)
     theme_apply desktop
     shell_json_apply desktop
     looknfeel_apply desktop
     unlink_plugins
+    unlink_app_icons
     ;;
 esac
 
