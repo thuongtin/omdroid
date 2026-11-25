@@ -1,0 +1,236 @@
+From 9ad5fd320b8f5a05c8d8c503a58b4e4979da1d11 Mon Sep 17 00:00:00 2001
+From: Omdroid <dev@omdroid.invalid>
+Date: Tue, 24 Nov 2026 23:30:12 +0000
+Subject: [PATCH] wayland: add wl_touch input support
+
+The wayland backend only subscribed to wl_pointer and wl_keyboard, so a
+seat advertising WL_SEAT_CAPABILITY_TOUCH never produced an ITouch:
+events.newTouch never fired and a compositor nested inside another one
+ran with no touch device at all. Hyprland under cage is exactly that
+case, and on Android every finger arrives there as XI2 touch that
+wlroots forwards as wl_touch, so the event was dropped at this backend.
+
+Add CWaylandTouch, modelled on CWaylandPointer: down/up/motion/frame and
+cancel map onto the ITouch signals, positions are normalised against the
+output surface size (0..1, the space the libinput path produces with
+libinput_event_touch_get_x_transformed(x, 1)), and a seat capability
+change creates or drops the device exactly as the pointer path does.
+---
+ include/aquamarine/backend/Wayland.hpp |  30 +++++++
+ src/backend/Wayland.cpp                | 107 +++++++++++++++++++++++++
+ 2 files changed, 137 insertions(+)
+
+diff --git a/include/aquamarine/backend/Wayland.hpp b/include/aquamarine/backend/Wayland.hpp
+index d8e6006..2b3ecf5 100644
+--- a/include/aquamarine/backend/Wayland.hpp
++++ b/include/aquamarine/backend/Wayland.hpp
+@@ -11,12 +11,15 @@
+ #include <xdg-shell.hpp>
+ #include <linux-dmabuf-v1.hpp>
+ #include <tuple>
++#include <optional>
++#include <vector>
+ 
+ namespace Aquamarine {
+     class CBackend;
+     class CWaylandBackend;
+     class CWaylandOutput;
+     class CWaylandPointer;
++    class CWaylandTouch;
+ 
+     typedef std::function<void(void)> FIdleCallback;
+ 
+@@ -98,6 +101,7 @@ namespace Aquamarine {
+ 
+         friend class CWaylandBackend;
+         friend class CWaylandPointer;
++        friend class CWaylandTouch;
+     };
+ 
+     class CWaylandKeyboard : public IKeyboard {
+@@ -130,6 +134,30 @@ namespace Aquamarine {
+         const std::string name = "wl_pointer";
+     };
+ 
++    class CWaylandTouch : public ITouch {
++      public:
++        CWaylandTouch(Hyprutils::Memory::CSharedPointer<CCWlTouch> touch_, Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend_);
++        virtual ~CWaylandTouch();
++
++        virtual const std::string&                       getName();
++
++        Hyprutils::Memory::CSharedPointer<CCWlTouch>     touch;
++        Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend;
++
++      private:
++        Hyprutils::Memory::CSharedPointer<CWaylandOutput> outputForSurface(wl_proxy* surface);
++        std::optional<Hyprutils::Math::Vector2D>         posOnOutput(Hyprutils::Memory::CSharedPointer<CWaylandOutput> output, wl_fixed_t x, wl_fixed_t y);
++
++        const std::string name = "wl_touch";
++
++        // wl_touch.motion carries no surface, so a sequence stays bound to the
++        // output whose surface it started on.
++        Hyprutils::Memory::CWeakPointer<CWaylandOutput> lastOutput;
++
++        // wl_touch.cancel carries no ids either: remember what is down.
++        std::vector<int32_t> activeIDs;
++    };
++
+     class CWaylandBackend : public IBackendImplementation {
+       public:
+         virtual ~CWaylandBackend();
+@@ -165,6 +193,7 @@ namespace Aquamarine {
+         std::vector<Hyprutils::Memory::CSharedPointer<CWaylandOutput>>   outputs;
+         std::vector<Hyprutils::Memory::CSharedPointer<CWaylandKeyboard>> keyboards;
+         std::vector<Hyprutils::Memory::CSharedPointer<CWaylandPointer>>  pointers;
++        std::vector<Hyprutils::Memory::CSharedPointer<CWaylandTouch>>    touches;
+         std::vector<FIdleCallback>                                       idleCallbacks;
+ 
+         // pointer focus
+@@ -201,6 +230,7 @@ namespace Aquamarine {
+         friend class CBackend;
+         friend class CWaylandKeyboard;
+         friend class CWaylandPointer;
++        friend class CWaylandTouch;
+         friend class CWaylandOutput;
+         friend class CWaylandBuffer;
+     };
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index 049c2fe..0c512ea 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -7,6 +7,7 @@
+ #include <chrono>
+ #include <cstdlib>
+ #include <cstring>
++#include <optional>
+ #include <xf86drm.h>
+ #include <gbm.h>
+ #include <GL/gl.h>
+@@ -363,10 +364,110 @@ const std::string& Aquamarine::CWaylandPointer::getName() {
+     return name;
+ }
+ 
++Aquamarine::CWaylandTouch::CWaylandTouch(SP<CCWlTouch> touch_, Hyprutils::Memory::CWeakPointer<CWaylandBackend> backend_) : touch(touch_), backend(backend_) {
++    if (!touch->resource())
++        return;
++
++    backend->backend->log(AQ_LOG_DEBUG, "New wayland touch wl_touch");
++
++    touch->setDown([this](CCWlTouch* r, uint32_t serial, uint32_t timeMs, wl_proxy* surface, int32_t touchID, wl_fixed_t x, wl_fixed_t y) {
++        const auto output = outputForSurface(surface);
++        const auto pos    = posOnOutput(output, x, y);
++        if (!pos) {
++            TRACE(backend->backend->log(AQ_LOG_TRACE, "CWaylandTouch: touch down without a sized output, dropping"));
++            return;
++        }
++
++        lastOutput = output;
++
++        if (std::ranges::find(activeIDs, touchID) == activeIDs.end())
++            activeIDs.emplace_back(touchID);
++
++        events.down.emit(SDownEvent{
++            .timeMs  = timeMs,
++            .touchID = touchID,
++            .pos     = *pos,
++        });
++    });
++
++    touch->setUp([this](CCWlTouch* r, uint32_t serial, uint32_t timeMs, int32_t touchID) {
++        std::erase(activeIDs, touchID);
++
++        events.up.emit(SUpEvent{
++            .timeMs  = timeMs,
++            .touchID = touchID,
++        });
++    });
++
++    touch->setMotion([this](CCWlTouch* r, uint32_t timeMs, int32_t touchID, wl_fixed_t x, wl_fixed_t y) {
++        // wl_touch.motion names no surface: the point belongs to the output its
++        // sequence started on, which is the one lastOutput was set from.
++        const auto output = lastOutput.lock() ? outputForSurface(lastOutput.lock()->waylandState.surface->resource()) : outputForSurface(nullptr);
++        const auto pos    = posOnOutput(output, x, y);
++        if (!pos)
++            return;
++
++        events.move.emit(SMotionEvent{
++            .timeMs  = timeMs,
++            .touchID = touchID,
++            .pos     = *pos,
++        });
++    });
++
++    touch->setFrame([this](CCWlTouch* r) { events.frame.emit(); });
++
++    touch->setCancel([this](CCWlTouch* r) {
++        // wl_touch.cancel ends the whole sequence and carries no ids, so cancel
++        // every point we still have down.
++        const auto IDS = activeIDs;
++        activeIDs.clear();
++        lastOutput.reset();
++
++        const auto NOW = (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++        for (const auto& id : IDS) {
++            events.cancel.emit(SCancelEvent{
++                .timeMs  = NOW,
++                .touchID = id,
++            });
++        }
++    });
++}
++
++Aquamarine::CWaylandTouch::~CWaylandTouch() {
++    ;
++}
++
++const std::string& Aquamarine::CWaylandTouch::getName() {
++    return name;
++}
++
++SP<CWaylandOutput> Aquamarine::CWaylandTouch::outputForSurface(wl_proxy* surface) {
++    for (auto const& o : backend->outputs) {
++        if (o->waylandState.surface->resource() != surface)
++            continue;
++
++        return o;
++    }
++
++    // A touch on a subsurface (a popup, for instance) names a surface we do not
++    // own: it belongs to the output the pointer is on.
++    return backend->focusedOutput.lock();
++}
++
++std::optional<Vector2D> Aquamarine::CWaylandTouch::posOnOutput(SP<CWaylandOutput> output, wl_fixed_t x, wl_fixed_t y) {
++    if (!output || !output->waylandState.surface || output->waylandState.surfaceSize.x <= 0 || output->waylandState.surfaceSize.y <= 0)
++        return std::nullopt;
++
++    // ITouch positions are normalised against the output: 0..1, the same space
++    // the libinput path produces with libinput_event_touch_get_x_transformed(?, 1).
++    return Vector2D{wl_fixed_to_double(x), wl_fixed_to_double(y)} / output->waylandState.surfaceSize;
++}
++
+ void Aquamarine::CWaylandBackend::initSeat() {
+     waylandState.seat->setCapabilities([this](CCWlSeat* r, wl_seat_capability cap) {
+         const bool HAS_KEYBOARD = ((uint32_t)cap) & WL_SEAT_CAPABILITY_KEYBOARD;
+         const bool HAS_POINTER  = ((uint32_t)cap) & WL_SEAT_CAPABILITY_POINTER;
++        const bool HAS_TOUCH    = ((uint32_t)cap) & WL_SEAT_CAPABILITY_TOUCH;
+ 
+         if (HAS_KEYBOARD && keyboards.empty()) {
+             auto k = keyboards.emplace_back(makeShared<CWaylandKeyboard>(makeShared<CCWlKeyboard>(waylandState.seat->sendGetKeyboard()), self));
+@@ -379,6 +480,12 @@ void Aquamarine::CWaylandBackend::initSeat() {
+             idleCallbacks.emplace_back([this, p]() { backend->events.newPointer.emit(SP<IPointer>(p)); });
+         } else if (!HAS_POINTER && !pointers.empty())
+             pointers.clear();
++
++        if (HAS_TOUCH && touches.empty()) {
++            auto t = touches.emplace_back(makeShared<CWaylandTouch>(makeShared<CCWlTouch>(waylandState.seat->sendGetTouch()), self));
++            idleCallbacks.emplace_back([this, t]() { backend->events.newTouch.emit(SP<ITouch>(t)); });
++        } else if (!HAS_TOUCH && !touches.empty())
++            touches.clear();
+     });
+ }
+ 
+-- 
+2.56.0
+
