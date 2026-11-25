@@ -75,6 +75,9 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/fake-proc" "$WORK/stage/etc/phoshdroid/fake-p
 # into ~/.config/omarchy/plugins at session start (docs/omarchy/r5-mobile-ui-report.md).
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-ui.sh" "$WORK/stage/etc/phoshdroid/omdroid-ui.sh"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omamobile" "$WORK/stage/etc/phoshdroid/omamobile"
+# aquamarine with wl_touch (lib/README.md). start.sh puts /etc/phoshdroid/lib first
+# in LD_LIBRARY_PATH; the image copy in /opt/omarchy-android/aquamarine stays as is.
+cp -a "$OVERLAY_DIR/etc/phoshdroid/lib" "$WORK/stage/etc/phoshdroid/lib"
 chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/session-child.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-plugin-index.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-watch.py" \

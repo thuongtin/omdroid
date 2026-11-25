@@ -34,7 +34,9 @@ export OMARCHY_OUTPUT_WIDTH OMARCHY_OUTPUT_HEIGHT OMARCHY_REFRESH_MHZ OMARCHY_SC
 # copies are stock Arch builds and must never come first.
 export PATH=/opt/omarchy-android/hyprland/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export XDG_DATA_DIRS=/opt/omarchy-android/hyprland/share:/usr/local/share:/usr/share
-export LD_LIBRARY_PATH=/opt/omarchy-android/mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib
+# /etc/phoshdroid/lib comes first: it holds the APK-synced aquamarine with touch
+# (libaquamarine.so.13, see lib/README.md), which wins over the image copy below.
+export LD_LIBRARY_PATH=/etc/phoshdroid/lib:/opt/omarchy-android/mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib
 
 # GPU path: the patched Mesa/Hyprland/aquamarine builds talk KGSL directly.
 # ProotCommandBuilder already passes this block from the host; it is repeated

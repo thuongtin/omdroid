@@ -78,6 +78,7 @@ val syncGuestOverlay =
             include("omdroid-ui.sh")
             include("omamobile/**")
             include("fake-proc/**")
+            include("lib/**")
         }
         into(guestOverlayAssetDir.map { it.dir("etc/phoshdroid") })
     }
