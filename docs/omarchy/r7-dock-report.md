@@ -13,9 +13,9 @@ Scratch: `<scratch>/omarchy/r7/dock/`.
 | D2 | a2 + pin, a4, a5, a7 wired into the launcher | **PASS** | Build + 98 tests + lint green; submodule `ac0cf73` |
 | D3 | b1 keep_process_alive in the termux-x11 submodule | **PASS** | merged manifest `keep_process_alive=true`, `colorMode`; submodule `1fcc56c` |
 | D4 | c live UI switch in the guest (`omarchy-watch.py`) + dry run | **PASS** | dry run 13/13, `RESULT: PASS (0 failures)` |
-| D5 | launch contract + README "Docking" | PENDING | |
-| D6 | full gate re-run + tree sha | PENDING | |
-| D7 | report complete (manual test, risks, not verified) | PENDING | |
+| D5 | launch contract + README "Docking" | **PASS** | contract §8; README "Docking" |
+| D6 | full gate re-run + tree sha | **PASS** (parent) | `7a2d54f`: BUILD SUCCESSFUL, `unit tests 98 failed 0`, lint 0 errors / 41 warnings; test APK `omdroid-dock-test-7a2d54f.apk` sha256 `5cf29542…e4d48f`, 1,715,758,638 B, merged manifest has `CAPTURE_KEYBOARD` and `keep_process_alive=true` |
+| D7 | report complete (manual test, risks, not verified) | MOVED | the tablet device round (`brief-r7-dock-device.md`) completes the manual test, risks and not-verified lists from measured results |
 
 ## Steps
 
@@ -284,10 +284,28 @@ The round-5 tree still carries a hand-edited `base-size = 18`; the switch left i
 alone in both directions, which is one more run of the no-clobber rule on top of
 round 5's own U5.
 
-### D5 docs
-PENDING
+### D5. Docs
 
-### D6 gate
+- `docs/omarchy/launch-contract.md` **§8 "Docking"**: who decides (the pure rule,
+  and why `UI_MODE_TYPE_DESK` and input devices are reported but never decide),
+  the mode file and both moments the host writes it, the pin and its three
+  values, the live switch's four steps, where the desktop is drawn and the two
+  routes (launch display id, or the user opens the app on the monitor), the
+  private-display and no-`FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS` fallbacks,
+  keyboard capture plus the accessibility fallback, `keep_process_alive`, and the
+  exact `dock:` log lines both sides can rely on. Written as an interface, so
+  neither side changes it alone.
+- `README.md` **"Docking"**: what a plug and an unplug do, the pin, and an honest
+  "Not proven yet" list. Only a new section was added.
+
+**One stale sentence left in place, deliberately.** The README's older *Mobile UI*
+section still says the mode "applies on the next start and never mid-session",
+which this round makes untrue. The brief limits README changes to a new Docking
+section, so I did not edit it; the Docking section states the live switch. A
+one-line fix in that older paragraph belongs to whoever merges.
+
+### D6. Gate
+
 PENDING
 
 ## Manual test for Phil
