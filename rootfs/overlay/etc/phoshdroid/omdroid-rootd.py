@@ -49,6 +49,14 @@ MAX_FRAME = 1 << 16
 DEFAULT_SOCKET = "/tmp/omdroid-root/sock"
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Uids whose SO_PEERCRED may connect. On the device both proots are the same
+# app uid and proot's fake_id0 reports it with the fake ids, so this is our own
+# getuid() alone. The host-side harness has no proot: the client runs as an
+# ordinary user while the broker is root, so it names that uid with
+# --allow-peer-uid. Nothing on the device passes that option.
+PEER_UIDS = {os.getuid()}
+
+
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # sudo's default env_reset keeps a small list; -E keeps everything. HOME,
 # USER, LOGNAME and SHELL are always the target user's (see build_env).
@@ -540,7 +548,7 @@ def handle(sock):
                 socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
             )
             _pid, peer_uid, _peer_gid = struct.unpack("3i", cred)
-            if peer_uid != os.getuid():
+            if peer_uid not in PEER_UIDS:
                 fail(conn, b"omdroid-rootd: peer is not this app\n", 1)
                 return
         except OSError:
@@ -567,7 +575,15 @@ def main(argv):
 
     parser = argparse.ArgumentParser(description="Omdroid fake-root broker")
     parser.add_argument("--socket", default=DEFAULT_SOCKET)
+    parser.add_argument(
+        "--allow-peer-uid",
+        type=int,
+        action="append",
+        default=[],
+        help="also accept this peer uid (host harness only; the device never passes it)",
+    )
     args = parser.parse_args(argv)
+    PEER_UIDS.update(args.allow_peer_uid)
 
     directory = os.path.dirname(args.socket)
     if directory:

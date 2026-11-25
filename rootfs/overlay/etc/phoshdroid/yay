@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""yay for the Omdroid guest: build yay-bin on first use, then hand over to it.
+
+The guest image has makepkg and git but no AUR helper, and no Arch Linux ARM
+repository carries one: yay and paru are AUR-only. Omarchy's AUR scripts call
+`yay`, so the first call installs yay-bin - a prebuilt aarch64 binary, so
+nothing is compiled - and every call after that execs /usr/bin/yay.
+
+First run, in order:
+  1. sudo pacman -S --needed --noconfirm base-devel git   (from core)
+  2. git clone --depth 1 https://aur.archlinux.org/yay-bin.git
+  3. makepkg -si --noconfirm   (package step through the fakeroot shim to the
+     root broker, install through sudo pacman -U)
+
+A failure prints one line with the reason and the log path and exits non-zero.
+Nothing half-installed reaches PATH: /usr/local/bin/yay is this shim, and
+/usr/bin/yay only appears once pacman has installed the package.
+"""
+import fcntl
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+REAL = "/usr/bin/yay"
+AUR_URL = "https://aur.archlinux.org/yay-bin.git"
+
+
+def cache_dir():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    path = os.path.join(base, "omdroid")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def run_step(argv, log, cwd=None):
+    log.write("$ %s\n" % " ".join(argv))
+    log.flush()
+    try:
+        proc = subprocess.Popen(
+            argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+    except OSError as exc:
+        line = "yay: cannot run %s: %s\n" % (argv[0], exc.strerror or exc)
+        log.write(line)
+        sys.stderr.write(line)
+        return 127
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        text = raw.decode("utf-8", "replace")
+        log.write(text)
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    code = proc.wait()
+    log.write("[exit %d]\n" % code)
+    log.flush()
+    return code
+
+
+def exec_real(argv):
+    os.execv(REAL, [REAL] + list(argv))
+
+
+def bootstrap(argv):
+    cache = cache_dir()
+    logpath = os.path.join(cache, "yay-bootstrap.log")
+    lockpath = os.path.join(cache, "yay.lock")
+    lock = os.open(lockpath, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        # Two yay calls at once (Omarchy's scripts are not shy) must not build
+        # the same package twice; the second waits and then execs the result.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if os.path.exists(REAL):
+            exec_real(argv)
+
+        sys.stderr.write(
+            "yay: no AUR helper in this guest yet - first run installs yay-bin "
+            "(base-devel plus a prebuilt binary, a few minutes)\n"
+        )
+        sys.stderr.write("yay: progress and the full log: %s\n" % logpath)
+        sys.stderr.flush()
+
+        workdir = tempfile.mkdtemp(prefix="yay-bin-", dir=cache)
+        source = os.path.join(workdir, "yay-bin")
+        steps = [
+            (
+                "installing base-devel and git",
+                ["sudo", "pacman", "-S", "--needed", "--noconfirm", "base-devel", "git"],
+                None,
+            ),
+            (
+                "fetching yay-bin from the AUR",
+                ["git", "clone", "--depth", "1", AUR_URL, source],
+                None,
+            ),
+            (
+                "building and installing yay-bin",
+                ["makepkg", "-si", "--noconfirm"],
+                source,
+            ),
+        ]
+
+        failure = None
+        with open(logpath, "a", encoding="utf-8") as log:
+            log.write("=== yay bootstrap %s ===\n" % time.strftime("%Y-%m-%dT%H:%M:%S"))
+            for label, command, cwd in steps:
+                sys.stderr.write("yay: %s\n" % label)
+                sys.stderr.flush()
+                code = run_step(command, log, cwd)
+                if code != 0:
+                    failure = "%s failed (exit %d)" % (label, code)
+                    break
+            if failure is None and not os.path.exists(REAL):
+                failure = "pacman finished but %s is missing" % REAL
+            if failure:
+                log.write("bootstrap failed: %s\n" % failure)
+
+        if failure:
+            sys.stderr.write(
+                "yay: could not install yay-bin: %s; log: %s (build dir %s)\n"
+                % (failure, logpath, workdir)
+            )
+            return 1
+        shutil.rmtree(workdir, ignore_errors=True)
+        exec_real(argv)
+    finally:
+        os.close(lock)
+
+
+def main(argv):
+    if os.path.exists(REAL):
+        exec_real(argv)
+    return bootstrap(argv)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        sys.exit(1)

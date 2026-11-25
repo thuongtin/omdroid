@@ -6,7 +6,8 @@ root and the image has no sudo package (setuid would not work under proot
 anyway). ProotService starts a second proot of the same rootfs with `-0`
 (fake root) running /etc/phoshdroid/omdroid-rootd.py; this client sends it the
 command, the cwd, a small environment and either the caller's terminal or
-plain pipes, and relays the result.
+plain pipes, and relays the result. The transport lives in omdroid_root.py,
+which the fakeroot shim imports too.
 
 There is no password: the whole guest is the app's own uid inside its private
 storage, so fake root grants no real privilege. It exists so the 70 Omarchy
@@ -16,26 +17,15 @@ Supported: `sudo cmd...`, `--`, `-n`, `-E`, `-u USER`, `-i`, `-s`, `-v`, `-k`,
 `-l`, `-h`, `-V`, and `VAR=value` before the command. Unknown flags are an
 error, as in sudo.
 """
-import fcntl
-import json
 import os
-import signal
-import socket
-import struct
 import sys
-import termios
-import threading
-import tty
 
-CH_STDIN = 0
-CH_STDOUT = 1
-CH_STDERR = 2
-CH_EXIT = 3
-CH_WINCH = 4
-CH_ERROR = 5
-MAX_FRAME = 1 << 16
+HERE = os.path.dirname(os.path.realpath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
-SOCKET = os.environ.get("OMDROID_SUDO_SOCK") or "/tmp/omdroid-root/sock"
+import omdroid_root
+
 VERSION = "omdroid sudo 1.0 (fake root through the omdroid root broker)"
 
 USAGE = """usage: sudo [-n] [-E] [-u user] [-i | -s] [-v | -k | -l | -h | -V] [--] command [arg ...]
@@ -177,17 +167,6 @@ def build_request(options, argv, extra_env):
     env["SUDO_GID"] = str(os.getgid())
     env["SUDO_COMMAND"] = " ".join(argv)
 
-    tty = None
-    rows = cols = 0
-    if os.isatty(0):
-        try:
-            rows, cols = struct.unpack(
-                "HHHH", fcntl.ioctl(0, termios.TIOCGWINSZ, b"\x00" * 8)
-            )[:2]
-        except OSError:
-            rows, cols = 0, 0
-        tty = {"rows": rows or 24, "cols": cols or 80}
-
     cwd = None if options.login else os.getcwd()
     return {
         "argv": argv,
@@ -195,50 +174,9 @@ def build_request(options, argv, extra_env):
         "env": env,
         "env_extra": dict(extra_env),
         "user": options.user,
-        "tty": tty,
+        "tty": omdroid_root.tty_spec(),
         "keep_env": options.keep_env,
     }
-
-
-def write_all(fd, data):
-    while data:
-        written = os.write(fd, data)
-        data = data[written:]
-
-
-class Screen:
-    """Raw mode on the caller's terminal, restored on every exit path."""
-
-    def __init__(self):
-        self.saved = None
-        self.resized = False
-
-    def enter(self):
-        if not os.isatty(0):
-            return
-        try:
-            self.saved = termios.tcgetattr(0)
-            tty.setraw(0)
-        except termios.error:
-            self.saved = None
-
-    def leave(self):
-        if self.saved is None:
-            return
-        try:
-            termios.tcsetattr(0, termios.TCSAFLUSH, self.saved)
-        except termios.error:
-            pass
-        self.saved = None
-
-    def window_size(self):
-        try:
-            rows, cols = struct.unpack(
-                "HHHH", fcntl.ioctl(0, termios.TIOCGWINSZ, b"\x00" * 8)
-            )[:2]
-        except OSError:
-            return None
-        return "%d %d" % (rows or 24, cols or 80)
 
 
 def main(argv):
@@ -279,114 +217,7 @@ def main(argv):
     else:
         command = rest
 
-    request = build_request(options, command, extra_env)
-
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(2.0)
-    try:
-        client.connect(SOCKET)
-    except OSError:
-        sys.stderr.write(
-            "sudo: the root broker is not running (start the Omdroid session)\n"
-        )
-        return 1
-    client.settimeout(None)
-
-    screen = Screen()
-
-    def restore_and_exit(signum, _frame):
-        screen.leave()
-        raise SystemExit(128 + signum)
-
-    def mark_resized(_signum, _frame):
-        screen.resized = True
-
-    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT, signal.SIGQUIT):
-        signal.signal(signum, restore_and_exit)
-    signal.signal(signal.SIGWINCH, mark_resized)
-
-    screen.enter()
-    exit_code = 1
-    try:
-        client.sendall(json.dumps(request).encode("utf-8") + b"\n")
-        send_lock = threading.Lock()
-
-        def send_frame(channel, payload):
-            with send_lock:
-                client.sendall(struct.pack(">BI", channel, len(payload)) + payload)
-
-        # stdin is pumped from its own thread: a fd that cannot be polled (a
-        # regular file, /dev/null: epoll answers EPERM) must not break the
-        # client, and a program that never reads stdin must not block us.
-        def pump_stdin():
-            while True:
-                try:
-                    chunk = os.read(0, MAX_FRAME)
-                except OSError:
-                    chunk = b""
-                if not chunk:
-                    break
-                try:
-                    send_frame(CH_STDIN, chunk)
-                except OSError:
-                    return
-            try:
-                client.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-
-        threading.Thread(target=pump_stdin, daemon=True).start()
-
-        client.settimeout(0.25)
-        buffer = bytearray()
-        frames = []
-
-        def parse_frames():
-            while len(buffer) >= 5:
-                channel, length = struct.unpack(">BI", bytes(buffer[:5]))
-                if length > MAX_FRAME:
-                    raise OSError("oversized frame")
-                if len(buffer) < 5 + length:
-                    return
-                frames.append((channel, bytes(buffer[5 : 5 + length])))
-                del buffer[: 5 + length]
-
-        done = False
-        while not done:
-            try:
-                chunk = client.recv(MAX_FRAME)
-            except socket.timeout:
-                chunk = None
-            except OSError:
-                chunk = b""
-            if chunk is not None:
-                if not chunk:
-                    break
-                buffer += chunk
-                parse_frames()
-                while frames:
-                    channel, payload = frames.pop(0)
-                    if channel == CH_STDOUT:
-                        write_all(1, payload)
-                    elif channel == CH_STDERR:
-                        write_all(2, payload)
-                    elif channel == CH_ERROR:
-                        write_all(2, payload)
-                    elif channel == CH_EXIT:
-                        exit_code = struct.unpack(">i", payload[:4])[0]
-                        done = True
-                        break
-            if screen.resized:
-                screen.resized = False
-                size = screen.window_size()
-                if size:
-                    try:
-                        send_frame(CH_WINCH, size.encode("ascii"))
-                    except OSError:
-                        pass
-    finally:
-        screen.leave()
-    return exit_code
+    return omdroid_root.relay(build_request(options, command, extra_env), "sudo")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(TOOLS, "..", "..", ".."))
 BROKER = os.path.join(ROOT, "rootfs/overlay/etc/phoshdroid/omdroid-rootd.py")
 SUDO = os.path.join(ROOT, "rootfs/overlay/etc/phoshdroid/sudo")
+FAKEROOT = os.path.join(ROOT, "rootfs/overlay/etc/phoshdroid/fakeroot")
 
 VERBOSE = "-v" in sys.argv[1:]
 ME = __import__("pwd").getpwuid(os.getuid()).pw_name
@@ -57,6 +58,19 @@ def client_env(overrides=None):
 def run_client(args, stdin=b"", cwd=None, env_extra=None, timeout=30):
     proc = subprocess.run(
         [sys.executable, SUDO] + args,
+        input=stdin,
+        cwd=cwd or CTX.workdir,
+        env=client_env(env_extra),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def run_fakeroot(args, stdin=b"", cwd=None, env_extra=None, timeout=30):
+    proc = subprocess.run(
+        [sys.executable, FAKEROOT] + args,
         input=stdin,
         cwd=cwd or CTX.workdir,
         env=client_env(env_extra),
@@ -341,6 +355,63 @@ def broker_absent_fails_fast():
         proc.returncode == 1 and b"not running" in proc.stderr and elapsed < 2.0,
         (proc.returncode, proc.stderr, round(elapsed, 2)),
     )
+
+
+@case
+def fakeroot_full_env_is_passed():
+    # makepkg runs its package step as `fakeroot -- bash ... makepkg -F`, so the
+    # shim must hand over the whole environment (no -E) and set FAKEROOTKEY.
+    code, out, err = run_fakeroot(
+        ["sh", "-c", "echo ${OMDROID_ROOTD_TEST:-unset}; echo ${FAKEROOTKEY:+key}"],
+        env_extra={"OMDROID_ROOTD_TEST": "kept"},
+    )
+    return code == 0 and out == b"kept\nkey\n", (code, out, err)
+
+
+@case
+def fakeroot_cwd_is_the_callers():
+    work = os.path.join(CTX.workdir, "fakeroot-sub")
+    os.makedirs(work, exist_ok=True)
+    code, out, err = run_fakeroot(["pwd", "-P"], cwd=work)
+    expected = os.path.realpath(work).encode() + b"\n"
+    return code == 0 and out == expected, (code, out, expected, err)
+
+
+@case
+def fakeroot_exit_code_passes_through():
+    code, out, err = run_fakeroot(["sh", "-c", "exit 9"])
+    return code == 9, (code, out, err)
+
+
+@case
+def fakeroot_stdin_is_streamed():
+    code, out, err = run_fakeroot(["cat"], stdin=b"pkg\n")
+    return code == 0 and out == b"pkg\n", (code, out, err)
+
+
+@case
+def fakeroot_version():
+    code, out, _ = run_fakeroot(["-v"])
+    code2, out2, _ = run_fakeroot(["--version"])
+    return (
+        code == 0 and code2 == 0 and out.startswith(b"fakeroot version")
+        and out2 == out,
+        (code, out, code2, out2),
+    )
+
+
+@case
+def fakeroot_no_command_is_a_usage_error():
+    code, _, err = run_fakeroot([])
+    return code == 1 and b"usage:" in err, (code, err)
+
+
+@case
+def fakeroot_unsupported_option_is_an_error():
+    # A saved fake state cannot survive the broker (one process per request),
+    # so -s must fail loudly rather than pretend it worked.
+    code, _, err = run_fakeroot(["-s", "state", "true"])
+    return code == 1 and b"not supported" in err, (code, err)
 
 
 def main():

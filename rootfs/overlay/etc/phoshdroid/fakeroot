@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""fakeroot for the Omdroid guest: the fake root we already have, through the broker.
+
+makepkg refuses to run the package step without `fakeroot` (it calls
+`fakeroot -- bash <flags> /usr/sbin/makepkg -F <args>` and then requires
+FAKEROOTKEY to be set), and real fakeroot would not work here anyway: Arch
+builds it with SysV IPC (`--with-ipc=sysv`) and Android's kernel has
+CONFIG_SYSVIPC off, so shmget/msgget come back ENOSYS.
+
+Under proot the guest already has a fake root: the second proot ProotService
+starts with `-0`. So this shim sends its command to that broker with the FULL
+environment, the caller's cwd and its stdio, and sets FAKEROOTKEY in it. To
+makepkg, packaging then runs as uid 0 and the package's files are recorded as
+root-owned, exactly as a real fakeroot run would.
+
+Supported: `fakeroot [--] command [args...]`, `-v`/`--version`, `-h`/`--help`.
+Not supported: -s/--save-file, -i/--load-file, -l/--lib, -x/--fakeroot-sysv,
+-t/--fakeroot-tcp, -P/--fd-socket, -d/--debug, -u/--unknown-is-real,
+-c/--cmd, -f/--faked, -a/--asar, -e/--deb. makepkg uses none of them, and a
+saved fake state cannot survive the broker: each request is a new process.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+import omdroid_root
+
+VERSION = "fakeroot version 1.37.2 (omdroid shim: fake root through the root broker)"
+
+USAGE = """usage: fakeroot [--] command [arg ...]
+       fakeroot -v | --version
+       fakeroot -h | --help
+
+Omdroid's fakeroot: runs the command as fake root through the root broker.
+No saved fake state (-s/-i): the broker starts a new process per request.
+"""
+
+UNSUPPORTED = {
+    "-s": "saved fake state",
+    "--save-file": "saved fake state",
+    "-i": "loading fake state",
+    "--load-file": "loading fake state",
+    "-l": "an alternate libfakeroot",
+    "--lib": "an alternate libfakeroot",
+    "-x": "choosing the IPC mode",
+    "--fakeroot-sysv": "choosing the IPC mode",
+    "-t": "choosing the IPC mode",
+    "--fakeroot-tcp": "choosing the IPC mode",
+    "-P": "a socket fd",
+    "--fd-socket": "a socket fd",
+    "-d": "fakeroot's own debug output",
+    "--debug": "fakeroot's own debug output",
+    "-u": "treating unknown users as real",
+    "--unknown-is-real": "treating unknown users as real",
+    "-c": "a shell command",
+    "--cmd": "a shell command",
+    "-f": "a faked file list",
+    "--faked": "a faked file list",
+    "-a": "an asar archive",
+    "--asar": "an asar archive",
+    "-e": "a deb archive",
+    "--deb": "a deb archive",
+}
+
+
+def usage_error(message):
+    sys.stderr.write("fakeroot: %s\n%s" % (message, USAGE))
+    raise SystemExit(1)
+
+
+def parse(argv):
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            return argv[index + 1 :]
+        if arg in ("-v", "--version", "-h", "--help"):
+            return arg
+        if arg.startswith("-") and arg != "-":
+            reason = UNSUPPORTED.get(arg)
+            if reason:
+                usage_error("option '%s' is not supported here (%s)" % (arg, reason))
+            usage_error("unrecognized option '%s'" % arg)
+        return argv[index:]
+    return None
+
+
+def build_request(command):
+    # Full environment: makepkg's package step must see the build environment it
+    # was started with. The broker still owns HOME/USER/LOGNAME (root), as sudo
+    # does, because it cannot hand a root HOME to a child it did not start.
+    env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
+    env.setdefault("FAKEROOTKEY", str(os.getpid()))
+    return {
+        "argv": command,
+        "cwd": os.getcwd(),
+        "env": env,
+        "env_extra": {},
+        # Root is the point: makepkg's package function must run as uid 0.
+        "user": os.environ.get("OMDROID_ROOTD_DEFAULT_USER") or "root",
+        "tty": omdroid_root.tty_spec(),
+        "keep_env": True,
+    }
+
+
+def main(argv):
+    parsed = parse(argv)
+    if parsed == "-v" or parsed == "--version":
+        print(VERSION)
+        return 0
+    if parsed == "-h" or parsed == "--help":
+        sys.stdout.write(USAGE)
+        return 0
+    if not parsed:
+        usage_error("no command given")
+    return omdroid_root.relay(build_request(parsed), "fakeroot")
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        sys.exit(1)
