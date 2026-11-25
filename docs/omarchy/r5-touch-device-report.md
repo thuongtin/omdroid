@@ -186,3 +186,26 @@ sheet opens (`Foot` / `Show with…` "No other app is open" / `Cancel`, `shots/d
 A still 1.5 s hold on the home pill over an app does nothing: no layer, workspace and focus
 unchanged. That is the pill as built since `a44b0a1` (`longPressThreshold: root.voice ? 0.45 : 3600`,
 no voice plugin), so its long press is correctly inert.
+
+**D3.6 drag inside a window.** In `foot` after `seq 1 300` (typed with `input text`), a one-finger
+quick drag down (`swipe 1600,500 → 1600,1500`, 800 ms) scrolls the scrollback: the visible
+lines go from 251-300 + prompt to **221-271** with foot's scroll indicator at the right edge
+(`shots/d3-drag-before.png`, `d3-drag-after.png`). The same drag over `touchlog` is one
+`wl_touch.down` at 799.5,249.5, **97** `motion` events, one `up` at 799.5,749.5: a continuous
+stream, no hold needed. Moving a window by dragging it is not tested: Hyprland has no touch
+binding for that (it needs a plugin such as hyprgrass), and the mobile layout tiles windows.
+
+**D3.7 two fingers.** A synthetic multi-touch screen through Android's `uinput` command
+(`adb shell uinput /data/local/tmp/r5-mt.json`: a type-B MT device, `INPUT_PROP_DIRECT`, axes
+2136x3200 = the panel in its natural portrait orientation; generator inline in scratch
+`d3-multi.sh`), with `touchlog` reading. The device maps raw (x, y) to screen (y, 2135 − x).
+
+| Injected | `touchlog` sequence | Verdict |
+|---|---|---|
+| one finger tap at raw 500,800 | id 0 down at 399.5,817.0 (= screen 799,1634) | calibration |
+| two fingers, raw X +600 in 20 steps | ids **0 and 1** down at 699.5,717 and 899.5,717; 42 motions; both end at y = 417 (a two-finger swipe up, 300 logical px) | **PASS** |
+| two fingers, raw Y +600 in 20 steps | ids 0 and 1 at 599.5,717 and 599.5,517; 42 motions; both end at x = 899.5 (a two-finger swipe right) | **PASS** |
+
+`max simultaneous touch points: 2`: two real `wl_touch` points reach a client at once, which
+pointer emulation could never deliver. `gestures:workspace_swipe_touch` is `false` (not set),
+Hyprland default, so the touch workspace swipe is off in this config and was not enabled.
