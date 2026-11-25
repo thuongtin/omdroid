@@ -145,3 +145,47 @@ Facts the parent checked for you: the stock Omarchy shell has no `ScreencopyView
 crash is Omamobile's switcher only. `omarchy-watch.py` giving up after 3 restarts is the parent's
 file: record it as a finding, do not edit it. Quick one-finger flicks (no hold) doing nothing is a
 host input-mode limit the real-touch work addresses: record, do not work around it.
+
+
+---
+
+## ROUND 2 (added by the parent): polish with real touch
+
+Since your last turn, real touch shipped (read `docs/omarchy/r5-touch-device-report.md`, the
+STATUS TABLE and D3): the guest now has a `wl_touch` device, `touchMode = "3"`, and the tablet
+runs the APK built from `73b7a0b` (sha256 `56db6d5201c8b08a…`; it already contains your
+`a44b0a1`, `dec7402`, `9a020d1`). Quick swipes work now: the dock swipe-up opened the switcher.
+A touch lands 1 screen px up-left of the finger (Termux:X11 rounding, not yours to fix).
+
+Do, in order, each proven on the device, committed with exactly its paths, and written into a new
+section "Round 2" of `docs/omarchy/r5-mobile-ui-device-report.md` with its own STATUS TABLE (R1-R8):
+
+- **R1 screensaver notifications.** The quick-settings history is full of "Screensaver only runs
+  in Alacritty, Foot…" notifications (visible in `docs/screenshots/mobile-quicksettings.jpg`).
+  Find why it fires and why it fails in this guest (which terminal it expects, what
+  `xdg-terminal-exec`/`$TERMINAL` resolve to here) and fix the cause, or if the screensaver
+  cannot work under proot, turn the idle screensaver off for Omdroid through `omdroid-ui.sh` in
+  both UI modes (no-clobber rule as before). Proof: no new such notification over 10 idle minutes,
+  or the screensaver actually running.
+- **R2** the pill hint that names voice and keyboard (neither is ported): say only what works.
+- **R3** the Omarchy menu's last row (System) cut off in mobile mode at 16 px type: make every row
+  reachable (scroll, fewer rows, or a size cap), screenshot it.
+- **R4** the mouse pointer drawn on screen. With real touch Hyprland should hide it after a touch
+  (`cursor:hide_on_touch`); check what the guest's config says and what the screen shows after
+  touches; fix through `omdroid-ui.sh` in mobile mode if needed.
+- **R5** the tiny quick-settings page dots: finger-sized or replaced by a visible page affordance.
+- **R6** your M10 look again, now with quick swipes: dock swipe-up, pill home, card flick, back,
+  pull-down, drawer scroll; anything that still needs a hold is a defect now. Fix what is yours.
+- **R7** build the APK yourself in the foreground once all fixes are committed
+  (`rm -f app/build/outputs/apk/debug/app-debug.apk && ./gradlew :app:assembleDebug --console=plain`,
+  600 s timeout), install it, cold start, `probe.sh -q` PASS, and re-run R1-R6's proofs on it.
+- **R8** replace `docs/screenshots/mobile-desktop.jpg` and `docs/screenshots/mobile-quicksettings.jpg`
+  with shots from the R7 build (an app open on one desktop shot is fine if it reads better; no
+  personal data on screen), view both, commit with the report. Leave the session in mobile mode,
+  no test windows, stay-awake restored and read back.
+
+Files you may change: as before (`omdroid-ui.sh`, `omamobile/**`, your report, the two screenshots,
+`docs/omarchy/tools/**` new tools). Not `start.sh`, `omarchy-watch.py`, `lib/**`, `app/**`,
+`termux-x11/**`: if a fix needs one of them, describe it in the report. If your call budget runs
+low, write the report state and commit first.
+Final reply: at most 10 lines, R1-R8 with the decisive fact each, the commits, the final APK sha256.
