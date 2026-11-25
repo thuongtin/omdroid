@@ -152,3 +152,39 @@ All under `<scratch>/omarchy/r5/device/shots/` unless a repo path is given.
 Mode file removed again (missing means mobile, as before this round). No windows (`clients 0`),
 quick settings closed, cold start `VERDICT: PASS` on APK `0a229e1a…1f80`.
 `stay_on_while_plugged_in` restored to the recorded `0` and read back `0`.
+
+# Round 2: polish with real touch
+
+Real touch shipped in between (`docs/omarchy/r5-touch-device-report.md`): the guest has a
+`wl_touch` device and `touchMode = "3"`. Starting build: APK `56db6d52…` from `73b7a0b`.
+`stay_on_while_plugged_in` was `0` at the start of this round, set to `2` while working.
+
+## Round 2 STATUS TABLE
+
+| Step | Status | Decisive fact |
+|---|---|---|
+| R1 screensaver notifications | **PASS** | Cause: the guest has no `xdg-terminal-exec`, so `omarchy-launch-screensaver` gets an empty terminal and notifies. It also lacks `ttfx` and the branding text, so the screensaver cannot run here (details below). Fix `6b31334`: Omarchy's own `screensaver-off` flag, set once in both modes. Proof: `dbus-monitor` on `Notify` for **610 s** idle. Inside the window the idle cycle started (`idle-cycle-start: screensaver=150 lock=300` at 01:25:54) and the screensaver process exited 1. **0** "Screensaver only runs" calls (the 1 Notify seen was my own probe). `omarchy-launch-screensaver` run by hand exits 1 with no Notify. A second `omdroid-ui.sh` run changes nothing. |
+| R2 pill hint | **PASS** | `9229e3b`: with the done marker cleared and an app opened, the strip's hint Notify reads "Swipe up on the pill to go home · swipe up and hold for recent apps" (`dbus-monitor`), and `omdroid-pill-hint` is claimed. The toast shows top right (`shots/r2-hint.png`). R6 checks both gestures it names. |
+| R3 menu's last row | **PASS** (no change needed) | The stock menu caps the card at 70 % of the screen and ends it mid-row on purpose, as a "more below" cue (`Menu.qml:150-175`). Its `ListView` scrolls. With real touch, one quick swipe up on the list (`input touchscreen swipe 1600 1400 1600 600 180`) scrolls it so **System** is fully visible (`shots/r3-menu-ab.png`, left as opened, right after the swipe). |
+| R4 pointer after touch | **PASS** | The stock `~/.config/hypr/looknfeel.lua:20` sets `hide_on_touch = false`. Before: an arrow is drawn at the last tap (`shots/r4-cursor-ab.png`, left). Fix `d5cc16d`: the mobile block sets `cursor = { hide_on_touch = true }`. On the device, reset at runtime to `false` → `omdroid-ui.sh` rewrites the block → Hyprland reloads to `bool: true` → two taps → no arrow at the tapped spot (`shots/r2r4-check.png`, left). Desktop mode drops the block, so the stock `false` returns. |
+| R5 quick-settings page dots | **PASS** | `2cfe009`: each dot is a `Style.space(44)` target (59 logical, 117 screen px at 16 px type) with a 10 px dot; the current page is a wide accent pill (`shots/r5-dots-1.png`). A tap on the other dot at (862,1000) moved the accent pill from x 948-1015 to **830-897** and turned the tile page (20367 sampled tile-area pixels changed, `r5-dots-2.png`). |
+| R6 quick swipes, look again | PENDING | |
+| R7 own build, re-proof | PENDING | |
+| R8 screenshots, finish | PENDING | |
+
+## R1. Why the screensaver notification fired
+
+The idle service (`shell/plugins/services/idle/Service.qml:65-68`) runs
+`omarchy-launch-screensaver` after `idle.screensaver` (150 s). That script gets the terminal from
+`xdg-terminal-exec --print-id` (`:14`). The guest has no `xdg-terminal-exec`, so `terminal` is
+empty, the `case` falls through, and it sends "Screensaver only runs in Alacritty, Foot, Ghostty,
+or Kitty" and exits 1 (`:16-21`). `$TERMINAL` is unset. `~/.config/xdg-terminals.list` names
+`foot.desktop`, and foot is installed. Even with a terminal the screensaver could not run: it
+draws with `ttfx` (`omarchy-screensaver:39`), which is absent too, as is the branding text it
+animates (`~/.config/omarchy/branding/screensaver.txt`). Making it work means adding packages
+to the image. Android already owns the screen timeout, so `omdroid-ui.sh` turns it off in both
+modes with Omarchy's own flag, `~/.local/state/omarchy/toggles/screensaver-off` (the file
+`omarchy-toggle screensaver-off` writes). `omarchy-launch-screensaver` checks that flag before the
+terminal and exits quietly (`:9-11`). It is set once and recorded in
+`~/.local/state/omdroid/ui/screensaver-off.ours`, so a user who turns the screensaver back on
+keeps it on.
