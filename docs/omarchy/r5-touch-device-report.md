@@ -12,11 +12,11 @@ Scratch: `<scratch>/omarchy/r5/touch-device/`.
 | D0 device, stay-awake, `probe.sh -q` on the installed build | **PASS** | keyguard not showing, awake; `stay_on_while_plugged_in` was `0`, set `2` (read back `2`); installed base.apk `0a229e1a…1f80` (0.0.14-alpha + round-5 mobile UI); `probe.sh` `VERDICT: PASS` (root 3200x1971, monitor 1600x985 @2); baseline `j/devices` `touch: []`; Hyprland maps the image library sha `8a2a2cbe…135e` |
 | D1 new library loaded on the device (no APK change), `wl_touch` listed | **PASS** | image library renamed over (backup `files/r5-touch-backup/…orig`, sha `8a2a2cbe`); cold start handover +9.7 s, desktop PASS +9.2 s; `j/devices` **`touch: ["wl_touch"]`** (was `[]`); Hyprland maps inode 98028 = the new 1 775 168-byte file (sha `8514d2a6…`); `probe.sh -q` PASS; bar tap (mode 2 click) at 1600,44 opens `omamobile-quicksettings`, Escape closes it |
 | D2 delivery change + `touchMode = "3"`, gates, build, install | **PASS** | commits `27192a8` (build) + `73b7a0b` (feat); gate `compileDebugKotlin test lintDebug` BUILD SUCCESSFUL, `unit tests 63 failed 0`; `assembleDebug` 20 s, APK 1 715 699 122 B sha `56db6d52…8ba4`, carries `assets/guest-overlay/etc/phoshdroid/lib/libaquamarine.so.13` sha `8514d2a6…`; `install.sh` → `INSTALL: PASS` (installed sha = local); D1 swap undone first (`/opt` library back to `8a2a2cbe…`) |
-| D3 real touch proven (devices, positions, bar 9/9, focus, gestures, long press, two fingers) | PENDING | |
-| D4 regressions (keyboard, size change, desktop mode) | PENDING | |
-| D5 decision: which `touchMode` ships | PENDING | |
-| D6 clean up | PENDING | |
-| D7 report | PENDING | |
+| D3 real touch proven (devices, positions, bar 9/9, focus, gestures, long press, two fingers) | **PASS** | `touch: [wl_touch]`, Hyprland maps `/etc/phoshdroid/lib/libaquamarine.so.13` (device sha = repo); positions 8/8 within **1 screen px** (constant −1 px from the X11 hop, no scale, no mirror); desktop bar **9/9** react to a touch tap (8 changes + ws1 tapped while active); focus by tap moves focus and `r5typed` lands only in the tapped window; mobile gestures **7/7** with quick swipes (back x=20 and x=3, pill home, dock → switcher, card flick closes, card tap, QS pull-down); card long press opens its actions; foot scrolls on a drag; **2 simultaneous touch points** reach a client (uinput MT screen) |
+| D4 regressions (keyboard, size change, desktop mode) | **PASS** | uhid SUPER+2: workspace 1 → **2**, SUPER+1 back, Android top unchanged; rotation to portrait: probe PASS (root 2136x3035 → 1068x1517), Hyprland pid 7641 unchanged, quickshell 7707 → 14466 (shell-only restart); `screen.sh reset`: probe PASS 3200x1971, density 352, auto-rotate on; desktop mode cold start PASS, stock bar, bar taps work by touch |
+| D5 decision: which `touchMode` ships | **`"3"` ships** | every D3 row passed on the D2 APK; nothing to revert |
+| D6 clean up | **PASS** | mode file removed (missing = mobile, as found), cold start PASS (mobile layers, clients 0); `stay_on_while_plugged_in` restored and read back **0**; containers `omdroid-aq-build`, `omdroid-aquamarine-builder` removed (no rebuild was needed), images kept; `probe.sh -q` PASS |
+| D7 report | **DONE** | this file; final APK `56db6d5201c8b08aa00331284d922d65601715aa0ae9d0b48a5a5bfa15f98ba4` built from `73b7a0b` |
 
 ## Log
 
@@ -209,3 +209,140 @@ binding for that (it needs a plugin such as hyprgrass), and the mobile layout ti
 `max simultaneous touch points: 2`: two real `wl_touch` points reach a client at once, which
 pointer emulation could never deliver. `gestures:workspace_swipe_touch` is `false` (not set),
 Hyprland default, so the touch workspace swipe is off in this config and was not enabled.
+
+**D3.3 the bar, desktop mode** (stock Omarchy bar; run inside D4's desktop cold start).
+`BARTEST_SETTLE=2.2 python3 docs/omarchy/tools/bartest.py touch 26`, real touch:
+
+| target (x) | ws | new layer | verdict |
+|---|---|---|---|
+| Omarchy button (45) | 1→1 | **`omarchy-menu`** | reacts |
+| workspace 1 (87) | 1→1 | - | tapped while workspace 1 was already active (no change expected) |
+| workspace 2 (128) | 1→**2** | - | reacts |
+| workspace 3 (170) | 1→**3** | - | reacts |
+| workspace 4 (211) | 1→**4** | - | reacts |
+| workspace 5 (253) | 1→**5** | - | reacts |
+| network (3052) | 1→1 | **`omarchy-keyboard-panel`** | reacts |
+| volume (3105) | 1→1 | **`omarchy-keyboard-panel`** | reacts |
+| display (3160) | 1→1 | **`omarchy-keyboard-panel`** | reacts |
+
+Round 4 measured 0/9 in this mode before the patch. The cursor follows each touch (45 → 22,12;
+3052 → 1525,12), the same −1 px as D3.2. In mobile mode the bar is one touch target (tap toggles
+quick settings, a pull opens it, `Bar.qml:450-466`): tap → `omamobile-quicksettings` (pre-check
+and D3.5).
+
+**D3.4 focus by tap, typing.** Desktop mode, two byte-logger windows (`foot --app-id=r5a|r5b`
+running `/tmp/r5-bytelog.py`). `focustest.py touch`: `active_before=r5b` → tap 805,1011 →
+`active_after=r5a focus_moved=yes`. Then `adb shell input text r5typed`: `r5a.log` =
+`72357479 70 6564` (= `r5typed`), `r5b.log` empty. Typing lands in the tapped window. Screenshot
+`shots/d4-desktop-focus.png`: two tiled windows, the left one (r5a) with the active border.
+
+**D3.7, two fingers in a terminal.** Two uinput fingers dragged down 800 px over foot after
+`seq 1 300`: the view goes from 251-300 + prompt to **227-277** (`shots/d3-2f-before.png`,
+`d3-2f-after.png`). foot scrolls with the touch stream; whether it uses the second point or only
+the first is not distinguishable here (a one-finger drag scrolls it too, D3.6).
+
+### D4 regressions
+
+```
+keyboard  uhid keyboard (hid, descriptor from docs/omarchy/r4-input-research.md appendix)
+          Left GUI + usage 0x1F ("2"): j/activeworkspace 1 -> 2; LorieNative "Sending key: 133 (125 0 1)",
+          "Sending key: 11 (3 0 1)"; Left GUI + 0x1E ("1"): 2 -> 1; top stays com.termux.x11.MainActivity
+          (a first try with 0x1E alone sent Super_L + "1" while on workspace 1, so nothing moved: the
+          research appendix calls 0x1E "2", but HID 0x1E is "1" and 0x1F is "2")
+size      ./screen.sh rot 0  -> cur 2136x3200; probe: xroot 2136x3035, cage 2136x3034, monitor 1068x1517, VERDICT PASS
+          pids cage 7632 / Hyprland 7641 unchanged, quickshell 7707 -> 14466 (shell restart only)
+          ./screen.sh reset  -> Override density 352, accelerometer_rotation=1, cur 3200x2136;
+          probe: xroot 3200x1971, monitor 1600x985, VERDICT PASS; Hyprland 7641 unchanged, quickshell -> 15165
+          omarchy-watch.log: "layers do not fit … attempt 1/3", "omarchy-restart-shell rc=0", "layers fit again 3.7 s after the restart"
+desktop   printf desktop > ~/.config/omdroid/ui; ./coldstart.sh 1 --tag d4-desktop: handover +3.6 s, desktop PASS +3.1 s,
+          layers omarchy-background + omarchy-bar 1600x26; bar taps by touch: D3.3 (9/9); focus + typing: D3.4
+mobile    rm ~/.config/omdroid/ui (missing = mobile, the state found); ./coldstart.sh 1 --tag d6-final:
+          handover +9.8 s, desktop PASS +9.2 s, mobile layers (dock, launcher, bar 1600x44, two back strips), clients 0
+```
+
+### D5 decision: `touchMode = "3"` ships
+
+Direct touch is what `73b7a0b` sets, and it stays. On the D2 APK every D3 item passed: the touch
+device exists and is the APK's library, a touch lands within 1 screen pixel of where it was
+tapped across the whole screen, the desktop bar reacts 9/9, focus and typing follow a tap, and
+all seven mobile gestures work as plain quick swipes (the dock swipe-up was 0/10 under simulated
+touch). A long press reaches QML (card actions), a drag scrolls a terminal, and two fingers
+reach a client as two touch points. Nothing in D4 regressed. The library stays, as decided.
+
+### D6 clean up
+
+Session in `mobile` (mode file absent, as found), no test windows (`omarchy-hyprland-window-close-all`
+rc=0, clients 0 after the final cold start), `stay_on_while_plugged_in` restored to the recorded
+`0` (`svc power stayon false`, read back `0`), `probe.sh -q` → `VERDICT: PASS`. The patch needed
+no rebuild, so `docker rm -f omdroid-aq-build omdroid-aquamarine-builder` ran (0 omdroid
+containers left; images `omdroid-aquamarine:0.0.14`, `omdroid-guest:0.0.14` kept). The D1 backup
+`files/r5-touch-backup/libaquamarine.so.0.14.0.orig` and the probes `/tmp/touchlog`,
+`/tmp/r5-bytelog.py` stay in the app data (harmless, a few hundred KB); `/opt` holds the image
+library again (`8a2a2cbe…`).
+
+## Screenshots viewed
+
+All under `<scratch>/omarchy/r5/touch-device/shots/`.
+
+| File | Verdict |
+|---|---|
+| `d1-qs-open.png` | mode 2 on the new library: quick settings sheet and shade open, cursor at the tap |
+| `d3-touchlog-overlay.png` | the probe surface covers the whole Omarchy area above the key bar |
+| `d3-back-x20.png`, `d3-back-x3.png` | two tiled windows, unchanged after back (Escape went to the logger) |
+| `d3-pill-home.png` | home screen: wallpaper, dock "Search apps…" |
+| `d3-dock-switcher.png` | switcher open: a Foot card centred, a second card at the right, Clear all, Home |
+| `d3-card-flick.png` | one card left |
+| `d3-card-hold.png` | actions sheet: Foot / Show with… (No other app is open) / Cancel |
+| `d3-card-tap.png` | foot full screen on workspace 1 |
+| `d3-pill-hold.png` | foot, nothing opened by the hold |
+| `d3-qs-pull.png` | quick settings sheet and shade open |
+| `d3-drag-before.png`, `d3-drag-after.png` | 251-300 then 221-271 with the scroll indicator |
+| `d3-2f-before.png`, `d3-2f-after.png` | 251-300 then 227-277 |
+| `d4-portrait.png` | portrait: bar, foot full width, pill; nothing cut off |
+| `d4-desktop-focus.png` | stock bar, two tiled windows, the tapped one (left) has the active border |
+
+## What Phil should try with his fingers
+
+1. A fast flick up on the dock (switcher) and on the pill over an app (home), with no pause.
+2. Back from the very edge, left and right, in an app with a dialog open.
+3. Two-finger scroll and pinch in a Qt or GTK app (and kinetic scroll in the drawer).
+4. Dragging a quick-settings slider and paging the sheet sideways.
+5. Text selection in foot (long press, then drag) and a long press on a drawer icon.
+6. Typing on the soft keyboard after tapping a text field: does the IME come up?
+
+## Not verified
+
+- Real fingers: every touch here is `adb shell input` or a `uinput` device, both through Android
+  InputReader and Termux:X11 like a finger, but with perfect straight-line timing.
+- Pinch, rotate and three-finger gestures; whether apps use the second touch point (foot
+  scrolled, but a one-finger drag does that too).
+- Hyprland's touch workspace swipe: `gestures:workspace_swipe_touch` is `false` in this config
+  and was not enabled.
+- Moving a window by touch (Hyprland has no touch binding for it).
+- The fresh-image path: the packager's new `lib/` copy is `bash -n` clean but no image was
+  repacked this round; an updated install got the library from the APK (D3.1).
+- The 1 px offset fix in Termux:X11 (below) is a proposal, not tested.
+
+## Findings for other owners
+
+- `termux-x11/app/src/main/cpp/lorie/cmdentrypoint.c:261-262` scales a touch to the valuator
+  range against `width`/`height`; the X server spreads it over 0..W−1 and wlroots keeps the
+  integer part (`backend/x11/input_device.c:245`), so every touch lands 1 X pixel up-left of
+  the finger. Scaling against `width - 1`/`height - 1` would remove it.
+- `docs/omarchy/r4-input-research.md` (appendix) names HID usage `0x1E` as "2"; it is "1"
+  (`0x1F` is "2").
+- `ProotCommandBuilder.kt:122` still builds its own `LD_LIBRARY_PATH` without
+  `/etc/phoshdroid/lib`; `start.sh` overrides it, so it only matters for a launch that bypasses
+  `start.sh`.
+
+## Commits and the final build
+
+| Commit | What |
+|---|---|
+| `27192a8` | `build(rootfs): ship aquamarine with wl_touch in the guest overlay` |
+| `73b7a0b` | `feat(launcher): direct touch now that the guest has a touch device` |
+| `03aed04`, `02e7c09`, `4eaa666`, `73d9aff`, `f2ca77a`, `45ca009` + this one | report and `docs/omarchy/tools/touchlog.c` |
+
+Final APK: `app-debug.apk`, 1 715 699 122 bytes, sha256
+`56db6d5201c8b08aa00331284d922d65601715aa0ae9d0b48a5a5bfa15f98ba4`, built from `73b7a0b`
+(clean tree), installed on the tablet (`INSTALL: PASS`). Later commits are docs only.
