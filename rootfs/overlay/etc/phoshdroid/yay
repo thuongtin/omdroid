@@ -7,9 +7,18 @@ repository carries one: yay and paru are AUR-only. Omarchy's AUR scripts call
 nothing is compiled - and every call after that execs /usr/bin/yay.
 
 First run, in order:
-  1. sudo pacman -S --needed --noconfirm base-devel git   (from core)
-  2. git clone --depth 1 https://aur.archlinux.org/yay-bin.git
-  3. makepkg -si --noconfirm   (package step through the fakeroot shim to the
+  1. sudo pacman -Sy          (refresh the databases; the guest is an image
+                               snapshot and its own DB is months old)
+  2. sudo pacman -S --needed --noconfirm base-devel git
+  3. if base-devel's meta package cannot be installed here because the image's
+     pacman and sudo would have to be upgraded first (the repositories moved on
+     after the image was built): install the build tools directly instead, the
+     same list minus those two. NEVER a system upgrade - the guest's
+     Hyprland/aquamarine/Mesa in /opt are custom builds pinned against the
+     image's libraries, so upgrading the base system can break the desktop.
+     A package some mirror does not carry is skipped by name, and said so.
+  4. git clone --depth 1 https://aur.archlinux.org/yay-bin.git
+  5. makepkg -si --noconfirm   (package step through the fakeroot shim to the
      root broker, install through sudo pacman -U)
 
 A failure prints one line with the reason and the log path and exits non-zero.
@@ -18,6 +27,7 @@ Nothing half-installed reaches PATH: /usr/local/bin/yay is this shim, and
 """
 import fcntl
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +36,51 @@ import time
 
 REAL = "/usr/bin/yay"
 AUR_URL = "https://aur.archlinux.org/yay-bin.git"
+
+# base-devel's own dependency list (ALARM core, `pacman -Si base-devel`:
+# archlinux-keyring autoconf automake binutils bison debugedit fakeroot file
+# findutils flex gawk gcc gettext grep groff gzip libtool m4 make pacman patch
+# pkgconf sed sudo texinfo which), minus the two the image cannot install
+# without a system upgrade: `pacman` (it is the package manager already) and
+# `sudo` (the guest's sudo is the broker client). Everything here resolves
+# without touching an installed package, which is what keeps the desktop's
+# pinned libraries intact.
+BUILD_TOOLS = [
+    "archlinux-keyring",
+    "autoconf",
+    "automake",
+    "binutils",
+    "bison",
+    "debugedit",
+    "fakeroot",
+    "file",
+    "findutils",
+    "flex",
+    "gawk",
+    "gcc",
+    "gettext",
+    "grep",
+    "groff",
+    "gzip",
+    "libtool",
+    "m4",
+    "make",
+    "patch",
+    "pkgconf",
+    "sed",
+    "texinfo",
+    "which",
+]
+
+CONFLICT_MARKERS = (
+    "breaks dependency",
+    "could not satisfy dependencies",
+    "unresolvable package conflicts",
+)
+
+# pacman's own wording when a mirror does not carry a package the database
+# lists (Arch Linux ARM's DBs are built ahead of the mirrors now and then).
+FETCH_FAILED = re.compile(r"failed retrieving file '([^']+)'")
 
 
 def cache_dir():
@@ -48,21 +103,87 @@ def run_step(argv, log, cwd=None):
         line = "yay: cannot run %s: %s\n" % (argv[0], exc.strerror or exc)
         log.write(line)
         sys.stderr.write(line)
-        return 127
+        return 127, line
     assert proc.stdout is not None
+    chunks = []
     for raw in proc.stdout:
         text = raw.decode("utf-8", "replace")
+        chunks.append(text)
         log.write(text)
         sys.stderr.write(text)
         sys.stderr.flush()
     code = proc.wait()
     log.write("[exit %d]\n" % code)
     log.flush()
-    return code
+    return code, "".join(chunks)
+
+
+def needs_a_system_upgrade(output):
+    return any(marker in output for marker in CONFLICT_MARKERS)
+
+
+def unfetchable(output):
+    """Package names whose files the mirrors could not serve."""
+    names = set()
+    for filename in FETCH_FAILED.findall(output):
+        stem = filename.split(".pkg.tar")[0]
+        parts = stem.rsplit("-", 3)
+        if len(parts) == 4:
+            names.add(parts[0])
+    return sorted(names)
 
 
 def exec_real(argv):
     os.execv(REAL, [REAL] + list(argv))
+
+
+def install_pacman(targets, log):
+    """Run one install; if a mirror cannot serve some package, skip just those."""
+    command = ["sudo", "pacman", "-S", "--needed", "--noconfirm"] + targets
+    code, output = run_step(command, log)
+    if code == 0:
+        return code, output
+    missing = unfetchable(output)
+    if missing:
+        sys.stderr.write(
+            "yay: the guest's mirrors do not carry %s right now; installing the rest\n"
+            % ", ".join(missing)
+        )
+        sys.stderr.flush()
+        code, output = run_step(command + ["--ignore", ",".join(missing)], log)
+    return code, output
+
+
+def install_build_environment(log):
+    """Steps 1-3. Returns a failure line, or None."""
+    code, _ = run_step(["sudo", "pacman", "-Sy", "--noconfirm"], log)
+    if code != 0:
+        return "syncing the package databases failed (exit %d)" % code
+
+    sys.stderr.write("yay: installing base-devel and git\n")
+    sys.stderr.flush()
+    code, output = install_pacman(["base-devel", "git"], log)
+    if code == 0:
+        return None
+    if not needs_a_system_upgrade(output):
+        return "installing base-devel failed (exit %d)" % code
+
+    # The image is a snapshot: today's base-devel meta package wants a newer
+    # pacman and sudo, which this guest cannot take without upgrading its
+    # pinned base system. Install the tools themselves instead; nothing that is
+    # already installed is replaced.
+    sys.stderr.write(
+        "yay: base-devel here would upgrade the guest's pacman and sudo; "
+        "installing the build tools directly, the guest's libraries stay as they are\n"
+    )
+    sys.stderr.flush()
+    code, _ = install_pacman(BUILD_TOOLS + ["git"], log)
+    if code != 0:
+        return (
+            "the guest image cannot install the build tools without a system "
+            "upgrade (exit %d)" % code
+        )
+    return None
 
 
 def bootstrap(argv):
@@ -86,34 +207,24 @@ def bootstrap(argv):
 
         workdir = tempfile.mkdtemp(prefix="yay-bin-", dir=cache)
         source = os.path.join(workdir, "yay-bin")
-        steps = [
-            (
-                "installing base-devel and git",
-                ["sudo", "pacman", "-S", "--needed", "--noconfirm", "base-devel", "git"],
-                None,
-            ),
-            (
-                "fetching yay-bin from the AUR",
-                ["git", "clone", "--depth", "1", AUR_URL, source],
-                None,
-            ),
-            (
-                "building and installing yay-bin",
-                ["makepkg", "-si", "--noconfirm"],
-                source,
-            ),
-        ]
 
-        failure = None
         with open(logpath, "a", encoding="utf-8") as log:
             log.write("=== yay bootstrap %s ===\n" % time.strftime("%Y-%m-%dT%H:%M:%S"))
-            for label, command, cwd in steps:
-                sys.stderr.write("yay: %s\n" % label)
+            failure = install_build_environment(log)
+            if failure is None:
+                sys.stderr.write("yay: fetching yay-bin from the AUR\n")
                 sys.stderr.flush()
-                code = run_step(command, log, cwd)
+                code, _ = run_step(
+                    ["git", "clone", "--depth", "1", AUR_URL, source], log
+                )
                 if code != 0:
-                    failure = "%s failed (exit %d)" % (label, code)
-                    break
+                    failure = "fetching yay-bin failed (exit %d)" % code
+            if failure is None:
+                sys.stderr.write("yay: building and installing yay-bin\n")
+                sys.stderr.flush()
+                code, _ = run_step(["makepkg", "-si", "--noconfirm"], log, source)
+                if code != 0:
+                    failure = "building yay-bin failed (exit %d)" % code
             if failure is None and not os.path.exists(REAL):
                 failure = "pacman finished but %s is missing" % REAL
             if failure:

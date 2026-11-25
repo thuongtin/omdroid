@@ -187,7 +187,13 @@ def main(argv):
     if options.help:
         sys.stdout.write(USAGE)
         return 0
-    if options.validate or options.reset:
+    if options.validate:
+        # sudo -v refreshes its timestamp and does not run a command.
+        return 0
+    if options.reset and not options.rest and not (options.login or options.shell):
+        # sudo -k alone invalidates the cached timestamp. With a command it
+        # must run that command (sudo -k pacman -U ...): makepkg installs its
+        # packages exactly that way.
         return 0
     if options.list:
         user = os.environ.get("USER") or "omarchy"

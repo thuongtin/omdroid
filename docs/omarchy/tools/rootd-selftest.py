@@ -34,6 +34,12 @@ FAKEROOT = os.path.join(ROOT, "rootfs/overlay/etc/phoshdroid/fakeroot")
 VERBOSE = "-v" in sys.argv[1:]
 ME = __import__("pwd").getpwuid(os.getuid()).pw_name
 
+# The shims import /etc/phoshdroid/omdroid_root.py; run this from a checkout and
+# Python drops a __pycache__ next to the overlay files. Keep the tree clean: the
+# children inherit this through client_env().
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+sys.dont_write_bytecode = True
+
 
 class Context:
     def __init__(self, workdir, sock, env):
@@ -273,6 +279,15 @@ def validate_and_reset_are_noops():
         b"",
         b"",
     ), (code1, out1, err1, code2, out2, err2)
+
+
+@case
+def reset_timestamp_with_a_command_runs_it():
+    # sudo -k cmd runs cmd: makepkg installs built packages as
+    # `sudo -k pacman -U <pkg>`, so treating -k as a no-op silently skipped
+    # every install (found by the round 6b end-to-end run).
+    code, out, err = run_client(["-k", "echo", "installed"])
+    return code == 0 and out == b"installed\n", (code, out, err)
 
 
 @case
