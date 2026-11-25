@@ -26,9 +26,10 @@ monitor test has already survived plug and unplug once.
 
 ## The build
 
-Parent-built test APK from `7a2d54f`:
-`<scratch>/omarchy/r7/dock/omdroid-dock-test-7a2d54f.apk`,
-sha256 `5cf2954234443128e358add57dc26c7df87f9ecb89497b9e29000ba710e4d48f`. Install it with
+Parent-built combined test APK (dock + sudo + yay) from `d1aabce`:
+`<scratch>/omarchy/r7/combined/omdroid-combined-d1aabce.apk`,
+sha256 `3bd9aab0ddca92b4a6e1935002f97b04ce3f3f3c2fc3386e9c802e8e35ac782b`. The yay round is finished,
+so no sibling edits this checkout now; the sibling rule below still protects its files. Install it with
 `docs/omarchy/tools/install.sh` (update install: the guest stays). If you fix code (T7), build
 your own: `rm -f app/build/outputs/apk/debug/app-debug.apk && ./gradlew :app:assembleDebug
 --console=plain` in the FOREGROUND, and copy the APK to your scratch dir in the same command

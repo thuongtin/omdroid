@@ -352,6 +352,14 @@ fails, the commits and the APK.
 
 ## Manual test for Phil
 
+> **Parent note — use the combined build instead.** The APK named in step 1 was built in a worktree
+> whose `termux-x11` submodule sat at `77caf12`, so it lacks the dock round's submodule commits
+> (`keep_process_alive` reads `false` in its manifest). The build to install is
+> `<scratch>/omarchy/r7/combined/omdroid-combined-d1aabce.apk`, sha256
+> `3bd9aab0ddca92b4a6e1935002f97b04ce3f3f3c2fc3386e9c802e8e35ac782b`, from `d1aabce` (the commits after
+> it are docs only): sudo, fakeroot, yay and docking together, every overlay file byte-identical to
+> the tree, 98 unit tests passed.
+
 This extends "Manual test for Phil" in `docs/omarchy/r6-sudo-report.md`; steps 1-10 there (install,
 `sudo id`, pipes, pacman, the interactive prompt, Ctrl+C, `omarchy-pkg-add/remove`, ownership, the
 broker log, broker death) still apply unchanged and are not repeated. These are the yay/makepkg
