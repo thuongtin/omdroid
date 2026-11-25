@@ -115,3 +115,53 @@ D1 undone: <guest>/opt/omarchy-android/aquamarine/lib/libaquamarine.so.0.14.0 ->
 ./install.sh  pm install from /data/local/tmp, 45 s push
               INSTALLED sha256=56db6d52…8ba4 lastUpdateTime=2026-11-25 01:04:59   INSTALL: PASS
 ```
+
+### D3 real touch, on the D2 APK
+
+**D3.1 device and library.** `./coldstart.sh 1 --tag d3`: handover +10.3 s, desktop PASS +9.8 s,
+foreign activity none, `probe.sh` PASS. `shared_prefs` `touchMode` = `3` (written by the launcher).
+
+```
+logcat  launch: guest-overlay files=61 changed=4 129ms
+        launch: guest-overlay updated etc/phoshdroid/lib/LICENSE
+        launch: guest-overlay updated etc/phoshdroid/lib/README.md
+        launch: guest-overlay updated etc/phoshdroid/lib/libaquamarine.so.13
+        launch: guest-overlay updated etc/phoshdroid/start.sh
+./hc.sh j/devices        mice [wl_pointer]  keyboards [wl_keyboard]  touch [wl_touch]
+/proc/<Hyprland 7641>/maps   inode 1045150 .../installed-rootfs/omarchy/etc/phoshdroid/lib/libaquamarine.so.13
+/proc/<Hyprland 7641>/environ LD_LIBRARY_PATH=/etc/phoshdroid/lib:/opt/omarchy-android/mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib
+<guest>/etc/phoshdroid/lib   libaquamarine.so.13 inode 1045150, 1775168 B, sha256 8514d2a6…6191 (= repo)
+                             LICENSE 52d07f34… (= repo), README.md 43e6aeda… (= repo), mode 0600 (owner = the app uid)
+```
+
+`GuestOverlay` wrote the 1.7 MB binary intact (same sha256 as the repo) and the loader picked it
+from `/etc/phoshdroid/lib`; the image copy in `/opt` (`8a2a2cbe…`, restored after D1) is not mapped.
+
+**D3.2 positions.** `touchlog` (full-output overlay layer, see the pre-check) running in the
+session; one `input touchscreen tap` per point; the surface-local coordinates of `wl_touch.down`
+are Hyprland logical coordinates. Expected = screen / 2 (the X root maps 1:1 onto the screen,
+cage is 3200x1970 at 0,0, Hyprland scale 2). Log: scratch `d3-positions.log`.
+
+| tap (screen px) | expected (logical) | `wl_touch.down` | error (logical) | error (screen px) |
+|---|---|---|---|---|
+| 4,4 (top left) | 2.0,2.0 | 1.50,1.50 | −0.5,−0.5 | −1,−1 |
+| 3195,4 (top right) | 1597.5,2.0 | 1597.00,1.50 | −0.5,−0.5 | −1,−1 |
+| 4,1965 (bottom left) | 2.0,982.5 | 1.50,982.00 | −0.5,−0.5 | −1,−1 |
+| 3195,1965 (bottom right) | 1597.5,982.5 | 1597.00,982.00 | −0.5,−0.5 | −1,−1 |
+| 1600,985 (centre) | 800.0,492.5 | 799.50,492.00 | −0.5,−0.5 | −1,−1 |
+| 3195,40 (bar, far right) | 1597.5,20.0 | 1597.00,19.50 | −0.5,−0.5 | −1,−1 |
+| 800,500 | 400.0,250.0 | 399.50,249.50 | −0.5,−0.5 | −1,−1 |
+| 2400,1500 | 1200.0,750.0 | 1199.50,749.50 | −0.5,−0.5 | −1,−1 |
+
+8/8 taps arrive as `wl_touch` (seat caps `touch=1`, no `wl_pointer.button` at all). The error is
+the same −1 screen px at both ends of both axes, so there is **no scale and no mirror**: the
+patch normalises against the right size. The constant 1 px is upstream of the patch, in the X11
+hop: Xlorie queues a touch as the valuator `x * 0xFFFF / width`
+(`termux-x11/app/src/main/cpp/lorie/cmdentrypoint.c:261-262`), which the X server spreads over
+0..width−1, so an integer pixel x becomes x·(W−1)/W, just under x; wlroots' X11 backend then keeps
+only the integer part (`send_touch_down_event(output, ev->event_x >> 16, …)`,
+`backend/x11/input_device.c:245`, the same for motion at `:283`). Round 4 saw the same −1 on the
+cursor in this mode before the patch existed (tap 3052,26 → cursor 1525,12). Verdict **PASS
+within 1 screen px** (0.5 logical px, about 0.05 mm on this panel); a finger cannot resolve it.
+Fix, for the Termux:X11 owner, not done here: scale against `width - 1` / `height - 1` in
+`cmdentrypoint.c:261-262`, then the truncation lands on the tapped pixel.
