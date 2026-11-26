@@ -13,7 +13,7 @@
 > [!WARNING]
 > **Highly experimental.** Omdroid has been measured on one tablet and used by hand on one phone.
 > The latest build is the
-> [`v0.0.17-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.17-alpha) pre-release: it
+> [`v0.0.18-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) pre-release: it
 > adds docking to a monitor with a keyboard and mouse, `sudo` and `yay` to the mobile UI, real
 > touch and keyboard pass-through of 0.0.15. It has been installed on the tablet as an update
 > over the earlier builds and cold-started, never as a clean install. Most measurements come
@@ -42,11 +42,12 @@ Highly experimental. Every measurement below was taken on one device: a Xiaomi P
 (model 25091RP04G), Android 16 with HyperOS 3.0, a Snapdragon SM8750P with an Adreno GPU,
 a 3200x2136 panel and 12 GB of RAM. The owner also runs 0.0.15 on his Samsung foldable phone
 (Android 17, Adreno 840) and reports that it works well; nothing on the phone was measured. The
-Omdroid builds are the `v0.0.14-alpha`, `v0.0.15-alpha` and
-[`v0.0.17-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.17-alpha) pre-releases. Every earlier
-release on this repository is a Phoshdroid build -- postmarketOS with Phosh, a different
-guest under the same package id -- so do not install Omdroid over Phoshdroid: uninstall it
-first. Installing over it has not been tested.
+current Omdroid build is the
+[`v0.0.18-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) pre-release; the
+APKs of releases 0.0.13 to 0.0.17 were withdrawn because they embedded a build-machine path
+(their notes stay up, `docs/omarchy/r10-release-0.0.18.md`). Releases before `v0.0.14-alpha` are
+Phoshdroid builds -- postmarketOS with Phosh, a different guest under the same package id -- so
+do not install Omdroid over Phoshdroid: uninstall it first. Installing over it has not been tested.
 
 | Claim | How it was measured | Result | Row |
 | --- | --- | --- | --- |
@@ -95,7 +96,7 @@ Not verified yet:
   `docs/omarchy/r6-sudo-report.md`.
 - Docking on the phone: Samsung DeX, whether a real unplug survives Samsung's teardown, and the
   phone's monitor density. The checklist is in `docs/omarchy/r7-dock-device-report.md`.
-- A clean install of a release. `v0.0.14-alpha`, `v0.0.15-alpha` and `v0.0.17-alpha` have each
+- A clean install of a release. `v0.0.14-alpha`, `v0.0.15-alpha` and `v0.0.18-alpha` have each
   been installed on the tablet only as an update over an existing guest and cold-started with
   `probe.sh` passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). Android refuses
   apps hard links, so a guest extracted before 0.0.14 lacks the image's 1,832 hard-link members
@@ -305,8 +306,8 @@ service is not enabled and the log says so (`launch: key-capture no WRITE_SECURE
 
 ## Build and install
 
-To install the pre-release, download `omdroid-0.0.17-alpha.apk` (about 1.7 GB) from the
-[`v0.0.17-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.17-alpha) and sideload it: `adb install omdroid-0.0.17-alpha.apk`,
+To install the pre-release, download `omdroid-0.0.18-alpha.apk` (about 1.7 GB) from the
+[`v0.0.18-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) and sideload it: `adb install omdroid-0.0.18-alpha.apk`,
 or open the file from a file manager on the device. HyperOS and MIUI refuse `adb install`;
 see the end of this section. The first start extracts the guest; that took about
 two minutes on the test tablet.
