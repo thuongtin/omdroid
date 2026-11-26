@@ -349,8 +349,10 @@ layer remedy restarts the shell. That is a contract §8 change (a new host-owned
 
 ## Manual test for Phil (Galaxy Z Fold8 + real monitor)
 
-1. Install `omdroid-dock-final.apk` (sha256 `3b4166ab…20cf0c2`) over 0.0.15 - an update, the guest
-   stays. Open Omdroid unplugged: the mobile desktop (bar, home pill, extra-key bar).
+1. Install `omdroid-0.0.15-test3.apk` (parent build of `1395fde` = this round's fixes plus the sudo
+   broker fix; sha256 `144f706eb7319a0ba371e752e2b3d05efe3c454341f87948fd7222c7cf3a893a`) over 0.0.15 -
+   an update, the guest stays. On the tablet it cold-started to the desktop, `probe.sh` PASS, and
+   `sudo id` printed `uid=0(root)` in the live session. Open Omdroid unplugged: the mobile desktop (bar, home pill, extra-key bar).
 2. Open a terminal and run `seq 300; echo before-dock`. Leave it open.
 3. Plug the monitor (USB-C to HDMI/DP) with DeX set to **Extend** (Settings > Connected devices >
    Samsung DeX > Connected display). Within ~6 s the desktop should be on the monitor, full screen,
