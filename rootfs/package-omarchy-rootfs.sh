@@ -223,15 +223,18 @@ awk -v line="$NOEXTRACT" '
 ' "$WORK/stage/etc/pacman.conf" > "$WORK/stage/etc/pacman.conf.new"
 mv "$WORK/stage/etc/pacman.conf.new" "$WORK/stage/etc/pacman.conf"
 
+# Numeric root ownership in every tar header: a plain tar -cf records the
+# user and group name of the builder on each of the ~70,000 members, and the
+# extractor never applies owners anyway (an Android app cannot chown).
 if [ "$IMAGE_CODEC" = "zstd" ]; then
     echo "Repacking to zstd -$ZSTD_LEVEL (this takes a few minutes)..."
     mkdir -p "$(dirname "$OUTPUT")"
-    ( cd "$WORK/stage" && tar -cf - . ) | zstd -"$ZSTD_LEVEL" $ZSTD_EXTRA -T8 -q --force -o "$OUTPUT"
+    ( cd "$WORK/stage" && tar --owner=0 --group=0 --numeric-owner -cf - . ) | zstd -"$ZSTD_LEVEL" $ZSTD_EXTRA -T8 -q --force -o "$OUTPUT"
     TAR_CODEC="--zstd"
 else
     echo "Repacking to gzip (this takes a few minutes)..."
     mkdir -p "$(dirname "$OUTPUT")"
-    ( cd "$WORK/stage" && tar -cf - . ) | gzip > "$OUTPUT"
+    ( cd "$WORK/stage" && tar --owner=0 --group=0 --numeric-owner -cf - . ) | gzip > "$OUTPUT"
     TAR_CODEC="-z"
 fi
 
