@@ -12,7 +12,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | T1 | How a second display works on this tablet | **PASS** | `overlay_display_devices 1920x1080/160` -> display 2, `type OVERLAY`, `FLAG_PRESENTATION, FLAG_TRUSTED` (not PRIVATE), density 160; `activities_on_secondary_displays` present; `am start --display 2` Settings -> `Display #2` fullscreen; no other setting needed |
 | T2 | Dock (M1 + M2) | **FAIL** (geometry) / PASS (move, UI switch, no restart) | X activity MOVED to display 3 (same ActivityRecord, same task); `ui switch` +3.9 s; foot pid 7306 kept; but X root **1920x915** (165 px key-bar gap kept), Hyprland monitor **3200x1970** (start-time mode re-applied), `dock: ui mobile written (docked)` names the wrong mode |
 | T3 | Undock (M2) | **PASS** (one log FAIL, same as T2's FAIL 3) | X activity back on display 0 by itself (same ActivityRecord); xroot 3200x1971, monitor 3200x1970; mobile UI back; foot 7306 kept; desktop ready +13.1 s; log `dock: ui desktop written (undocked)` names the old mode |
-| T4 | Pin | PENDING | |
+| T4 | Pin | **FAIL** (the guest ignores the pin) / PASS (host never writes) | `dock: ui desktop kept (pinned)` on dock and undock, `ui` untouched (`mobile`); but `pin=desktop` left the UI `mobile` undocked AND docked (5 omamobile plugins throughout); `auto` -> follows (nothing to switch) |
 | T5 | Repeat x5 | PENDING | |
 | T6 | Input while docked | PENDING | |
 | T7 | Fixes | PENDING | |
@@ -188,3 +188,24 @@ RESULT t3-undock: ui switch logged at +12.9 s (host), desktop ready (switch + pr
   write): T2's FAIL 3.
 - The undock switch took 12 s against 3 s for the dock (both measured from the watcher's own
   lines); the mobile direction runs the longer `omdroid-ui.sh` path. T5 repeats it.
+
+### T4. Pin (build test2, 09:04-09:06 UTC)
+
+`t4.sh` (scratch): pin written inside the session with `sx.sh 'echo desktop > ~/.config/omdroid/ui-pin'`.
+- Pinned `desktop`, undocked, 6 s later: `ui=mobile pin=desktop`, scan 5 omamobile, mobile layers,
+  no watcher line. **FAIL: undocked does not become (or stay) `desktop`.** `omdroid-ui.sh` and the
+  watcher read only `ui`, and the host never writes `ui` while pinned (UiMode.write returns null),
+  so a desktop pin set while the file says `mobile` changes nothing at all - the contract's own
+  example (`echo desktop > ui-pin  # keep the stock desktop UI, even on the phone`) does not work.
+- Dock while pinned: `dock: docked display=4 1920x1080@160 kbd=0 mouse=1 (change)`,
+  **`dock: ui desktop kept (pinned)`** (host wrote nothing: PASS), `dock: session asked onto display
+  4`. The guest stayed `mobile` (`ui=mobile`, 5 omamobile) - the log line's `desktop` is the pin,
+  not what the guest shows.
+- Undock while pinned: `dock: undocked (change)`, `dock: ui desktop kept (pinned)`, `dock: monitor
+  gone ...`; `ui` still `mobile`.
+- **Side finding that settles T2's FAIL 2:** with no UI switch (pinned), Hyprland followed cage on
+  the monitor - watcher `monitor 1920x914 scale 2, logical 960x457, X root 1920x915`, one shell
+  restart for the layers (`act: layers fit again 6.8 s after the restart`), probe PASS at
+  1920x914. So the start-time mode in T2 came from the switch's config reload, not from the move;
+  and the 165 px gap (X root 1920x915) is there with or without a switch (T2's FAIL 1).
+- `echo auto > ui-pin`: `ui=mobile pin=auto`, nothing to switch undocked (correct), mobile PASS.
