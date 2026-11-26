@@ -118,6 +118,26 @@ python3 /etc/phoshdroid/fit-x11.py "$DISPLAY" 0.25 > /tmp/fit-x11.log 2>&1 &
 # A marker left behind by the previous session would hand the host over early.
 rm -f "$XDG_RUNTIME_DIR/omarchy-ready"
 
+# Session environment for everything started below. Two defaults that bound
+# memory and disk on small devices: MALLOC_ARENA_MAX caps the glibc per-thread
+# arena count (the guest is multi-threaded: Hyprland, Quickshell, Xwayland), and
+# MESA_SHADER_CACHE_MAX_SIZE caps the shader cache, which the default lets grow
+# to 1 GB inside the guest home. Do not add the malloc trim or mmap thresholds:
+# each changes the glibc syscall pattern and every syscall is costlier under
+# proot. The optional user file holds plain key=value lines, is sourced with
+# set -a so every assignment is exported, and overrides either default above
+# (for example MALLOC_ARENA_MAX= to drop the cap, OMDROID_ANIMATIONS=1,
+# OMDROID_VOXTYPE=1, OMDROID_WATCH_LEGACY=1, OMDROID_WATCH_HEARTBEAT=1.0).
+session_env="$HOME/.config/omdroid/session.env"
+export MALLOC_ARENA_MAX=2
+export MESA_SHADER_CACHE_MAX_SIZE=128M
+if [ -f "$session_env" ]; then
+    set -a
+    . "$session_env"
+    set +a
+    echo "session.env: read $session_env"
+fi
+
 # Ready marker + layer-fit watcher: writes the marker once the desktop is really
 # drawn, then keeps the shell layers in step with the monitor after a live root
 # size change. Logs to /tmp/omarchy-watch.log.
