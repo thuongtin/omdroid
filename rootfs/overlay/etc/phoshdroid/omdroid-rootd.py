@@ -52,19 +52,19 @@ DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 def kernel_uid():
     """Our own uid as the kernel sees it, which proot -0 does not hide.
 
-    proot fakes getuid() (0 under -0) but not SO_PEERCRED, which the kernel
-    fills in with the real app uid. Reading SO_PEERCRED on a socketpair to
-    ourselves gives that real uid, the one a client of the same app shows.
+    proot fakes getuid() (0 under -0). /proc/self/status is not faked: its Uid
+    line carries the real app uid, the one a client in the session proot shows
+    through SO_PEERCRED. Measured on the device (Termux proot): getuid 0,
+    status Uid 10323, a session client seen as 10323. SO_PEERCRED on a
+    socketpair is NOT a substitute there: Termux proot rewrites it to the fake
+    uid for its own tracees (it read 0), while a peer in the other proot keeps
+    its real uid.
     """
-    left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        cred = left.getsockopt(
-            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
-        )
-        return struct.unpack("3i", cred)[1]
-    finally:
-        left.close()
-        right.close()
+    with open("/proc/self/status", encoding="ascii", errors="replace") as handle:
+        for line in handle:
+            if line.startswith("Uid:"):
+                return int(line.split()[1])
+    raise OSError("no Uid line in /proc/self/status")
 
 
 # Uids whose SO_PEERCRED may connect: this app only. On the device both proots
@@ -76,7 +76,7 @@ def kernel_uid():
 PEER_UIDS = {os.getuid()}
 try:
     PEER_UIDS.add(kernel_uid())
-except OSError:
+except (OSError, ValueError, IndexError):
     pass
 
 

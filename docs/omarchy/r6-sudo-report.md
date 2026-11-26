@@ -317,3 +317,20 @@ entry's CRC equals the original's and every overlay file equals the tree at `086
 `omdroid-0.0.15-test2.apk`, 1,715,859,742 B, sha256
 `a239a8c5134f1d79ed0cbcd669d0b1049bc9cc5f8bf34aa9506c66a12fc407a0`.
 
+## Device finding 2: the first fix was wrong on the device (fixed again, proven on the tablet)
+
+On `omdroid-0.0.15-test2.apk` the dock device round still saw `peer is not this app`, and the new
+log line said why: `refused peer uid 10323, accepts [0]`. The first fix read our real uid from
+`SO_PEERCRED` on a `socketpair()`. Upstream proot (the build-machine check) leaves that alone, but
+**Termux's proot rewrites `SO_PEERCRED` to the fake uid for its own tracees** — measured on the
+tablet under `-0`: `getuid 0`, socketpair `SO_PEERCRED` uid `0`, `/proc/self/status` `Uid: 10323`;
+under `-i 1000:1000`: 1000, 1000, 10323. A peer in the OTHER proot keeps its real uid (10323), so
+the set never matched. The broker now reads its real uid from the `Uid:` line of
+`/proc/self/status`, which neither proot fakes.
+
+Proof on the tablet with the device's own proot binary, both proots as the app runs them
+(`docs/omarchy/tools/rootd-device-check.sh`): the shipped broker as control printed
+`peer is not this app` three times (`refused peer uid 10323, accepts [0]`); the fixed broker gave
+`uid=0(root)`, `sudo sh -c` created a root-owned file in `/root`, `sudo false` kept exit 1.
+`rootd-selftest.py` 35/35 and `rootd-proot-check.sh` 0 failures (foreign uid still refused).
+
