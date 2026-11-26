@@ -178,6 +178,24 @@ only while the X activity is on the built-in display; on any other display the v
 window, so the X root equals the monitor. A launch made while docked also passes
 `phoshdroid_builtin_bottom_padding_px`, the built-in display's gap, for the way back.
 
+**Input while docked.** Android keeps keyboard focus and its mouse pointer on the built-in display
+(no desktop mode on HyperOS: the pointer cannot reach the monitor and the monitor never gets focus),
+so the keyboard capture above never applies there. The host's accessibility `KeyInterceptor` therefore
+owns the dock's input while the X activity is alive, started, on a non-default display, connected to
+the X server, the keyguard is down and Samsung DeX is off (`DockedInput.captureWanted` in the
+`termux-x11` submodule; DeX is excluded because its pointer and focus reach the monitor by
+themselves). Then every key of a physical alphabetic keyboard (the tablet's keyboard cover too) and
+of a mouse's side buttons goes to X through `MainActivity.handleKey`, whatever Android has focused,
+with a release always following its press; power, sleep, volume, media, brightness, camera and call
+keys stay Android's. Mice and touchpads are taken with
+`AccessibilityServiceInfo.setMotionEventSources(SOURCE_MOUSE | SOURCE_TOUCHPAD)` (API 34; Android
+then delivers those events only to the service) and reach X as relative motion, buttons 1-3, wheel
+clicks and two-finger scroll (`DockedPointer`). The touchscreen, the stylus and the on-screen
+keyboard stay Android's. Android's own arrow keeps moving on the built-in screen but clicks nothing.
+Any change of the rule (undock, the activity stopping or dying, the keyguard) drops the pointer
+sources at once; a crash or force-stop takes the service with the process, so Android has its input
+back immediately. The guest needs nothing for this: the keys and pointer arrive as ordinary X input.
+
 **Surviving the unplug.** The `termux-x11` submodule manifest sets
 `com.samsung.android.multidisplay.keep_process_alive=true`: the in-process X server and the proot
 session live in our process, so a Samsung teardown on unplug would take the whole desktop with it.
@@ -189,7 +207,10 @@ Unplugged, Android migrates the window to the built-in display, the guest switch
 `mouse` are 1 when Android sees a physical keyboard/mouse), and `dock: undocked`. A dock change
 that writes the mode file also logs `dock: ui desktop written (docked)`, and a launch that goes to
 a monitor logs `launch: handover done display=2 on-target=true`. A display move logs
-`x-view margins top=0 bottom=0 (display 2)` (and `... (built-in display)` on the way back). Guest
+`x-view margins top=0 bottom=0 (display 2)` (and `... (built-in display)` on the way back). Input
+capture logs under the `KeyInterceptor` tag, one line per change:
+`input: docked capture on display=2 kbd=2 pointer=3` (`kbd`/`pointer` count the physical keyboards
+and pointing devices Android lists, the keyboard cover's included) and `input: capture off`. Guest
 side, `/tmp/omarchy-watch.log` gets `ui mode mobile -> desktop` and
 `ui switch: omdroid-ui rc=0; plugin-index rc=0; …`, plus `monitor fit <W>x<H> rc=0` when a config
 reload had moved the monitor.

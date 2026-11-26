@@ -184,8 +184,20 @@ a file the shell re-reads in place.
   running window moves to the display and back with the session, its windows and its PIDs
   untouched, the desktop takes the display's full size, and SUPER reaches the guest through the
   accessibility service on an Android without the keyboard-capture API.
+- **Keyboard and mouse belong to the desktop while docked.** Android keeps its focus and its
+  pointer on the built-in screen (HyperOS has no desktop mode: the cursor cannot reach the monitor
+  and the monitor never gets focus), so Omdroid's accessibility service takes them instead: every
+  physical keyboard (the tablet's keyboard cover too) types on the monitor whatever Android app has
+  focus, and every mouse or touchpad drives Hyprland's cursor with relative motion, buttons, the
+  wheel and two-finger scroll. The touchscreen and the on-screen keyboard stay Android's, as do
+  power, volume, media and brightness keys. Android's own arrow still moves on the tablet screen
+  but clicks nothing there. Undocking, a stopped app, the lock screen or Samsung DeX (whose
+  pointer reaches the monitor by itself) hand everything back to Android at once. Proven with a
+  synthetic USB keyboard and mouse on the simulated display (`docs/omarchy/r8-dock-input-report.md`);
+  logcat: `adb logcat -s KeyInterceptor:* | grep input:`.
 - **Not proven yet.** A real monitor, Samsung DeX and whether unplug survives Samsung's teardown;
-  only the phone can show those.
+  only the phone can show those. A real trackpad's two-finger scroll and tap-to-click wait for
+  Phil's dock test.
 - **Known limit.** A running session keeps the UI scale it started with: docked from the phone it
   stays at scale 2 (a 1080p monitor gets a 960x540 desktop), and a session started on the monitor
   keeps scale 1 after unplug (a tiny phone UI until Omdroid is restarted). Those are the dock round's device items; `docs/omarchy/r7-dock-report.md` has the log
