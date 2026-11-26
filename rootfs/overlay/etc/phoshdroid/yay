@@ -242,7 +242,46 @@ def bootstrap(argv):
         os.close(lock)
 
 
+def upgrade_warning(argv):
+    """A bare `yay`, or -Syu/-Syyu/u, is a full system upgrade, which this guest
+    must not run: its Hyprland, aquamarine and Mesa in /opt are custom builds
+    pinned against the image's libraries (one real upgrade moved hyprgraphics
+    to soname .so.6 and left the desktop unable to start). Return a message for
+    the user, or None when the arguments are not an upgrade.
+    """
+    if not argv:
+        return "bare yay"
+    for arg in argv:
+        if not arg.startswith("-") or arg == "-":
+            return None
+        letters = arg.lstrip("-")
+        if not letters or any(c not in "SyuU" for c in letters):
+            return None
+        if "S" in letters and "u" in letters:
+            return arg
+        if letters.startswith("u"):
+            return arg
+    return None
+
+
+def refuse_upgrade(argv, why):
+    print(
+        "yay: %s would upgrade the whole guest, and Omdroid pins the desktop's\n"
+        "     Hyprland, aquamarine and Mesa to the image's libraries: an upgrade\n"
+        "     can stop the desktop from starting. Install single packages instead:\n"
+        "       yay -S <package>          (AUR)\n"
+        "       sudo pacman -S <package>  (repositories)\n"
+        "     Nothing was changed. Remove this shim from PATH if you accept the\n"
+        "     risk." % why,
+        file=sys.stderr,
+    )
+    return 1
+
+
 def main(argv):
+    why = upgrade_warning(argv)
+    if why:
+        return refuse_upgrade(argv, why)
     if os.path.exists(REAL):
         exec_real(argv)
     return bootstrap(argv)

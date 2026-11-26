@@ -536,6 +536,44 @@ def run_pty(conn, argv, cwd, env, pw, spec):
         pass
 
 
+def upgrade_command(argv):
+    """A package-manager system upgrade, which this guest must not run.
+
+    Its Hyprland, aquamarine and Mesa in /opt are custom builds pinned against
+    the image's libraries; one real `pacman -Syu` moved hyprgraphics to the
+    .so.6 soname, which then wanted a newer libjxl than the image has, and the
+    desktop could not start again. Return the argument that asked for the
+    upgrade, or None for any other command.
+    """
+    names = {os.path.basename(argv[0]), os.path.basename(argv[0]).split("-")[0]}
+    if "pacman" not in names:
+        return None
+    for arg in argv[1:]:
+        if not arg.startswith("-") or arg == "-":
+            continue
+        letters = arg.lstrip("-")
+        if "S" in letters and "u" in letters:
+            return arg
+        if letters.startswith("u"):
+            return arg
+    return None
+
+
+def refuse_upgrade(conn, why):
+    log_request("pacman " + why, 1)
+    fail(
+        conn,
+        (
+            "pacman: %s would upgrade the whole guest, and Omdroid pins its desktop\n"
+            "  (Hyprland, aquamarine and Mesa in /opt) to the image's libraries: an\n"
+            "  upgrade can stop the desktop from starting. Install single packages:\n"
+            "    sudo pacman -S <package>\n"
+            "  Nothing was changed. Set OMDROID_ALLOW_UPGRADE=1 to run it anyway.\n" % why
+        ).encode(),
+        1,
+    )
+
+
 def run(conn, req):
     argv = req.get("argv")
     if (
@@ -552,6 +590,14 @@ def run(conn, req):
         log_request(argv[0], 1)
         fail(conn, ("sudo: unknown user: %s\n" % req.get("user")).encode(), 1)
         return
+    if os.environ.get("OMDROID_ALLOW_UPGRADE") != "1":
+        sent = req.get("env") or {}
+        allowed = isinstance(sent, dict) and sent.get("OMDROID_ALLOW_UPGRADE") == "1"
+        if not allowed:
+            why = upgrade_command(argv)
+            if why:
+                refuse_upgrade(conn, why)
+                return
     cwd = req.get("cwd") or pw.pw_dir
     if not isinstance(cwd, str) or not os.path.isdir(cwd):
         cwd = pw.pw_dir

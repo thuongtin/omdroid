@@ -435,6 +435,15 @@ and `omdroid-logo.txt`, which is the version for a terminal:
   runs in the same fake-root broker as `sudo`. Many AUR packages declare `arch=('x86_64')`
   only and are refused; `yay --mflags --ignorearch` skips that check, and then works only
   when the sources really build on aarch64.
+- Do not upgrade the guest: a bare `yay` means `yay -Syu`, and a full upgrade breaks the
+  desktop, because its Hyprland, aquamarine and Mesa in `/opt` are custom builds pinned
+  against the image's libraries. This has happened: `hyprgraphics` 0.7.0 changed its soname
+  to `.so.6` while the patched Hyprland needs `.so.4`, and the session died with
+  `libhyprgraphics.so.4: cannot open shared object file`. The `yay` shim now refuses
+  `-Syu`, `-u` and a bare `yay` and points at `yay -S <package>` instead, and the root
+  broker refuses `sudo pacman -Syu` the same way (`OMDROID_ALLOW_UPGRADE=1` overrides
+  either). Both only block the commands they can see: `/usr/bin/yay` and any other route
+  to a full upgrade still break the desktop, and the repair is a fresh guest.
 - The bar's audio widget has no data: no `omarchy-proot-audio` binary exists in the
   payload. The PulseAudio-to-Android bridge is designed, never demonstrated.
 - Scale 1.5 is not accepted by this Hyprland build; the guest quantises it to 1.6, so
