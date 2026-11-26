@@ -1,8 +1,10 @@
 package com.phoshdroid.app.extraction
 
+import com.github.luben.zstd.ZstdInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
 
@@ -34,7 +36,7 @@ class AssetExtractor {
                 onProgress(percent)
             }
         }.let { counting ->
-            TarArchiveInputStream(GZIPInputStream(BufferedInputStream(counting))).use { tar ->
+            TarArchiveInputStream(decompress(BufferedInputStream(counting))).use { tar ->
                 var entry = tar.nextEntry
                 while (entry != null) {
                     val outFile = File(targetDir, entry.name)
@@ -86,6 +88,43 @@ class AssetExtractor {
         onProgress(100)
         marker.createNewFile()
         return true
+    }
+
+    /**
+     * Picks the decompressor from the stream's own magic bytes: gzip for
+     * `bootstrap.bin` (and every `rootfs.bin` up to 0.0.17) and zstd for the
+     * 0.0.18 guest image, so an updated APK still extracts an old asset and the
+     * bootstrap keeps its format. Unknown bytes fail loudly instead of letting
+     * the tar reader report a truncated archive.
+     */
+    private fun decompress(input: BufferedInputStream): InputStream {
+        input.mark(MAGIC_BYTES)
+        val magic = ByteArray(MAGIC_BYTES)
+        var read = 0
+        while (read < magic.size) {
+            val n = input.read(magic, read, magic.size - read)
+            if (n < 0) break
+            read += n
+        }
+        input.reset()
+        return when {
+            read >= 2 && magic[0] == GZIP_MAGIC_0 && magic[1] == GZIP_MAGIC_1 ->
+                GZIPInputStream(input)
+            read >= 4 && magic.copyOf(4).contentEquals(ZSTD_MAGIC) ->
+                ZstdInputStream(input)
+            else ->
+                throw IOException(
+                    "unknown image compression: " +
+                        magic.take(read).joinToString(" ") { "%02x".format(it) }
+                )
+        }
+    }
+
+    private companion object {
+        const val MAGIC_BYTES = 4
+        val GZIP_MAGIC_0: Byte = 0x1f
+        val GZIP_MAGIC_1: Byte = 0x8b.toByte()
+        val ZSTD_MAGIC = byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte())
     }
 }
 

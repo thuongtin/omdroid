@@ -15,14 +15,21 @@ APK=app/build/outputs/apk/debug/app-debug.apk
     tail -4 /tmp/omarchy-repack.log
   fi
   echo "== $(date +%T) verify image members"
-  tar -tzf "$A" > /tmp/omarchy-members.txt 2>/dev/null
+  # The image is zstd from R10 on (gzip through 0.0.17); pick the tar codec from
+  # the stream's magic bytes, the same rule AssetExtractor uses.
+  case "$(od -An -tx1 -N4 "$A" | tr -d ' \n')" in
+    28b52ffd) TAROPT="--zstd" ;;
+    *) TAROPT="-z" ;;
+  esac
+  echo "image codec: $( [ "$TAROPT" = "--zstd" ] && echo zstd || echo gzip )"
+  tar "$TAROPT" -tf "$A" > /tmp/omarchy-members.txt 2>/dev/null
   echo "members=$(wc -l < /tmp/omarchy-members.txt)"
   echo "cage+wlroots members (want 2): $(grep -cE '^\./usr/bin/cage$|^\./usr/lib/libwlroots-0\.20\.so$' /tmp/omarchy-members.txt)"
   bad=0
   for f in start.sh session-child.sh fit-x11.py omarchy-watch.py omarchy-plugin-index.sh; do
-    i=$(tar -xzOf "$A" "./etc/phoshdroid/$f" 2>/dev/null | sha256sum | cut -c1-16)
+    i=$(tar "$TAROPT" -xOf "$A" "./etc/phoshdroid/$f" 2>/dev/null | sha256sum | cut -c1-16)
     r=$(sha256sum "$O/$f" | cut -c1-16)
-    m=$(tar -tvzf "$A" "./etc/phoshdroid/$f" 2>/dev/null | cut -c1-10)
+    m=$(tar "$TAROPT" -tvf "$A" "./etc/phoshdroid/$f" 2>/dev/null | cut -c1-10)
     if [ "$i" = "$r" ]; then echo "image==repo $f $i $m"; else echo "IMAGE!=REPO $f image=$i repo=$r"; bad=1; fi
   done
   echo "overlay scripts in image: $([ $bad = 0 ] && echo MATCH || echo MISMATCH)"
