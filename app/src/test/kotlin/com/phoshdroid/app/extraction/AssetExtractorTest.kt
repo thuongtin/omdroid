@@ -14,7 +14,11 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 
 class AssetExtractorTest {
 
@@ -330,21 +334,30 @@ class AssetExtractorTest {
         val image = File(imagePath)
 
         val extractor = AssetExtractor()
-        var result = false
         image.inputStream().use { input ->
-            result = extractor.extract(input, image.length(), target)
+            extractor.extract(input, image.length(), target)
         }
 
-        assertTrue(result, "extraction reported failure")
-        assertTrue(File(target, ".extraction_complete").exists())
+        // A second run over the same target (the release variant of this task)
+        // finds the marker and returns false on purpose, so assert the tree.
+        // Delete OMDROID_IMAGE_TARGET to force a fresh extraction.
+        assertTrue(File(target, ".extraction_complete").exists(), "extraction did not complete")
         assertEquals(0, extractor.skippedLinks, "hard-link members missing from their targets")
         assertTrue(File(target, "etc/phoshdroid/start.sh").isFile, "guest session script missing")
         assertTrue(File(target, "usr/bin/cage").isFile, "parent compositor missing")
 
         System.getenv("OMDROID_IMAGE_ENTRIES")?.toIntOrNull()?.let { expected ->
+            // walkFileTree does not follow symlinks (the guest has directory
+            // symlinks that would loop otherwise); every non-directory entry is
+            // materialised, hard-link members as copies, plus the marker.
             var count = 0
-            target.walkTopDown().forEach { if (!it.isDirectory) count++ }
-            assertEquals(expected, count, "extracted non-directory members")
+            Files.walkFileTree(target.toPath(), object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (!attrs.isDirectory) count++
+                    return FileVisitResult.CONTINUE
+                }
+            })
+            assertEquals(expected + 1, count, "extracted non-directory members plus the marker")
         }
     }
 }

@@ -15,8 +15,8 @@ The extractor needs no switch: it reads the codec from the stream's magic bytes.
 | 1 | 16 KB LOAD alignment for `libtermux.so` | **PASS** (host) | `readelf -lW` on a fresh ndk-build: all four ABIs `0x4000` (was `0x1000`); submodule `3e3b93a5`; device probe PENDING |
 | 2 | Codec measurement table (gzip -6 / zstd -19 / `--long=27`) | **PASS** (host) | 3.995 GB stream measured; chose `zstd -19 --long=26` |
 | 3 | Prune rules in the packager + pacman `NoExtract` | **PASS** (host) | 15,523 entries / 418,199,488 B removed, none on the hard-link list |
-| 4 | zstd image written by the packager, decoded by `AssetExtractor` | **PASS** (host) | `:app:test` 12 pass / 1 skipped / 0 fail; real-image extraction on this host |
-| 5 | Repack, equivalence diff, `:app:test`, `:app:lintDebug`, APK build, sizes | **PASS** (host); device rows PENDING | numbers below |
+| 4 | zstd image written by the packager, decoded by `AssetExtractor` | **PASS** (host) | `:app:test` 0 fail (default run 12 pass + 1 skipped; all 13 with `OMDROID_IMAGE` set, ran here); real-image extraction on this host |
+| 5 | Repack, equivalence diff, `:app:test`, `:app:lintDebug`, APK build, sizes | **PASS** (host); device rows PENDING | APK 1,124,644,223 B (−34.5 %); image 999,487,241 B (−37.2 %); equivalence: 0 unexplained, 0 added, 0 changed; 13 tests 0 fail; lint 0 errors; every APK lib ≥0x4000 |
 
 ## Step 1: 16 KB page alignment for `libtermux.so`
 
@@ -198,13 +198,23 @@ a **same-tree baseline** instead — the packager run with
 | check | result |
 |---|---|
 | image codec | `28 b5 2f fd` (zstd); `tar --zstd -tvf` lists it |
-| members | **68,343** (shipped image 83,316) |
-| `rootfs.bin` | **999,487,241 B** (shipped 1,591,865,500 B → −592,378,259 B, −37.2 %) |
-| `:app:test` | 12 passed, 1 skipped (real-image), 0 failed |
-| equivalence (same-tree gzip baseline vs this image: size, mode, link target) | below |
-| real-image extraction on this host | below |
-| `:app:lintDebug`, `:app:assembleDebug` | below |
-| APK size, `readelf -lW` on every `lib/*/*.so` | below |
+| members | **68,343** (6,435 dirs, 54,811 files, 5,265 symlinks, 1,832 hard-link entries); shipped image 83,316 |
+| `rootfs.bin` | **999,487,241 B** vs the shipped 1,591,865,500 B → **−592,378,259 B (−37.2 %)** |
+| same-tree baseline (`OMDROID_PRUNE=0 OMDROID_IMAGE_CODEC=gzip`) | 83,391 members, 1,592,571,977 B |
+| **equivalence** (baseline vs new: name, type, size, mode, link target) | **missing 15,048 — all under the pruned prefixes, 0 unexplained; added 0; changed 0; 418,199,488 B removed** |
+| `:app:test` | 13 tests per variant, **0 failures** (debug and release), real-image test included |
+| real-image extraction on this host | **61,908 non-directory members + the marker = 61,909**, `skippedLinks = 0`, 3,528,857,433 B on disk under `<scratch>/omarchy/r10/image/extracted-real` |
+| `:app:lintDebug` | **0 errors, 37 warnings** (pre-existing resource/localisation set; none mention the extractor or zstd) |
+| APK | **1,124,644,223 B** vs 1,715,790,990 B → **−591,146,767 B (−34.5 %)** |
+| APK `assets/rootfs.bin` | 999,487,241 B, magic `28 b5 2f fd` |
+| `readelf -lW` on every APK library | arm64-v8a 13 files and x86_64 3 files, **all LOAD segments `0x4000` or `0x10000`**, including `libtermux.so` (`0x4000`, was `0x1000`) and `libzstd-jni-1.5.7-9.so` (`0x4000`, 603,960 B on arm64) |
+
+The gates ran as one command under the shared Gradle lock:
+`flock … ./gradlew :app:assembleDebug :app:lintDebug :app:test --no-daemon
+-Dorg.gradle.jvmargs="-Xmx10g -Dfile.encoding=UTF-8"`, the old APK deleted first
+(AGENTS.md pitfall). The real-image test needs `OMDROID_IMAGE`, `OMDROID_IMAGE_TARGET`
+(~4 GB of scratch) and `OMDROID_IMAGE_ENTRIES`; with `--no-daemon` so the test JVM
+inherits them.
 
 ## Device A/B plan (the parent runs it)
 
