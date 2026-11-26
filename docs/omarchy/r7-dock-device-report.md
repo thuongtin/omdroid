@@ -11,7 +11,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | T0 | Baseline: install test2, cold start, probe, undocked mobile, dock lines, touch, key capture, `sudo id` | **PASS** (dock baseline) / **FAIL** (`sudo id`, not this round's fix) | install sha `a239a8c5…12fc407a0` PASS; cold start handover +7.6 s, desktop PASS +8.0 s; `dock: undocked`; `wl_touch`; KeyInterceptor bound; `sudo id` -> `omdroid-rootd: peer is not this app` |
 | T1 | How a second display works on this tablet | **PASS** | `overlay_display_devices 1920x1080/160` -> display 2, `type OVERLAY`, `FLAG_PRESENTATION, FLAG_TRUSTED` (not PRIVATE), density 160; `activities_on_secondary_displays` present; `am start --display 2` Settings -> `Display #2` fullscreen; no other setting needed |
 | T2 | Dock (M1 + M2) | **FAIL** (geometry) / PASS (move, UI switch, no restart) | X activity MOVED to display 3 (same ActivityRecord, same task); `ui switch` +3.9 s; foot pid 7306 kept; but X root **1920x915** (165 px key-bar gap kept), Hyprland monitor **3200x1970** (start-time mode re-applied), `dock: ui mobile written (docked)` names the wrong mode |
-| T3 | Undock (M2) | PENDING | |
+| T3 | Undock (M2) | **PASS** (one log FAIL, same as T2's FAIL 3) | X activity back on display 0 by itself (same ActivityRecord); xroot 3200x1971, monitor 3200x1970; mobile UI back; foot 7306 kept; desktop ready +13.1 s; log `dock: ui desktop written (undocked)` names the old mode |
 | T4 | Pin | PENDING | |
 | T5 | Repeat x5 | PENDING | |
 | T6 | Input while docked | PENDING | |
@@ -161,3 +161,30 @@ After (`snap.sh t2-after`, 09:00:35):
   with the small "Overlay #1" window top-left showing the same cropped desktop.
 - Time from `settings put` to the switch: **3.9 s** (ui switch logged); to a desktop at the
   display's size: never (FAIL 1 + 2).
+
+### T3. Undock (build test2, 09:03 UTC, from the T2 state)
+
+`dock.py off` (t0 09:03:38.146):
+```
++0.48s logcat Phoshdroid: dock: undocked (change)
++0.48s logcat Phoshdroid: dock: ui desktop written (undocked)
++0.48s logcat Phoshdroid: dock: extra-key bar shown
++0.48s logcat Phoshdroid: dock: monitor gone, the session follows to the default display
+~0s    watch  ui mode desktop -> mobile, switching in place
+~12s   watch  ui switch: omdroid-ui rc=0; plugin-index rc=0; omarchy-restart-shell rc=0; layers fit again 0.1 s after the restart; hyprctl reload rc=0
+RESULT t3-undock: ui switch logged at +12.9 s (host), desktop ready (switch + probe PASS at 3200x1970) at +13.1 s
+```
+- X activity: back on `Display #0` as the top resumed activity, the same
+  `ActivityRecord{174012199 ... t4454}` - Android migrated it; nothing re-launched it.
+- xroot 3200x1971, cage 3200x1970, monitor 3200x1970 scale 2, **probe PASS** - the undocked size
+  equals the start-time mode, so the config reload that broke T2 is harmless here.
+- Mobile UI back: `ui=mobile`, scan 42 / 5 omamobile, layers `omamobile-home-strip`,
+  `omamobile-launcher`, `omarchy-bar` 44 px, `omamobile-back` x2. `shots/t3-undock-tablet.png`:
+  the mobile bar (`09:03`), the foot terminal maximised, the home pill and the two-row extra-key bar
+  (ESC / - HOME ... PGDN) at the bottom, no misplaced band.
+- Session untouched: 6096 / 6222 / 6243 / cage 6514 / Hyprland 6516, **foot 7306** still the one
+  client; quickshell new again (8025 -> 14325).
+- The log line names the previous mode again (`ui desktop written (undocked)` for a `mobile`
+  write): T2's FAIL 3.
+- The undock switch took 12 s against 3 s for the dock (both measured from the watcher's own
+  lines); the mobile direction runs the longer `omdroid-ui.sh` path. T5 repeats it.
