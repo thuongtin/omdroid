@@ -9,7 +9,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | Step | What | Verdict | Number / log line |
 | --- | --- | --- | --- |
 | T0 | Baseline: install test2, cold start, probe, undocked mobile, dock lines, touch, key capture, `sudo id` | **PASS** (dock baseline) / **FAIL** (`sudo id`, not this round's fix) | install sha `a239a8c5…12fc407a0` PASS; cold start handover +7.6 s, desktop PASS +8.0 s; `dock: undocked`; `wl_touch`; KeyInterceptor bound; `sudo id` -> `omdroid-rootd: peer is not this app` |
-| T1 | How a second display works on this tablet | PENDING | |
+| T1 | How a second display works on this tablet | **PASS** | `overlay_display_devices 1920x1080/160` -> display 2, `type OVERLAY`, `FLAG_PRESENTATION, FLAG_TRUSTED` (not PRIVATE), density 160; `activities_on_secondary_displays` present; `am start --display 2` Settings -> `Display #2` fullscreen; no other setting needed |
 | T2 | Dock (M1 + M2) | PENDING | |
 | T3 | Undock (M2) | PENDING | |
 | T4 | Pin | PENDING | |
@@ -22,6 +22,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 
 | Setting | Recorded value | Set to | Restore command | Restored / read back |
 | --- | --- | --- | --- | --- |
+| `global overlay_display_devices` | `null` | `1920x1080/160` (T1-T6) | `adb -s $TABLET_SERIAL shell settings delete global overlay_display_devices` (it read `null`) | |
 | `global stay_on_while_plugged_in` | `0` | `2` | `adb -s $TABLET_SERIAL shell settings put global stay_on_while_plugged_in 0` | |
 
 ## Log
@@ -78,3 +79,26 @@ Scratch: `<scratch>/omarchy/r7/device/`.
   out as `{0}`, i.e. on the device `kernel_uid()` (SO_PEERCRED on a socketpair) returned 0 under the
   device proot, or raised `OSError`, while the client connection reports the real app uid 10323.
   Not this round's fix (sibling-owned files); the dock steps carried on.
+
+### T1. A second display on this tablet (08:55-08:58 UTC, app force-stopped so nothing docked)
+
+- `settings put global overlay_display_devices 1920x1080/160` -> `DisplayDeviceInfo{"Overlay #1":
+  uniqueId="overlay:1", 1920 x 1080 ...}` and logical
+  `DisplayInfo{"Overlay #1", displayId 2, displayGroupId 0, FLAG_PRESENTATION, FLAG_TRUSTED, real
+  1920 x 1080 ... state ON, type OVERLAY, density 160}`. **Not `FLAG_PRIVATE`**, so `DockState`
+  makes it the launch target. Full dump: scratch `t1-dumpsys-display.txt`.
+- `pm list features`: `android.software.activities_on_secondary_displays` **present**, plus
+  `android.software.freeform_window_management` and `picture_in_picture`.
+- SurfaceFlinger: `Display 11529215049803859011 (Virtual display): displayName="Overlay #1"` next to
+  `Display 4630947192003572371 (HWC display 0)`. `screencap -p -d <that id>` returns a 1920x1080
+  PNG of the simulated display; the built-in id returns the 3200x2136 tablet screen. (The overlay's
+  SurfaceFlinger id is re-read on every add.)
+- `am start --display 2 -n com.android.settings/.Settings` -> `Display #2 ... Task{#4452 ...
+  A=1000:com.android.settings ... visible=true mode=fullscreen}`. Screens
+  (`shots/t1-settings-d2.png`, `shots/t1-settings-tablet.png`): display 2 shows Settings full screen
+  (Wi-Fi page, 1920x1080); the tablet shows its home screen with the small "Overlay #1:
+  1920x1080, 160 dpi" window in the top-left corner mirroring display 2. Sent back with
+  `am force-stop com.android.settings`, display removed again.
+- **Combination that lets an app run on the second display: none needed.** HyperOS left as found:
+  `force_desktop_mode_on_external_displays=0`, `enable_freeform_support=0` (not changed);
+  `force_resizable_activities=1` was already on before the round (not changed either).
