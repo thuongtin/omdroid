@@ -11,12 +11,14 @@
 **Omarchy on unrooted Android, in a single APK.**
 
 > [!WARNING]
-> **Highly experimental.** Omdroid has run on one tablet. The latest build is the
-> [`v0.0.15-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) pre-release, with the mobile UI, real touch and the
-> keyboard pass-through; it has been installed on that tablet as an update over the
-> earlier builds and cold-started, never as a clean install. Its touch and keyboard
-> measurements come from injected input, not fingers or a real keyboard cover, on local builds
-> of the same tree. Expect breakage. The guest lives in the app's private storage, so
+> **Highly experimental.** Omdroid has been measured on one tablet and used by hand on one phone.
+> The latest build is the
+> [`v0.0.16-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.16-alpha) pre-release: it
+> adds docking to a monitor with a keyboard and mouse, `sudo` and `yay` to the mobile UI, real
+> touch and keyboard pass-through of 0.0.15. It has been installed on the tablet as an update
+> over the earlier builds and cold-started, never as a clean install. Most measurements come
+> from injected input; docking was also tried by hand with a real USB-C dock, monitor, keyboard
+> and trackpad. Expect breakage. The guest lives in the app's private storage, so
 > uninstalling the app or clearing its data deletes everything inside it.
 
 Omdroid runs Arch Linux ARM with [Omarchy](https://omarchy.org) -- Hyprland plus the
@@ -36,9 +38,12 @@ under the desktop -- is not in it; the screenshots further down are Android's ow
 
 ## Status
 
-Highly experimental. It has been run on exactly one device: a Xiaomi Pad 8 Pro
+Highly experimental. Every measurement below was taken on one device: a Xiaomi Pad 8 Pro
 (model 25091RP04G), Android 16 with HyperOS 3.0, a Snapdragon SM8750P with an Adreno GPU,
-a 3200x2136 panel and 12 GB of RAM. The Omdroid builds are the `v0.0.14-alpha` and [`v0.0.15-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) pre-releases. Every earlier
+a 3200x2136 panel and 12 GB of RAM. The owner also runs 0.0.15 on his Samsung foldable phone
+(Android 17, Adreno 840) and reports that it works well; nothing on the phone was measured. The
+Omdroid builds are the `v0.0.14-alpha`, `v0.0.15-alpha` and
+[`v0.0.16-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.16-alpha) pre-releases. Every earlier
 release on this repository is a Phoshdroid build -- postmarketOS with Phosh, a different
 guest under the same package id -- so do not install Omdroid over Phoshdroid: uninstall it
 first. Installing over it has not been tested.
@@ -61,11 +66,17 @@ first. Installing over it has not been tested.
 | Five Omamobile plugins load in the shell | the session's plugin scan file, `omarchy-shell shell listPlugins`, the shell's own log | 5 third-party entries, all five named and `omamobile.bar` active, 0 failed loads and 0 TypeError in 505 log lines | mobile M1, M2 |
 | The mobile UI switches to the stock session and back | one cold start per mode, `shell.json` compared with the image's stock file | desktop: stock bar 1600x26, 0 `omamobile` ids, `gaps 5 5 5 5`, 0 plugin links; mobile: 5 links and `gaps 0 0 0 0` | mobile M7 |
 | A cold start with the mobile UI hands over by itself | `coldstart.sh`, no nudge | unaided hand-over at +9.7 s, +10.3 s and +11.0 s, desktop PASS each time | touch D1, D3, mobile R7 |
+| Plugging in a monitor moves the running desktop there, unplugging brings it back | Android's simulated 1920x1080 display, five dock/undock cycles; then the owner's USB-C dock with a 3440x1440 HDMI monitor | the same X activity moved (no relaunch, same process), X root, cage and Hyprland 1920x1080, desktop UI ready in 2.8-5.9 s, back in the mobile UI on the tablet in 12-30 s, the open `foot` window kept throughout | dock T2-T5 |
+| A docked keyboard and mouse drive Omarchy whatever the tablet has focused | `uhid` keyboard and mouse with Android Settings focused on the tablet; then the owner's Corne keyboard and Magic Trackpad on the dock | typed text reached a terminal on the monitor and not Settings, SUPER+Return opened a terminal there, the pointer moved, left and right click and the wheel reached a client; unplugging gave both back to Android within 0.5 s. The owner's real dock: confirmed working | input I2-I4 |
+| `sudo` runs as fake root | `sudo id` in the live session; the device's own proot running the previous broker as a control | `uid=0(root)`, `sudo pacman -Q pacman` exit 0; the control refused every request with `peer is not this app` | sudo device finding 2 |
+| `yay` builds and installs an AUR package | first `yay --version`, then `yay -S cbonsai`, run it, `yay -R` | `yay` installed itself in 1 min 28 s, the next call took 0.19 s; after the hard-link repair restored 1,830 files, gcc linked and `cbonsai` was built, run and removed | input I0 |
 
 Rows D2-D7 are in `docs/omarchy/r3-device-report.md`; row G4 is in
 `docs/omarchy/r2-guest-report.md`. The `touch` rows are in `docs/omarchy/r5-touch-device-report.md`,
 the `keys` rows in `docs/omarchy/r4-input-report.md`, and the `mobile` rows in
-`docs/omarchy/r5-mobile-ui-device-report.md`. The D rows were measured on the first build that
+`docs/omarchy/r5-mobile-ui-device-report.md`; the `dock` rows are in
+`docs/omarchy/r7-dock-device-report.md`, the `input` rows in `docs/omarchy/r8-dock-input-report.md`
+and the `sudo` row in `docs/omarchy/r6-sudo-report.md`. The D rows were measured on the first build that
 combined the rewritten app and the rewritten guest session, made just before the round 3
 host changes listed under "Not verified yet" went in; the later rows come from the round 5
 builds, which start in about 10 s rather than 3.
@@ -79,26 +90,20 @@ warnings; see Known limits.
 
 Not verified yet:
 
-- `sudo`. The broker and the client pass their host-side harness (35 cases, including a pty,
-  Ctrl+C and concurrent requests: `python3 docs/omarchy/tools/rootd-selftest.py`), but neither
-  has run on a tablet: not `sudo id`, not a pacman install through it, not the interactive
-  prompt, not `omarchy-pkg-add`. The steps that close this are in
+- `sudo` beyond `sudo id`, `sudo pacman -Q` and the AUR install `yay` ran: the interactive
+  prompt, Ctrl+C and `omarchy-pkg-add` have not been run on a device; the steps are in
   `docs/omarchy/r6-sudo-report.md`.
-- `yay` and `makepkg` end to end on the tablet. Their shims pass the same harness, and the
-  whole chain - base-devel, `yay-bin`, then a small AUR package installed, run and removed -
-  ran as uid 1000 against a root broker in an arm64 container of the guest image. What that
-  does not prove: two proots on the phone, Android's kernel under them, the device's network,
-  and the real `fakeroot` package having been installed first. `docs/omarchy/r6b-yay-report.md`
-  lists the rest; its "Manual test for Phil" closes it.
-- A clean install of a release. `v0.0.14-alpha` and `v0.0.15-alpha` have each been installed
-  on the tablet only as an update over an existing guest and cold-started with `probe.sh`
-  passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). The extractor fix is
-  still checked on the build machine only, since an
-  update keeps the extracted guest: Android refuses apps hard links, so the 1,832 hard-link
-  members of the guest image (terminfo and zoneinfo aliases, `/usr/bin/ld`) were missing after
-  extraction; they are now copied, and the extractor run over the real image produces all
-  76,382 files.
-- Real fingers. Every touch so far was `adb shell input` or a synthetic `uinput` device:
+- Docking on the phone: Samsung DeX, whether a real unplug survives Samsung's teardown, and the
+  phone's monitor density. The checklist is in `docs/omarchy/r7-dock-device-report.md`.
+- A clean install of a release. `v0.0.14-alpha`, `v0.0.15-alpha` and `v0.0.16-alpha` have each
+  been installed on the tablet only as an update over an existing guest and cold-started with
+  `probe.sh` passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). Android refuses
+  apps hard links, so a guest extracted before 0.0.14 lacks the image's 1,832 hard-link members
+  (terminfo and zoneinfo aliases, `/usr/bin/ld`, `gawk`). The extractor now copies them (checked
+  on the build machine: all 76,382 files), and since 0.0.16 an older guest is repaired once at
+  session start (`omdroid-repair-links.sh`: 1,830 restored on the tablet, row input I0).
+- Real fingers, measured. The owner uses the phone and the tablet by hand, but every measured
+  touch was `adb shell input` or a synthetic `uinput` device:
   Android InputReader and Termux:X11 see both like a finger, but with perfect straight-line
   timing. Whether a human tap, flick and long press feel right has not been tried.
 - The keyboard cover. Only synthetic `uhid` HID keyboards have been used. The real cover's
@@ -122,7 +127,8 @@ Not verified yet:
   passing, window still open).
 - Session-end reporting and the error screen (H10-H15) are unit-tested only; the launch
   decision and the guest-overlay sync run on the device in every cold start.
-- A foldable phone. It has never been tried.
+- A foldable phone, measured. The owner runs 0.0.15 on a Samsung foldable and reports it works
+  well; folding and unfolding with a session open, and docking it, have not been measured.
 
 ## Mobile UI
 
@@ -159,7 +165,8 @@ Both are Android screenshots of the round 5 build (row R8 in
 
 ## Docking
 
-**Built and unit-tested, not yet tried with a real monitor.** The design: plug the phone into a
+**Working on the tablet with a real USB-C dock, monitor, keyboard and trackpad; untested on a
+phone.** The design: plug the phone into a
 monitor and the desktop moves there, in the `desktop` UI; unplug it and the session keeps running
 while Android is normal again, with the same desktop waiting when you open Omdroid in the `mobile`
 UI. Nothing restarts: the monitor is just where the X surface is drawn, and the guest's UI mode is
@@ -195,9 +202,9 @@ a file the shell re-reads in place.
   pointer reaches the monitor by itself) hand everything back to Android at once. Proven with a
   synthetic USB keyboard and mouse on the simulated display (`docs/omarchy/r8-dock-input-report.md`);
   logcat: `adb logcat -s KeyInterceptor:* | grep input:`.
-- **Not proven yet.** A real monitor, Samsung DeX and whether unplug survives Samsung's teardown;
-  only the phone can show those. A real trackpad's two-finger scroll and tap-to-click wait for
-  Phil's dock test.
+- **Not proven yet.** Samsung DeX and whether unplug survives Samsung's teardown; only a Samsung
+  phone can show those. The owner's dock test confirmed typing, the pointer and clicks; trackpad
+  gestures beyond those were tried by hand, not measured.
 - **Known limit.** A running session keeps the UI scale it started with: docked from the phone it
   stays at scale 2 (a 1080p monitor gets a 960x540 desktop), and a session started on the monitor
   keeps scale 1 after unplug (a tiny phone UI until Omdroid is restarted). Those are the dock round's device items; `docs/omarchy/r7-dock-report.md` has the log
@@ -298,8 +305,8 @@ service is not enabled and the log says so (`launch: key-capture no WRITE_SECURE
 
 ## Build and install
 
-To install the pre-release, download `omdroid-0.0.15-alpha.apk` (about 1.7 GB) from the
-[`v0.0.15-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.15-alpha) and sideload it: `adb install omdroid-0.0.15-alpha.apk`,
+To install the pre-release, download `omdroid-0.0.16-alpha.apk` (about 1.7 GB) from the
+[`v0.0.16-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.16-alpha) and sideload it: `adb install omdroid-0.0.16-alpha.apk`,
 or open the file from a file manager on the device. HyperOS and MIUI refuse `adb install`;
 see the end of this section. The first start extracts the guest; that took about
 two minutes on the test tablet.

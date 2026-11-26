@@ -90,7 +90,7 @@ termux-x11-app  →  termux-shared
 - [ ] **Step 1: Initialize git repo**
 
 ```bash
-cd ~/Development/proot-post
+cd <repo>
 git init
 ```
 
@@ -387,7 +387,7 @@ Create `app/src/main/assets/.gitkeep` (empty file).
 - [ ] **Step 11: Install Gradle wrapper and verify build**
 
 ```bash
-cd ~/Development/proot-post
+cd <repo>
 gradle wrapper --gradle-version 8.11.1
 ./gradlew assembleDebug
 ```
@@ -417,7 +417,7 @@ permissions. Termux submodule wiring prepared but commented out."
 - [ ] **Step 1: Add termux-app submodule**
 
 ```bash
-cd ~/Development/proot-post
+cd <repo>
 git submodule add https://github.com/termux/termux-app.git termux-app
 cd termux-app
 git checkout v0.118.1
@@ -2468,7 +2468,7 @@ chmod +x .githooks/pre-push
 - [ ] **Step 3: Configure git to use custom hooks directory**
 
 ```bash
-cd ~/Development/proot-post
+cd <repo>
 git config core.hooksPath .githooks
 ```
 

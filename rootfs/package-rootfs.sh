@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT="$PROJECT_DIR/app/src/main/assets/rootfs.tar"
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
-ROOTFS="~/.local/var/pmbootstrap/chroot_rootfs_qemu-aarch64"
+ROOTFS="$HOME/.local/var/pmbootstrap/chroot_rootfs_qemu-aarch64"
 
 echo "=== Packaging pmOS rootfs for Phoshdroid ==="
 

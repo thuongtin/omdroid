@@ -9,7 +9,7 @@
 # The scenario is driven only through Hyprland (no adb input events): close leftover
 # terminals, open three (fastfetch, the session processes and themes, system facts), open and
 # close the Omarchy menu. btop is not used: it aborts on Android (/sys/devices is unreadable).
-# Result, under $OMARCHY_SHOTS/<name>/ (default <scratch>/omarchy/shots/demo):
+# Result, under $OMARCHY_SHOTS/<name>/ (default $TMPDIR/omarchy/shots/demo):
 #   f0001.jpg ...   frames, 1 logical px per px
 #   full.png        one full-resolution frame with the three terminals open
 #   times.txt       wall-clock second of each frame
@@ -19,7 +19,7 @@ export PATH="$HOME/Android/Sdk/platform-tools:$PATH"
 T=${TABLET_SERIAL:?set TABLET_SERIAL to the adb serial of the test device}
 HERE=$(cd "$(dirname "$0")" && pwd)
 NAME=${1:-demo}
-OUT=${OMARCHY_SHOTS:-<scratch>/omarchy/shots}/$NAME
+OUT=${OMARCHY_SHOTS:-${TMPDIR:-/tmp}/omarchy/shots}/$NAME
 mkdir -p "$OUT"
 TMP=$(mktemp -d)
 

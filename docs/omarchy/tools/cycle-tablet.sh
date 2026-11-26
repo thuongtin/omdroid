@@ -3,7 +3,7 @@
 export PATH="$HOME/Android/Sdk/platform-tools:$PATH"
 T=${TABLET_SERIAL:?set TABLET_SERIAL to the adb serial of the test device}
 W=${1:-40}
-OUT=<scratch>/omarchy
+OUT=${TMPDIR:-/tmp}/omarchy
 adb -s "$T" shell am force-stop com.phoshdroid.app
 adb -s "$T" shell input keyevent KEYCODE_WAKEUP
 adb -s "$T" logcat -c

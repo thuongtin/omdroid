@@ -12,7 +12,7 @@
 # ALWAYS finish with `./screen.sh reset` and check `./screen.sh show`: the tablet is Phil's.
 export PATH="$HOME/Android/Sdk/platform-tools:$PATH"
 T=${TABLET_SERIAL:?set TABLET_SERIAL to the adb serial of the test device}
-STATE=${OMARCHY_SCREEN_STATE:-<scratch>/omarchy/screen-orig.env}
+STATE=${OMARCHY_SCREEN_STATE:-${TMPDIR:-/tmp}/omarchy/screen-orig.env}
 sh_() { adb -s "$T" shell "$@" | tr -d '\r'; }
 
 save_orig() {

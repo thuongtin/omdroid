@@ -9,7 +9,7 @@ the round 2 checks V1-V5), printing one line each. Running it twice produces
 byte-identical output.
 
 Palette: Tokyo Night, Omarchy's default theme
-  <scratch>/omarchy/upstream/usr/share/omarchy/themes/tokyo-night/colors.toml
+  $TMPDIR/omarchy/upstream/usr/share/omarchy/themes/tokyo-night/colors.toml
 (re-verified against that file when it is present).
 
 Usage: python3 docs/brand/build_brand.py
@@ -33,8 +33,9 @@ FONT_BOLD = "/usr/share/fonts/liberation/LiberationSans-Bold.ttf"
 # --------------------------------------------------------------------------
 # palette (Tokyo Night)
 # --------------------------------------------------------------------------
-PALETTE_FILE = os.path.expanduser(
-    "<scratch>/omarchy/upstream/usr/share/omarchy/themes/tokyo-night/colors.toml"
+PALETTE_FILE = os.path.join(
+    os.environ.get("TMPDIR", "/tmp"),
+    "omarchy/upstream/usr/share/omarchy/themes/tokyo-night/colors.toml",
 )
 PALETTE = {
     "accent": "#7aa2f7",

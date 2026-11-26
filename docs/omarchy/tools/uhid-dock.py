@@ -21,7 +21,7 @@ The keyboard is a boot keyboard (8 modifier bits incl. Left GUI, six key slots, 
 0x00-0x65: Android classifies it as an alphabetic external keyboard). The mouse is a boot
 mouse with 3 buttons, relative X/Y and a wheel, 8-bit signed (Android: SOURCE_MOUSE, external).
 Both report bus usb. Needs TABLET_SERIAL; the FIFO and log live in UHID_DIR (default
-<scratch>/omarchy/uhid).
+$TMPDIR/omarchy/uhid).
 """
 import json
 import os
@@ -29,7 +29,7 @@ import subprocess
 import sys
 import time
 
-DIR = os.path.expanduser(os.environ.get("UHID_DIR", "<scratch>/omarchy/uhid"))
+DIR = os.path.expanduser(os.environ.get("UHID_DIR", os.path.join(os.environ.get("TMPDIR", "/tmp"), "omarchy/uhid")))
 FIFO = os.path.join(DIR, "cmd.fifo")
 LOG = os.path.join(DIR, "uhid.log")
 ADB = os.path.expanduser("~/Android/Sdk/platform-tools/adb")

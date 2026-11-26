@@ -1,13 +1,13 @@
 #!/bin/bash
 # shot.sh [name]  -- screenshot the tablet and print numbers that judge it without eyes.
-# Files land in $OMARCHY_SHOTS (default <scratch>/omarchy/shots):
+# Files land in $OMARCHY_SHOTS (default $TMPDIR/omarchy/shots):
 #   <name>.png       full screenshot (3200x2136)
 #   <name>-bar.png   top strip at full resolution, for a vision-capable reviewer
 # The X display activity must be on top; shotstat.py says so when it is not.
 export PATH="$HOME/Android/Sdk/platform-tools:$PATH"
 T=${TABLET_SERIAL:?set TABLET_SERIAL to the adb serial of the test device}
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OMARCHY_SHOTS:-<scratch>/omarchy/shots}
+OUT=${OMARCHY_SHOTS:-${TMPDIR:-/tmp}/omarchy/shots}
 mkdir -p "$OUT"
 N=${1:-shot-$(date +%H%M%S)}
 adb -s "$T" shell input keyevent KEYCODE_WAKEUP

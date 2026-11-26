@@ -38,6 +38,30 @@ export XDG_DATA_DIRS=/opt/omarchy-android/hyprland/share:/usr/local/share:/usr/s
 # (libaquamarine.so.13, see lib/README.md), which wins over the image copy below.
 export LD_LIBRARY_PATH=/etc/phoshdroid/lib:/opt/omarchy-android/mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib
 
+# The /opt Hyprland is built against libhyprgraphics.so.4, and every system
+# upgrade since then has bumped that soname (0.6.0 ships .so.5, 0.7.0 ships
+# .so.6) while the symbols Hyprland imports stay the same. Point the old name
+# at the newest copy in the guest when the old one is gone, so an upgrade does
+# not leave a desktop that cannot start. A missing library is not fatal here:
+# the exec below reports it.
+libdir=/etc/phoshdroid/lib
+if [ ! -e "$libdir/libhyprgraphics.so.4" ]; then
+    newest=
+    for candidate in /usr/lib/libhyprgraphics.so.[0-9]*; do
+        if [ -e "$candidate" ]; then
+            case ${candidate##*.} in *[!0-9]*) continue ;; esac
+            if [ -z "$newest" ]; then
+                newest=$candidate
+            elif [ "${candidate##*.}" -gt "${newest##*.}" ]; then
+                newest=$candidate
+            fi
+        fi
+    done
+    if [ -n "$newest" ]; then
+        ln -sfn "$newest" "$libdir/libhyprgraphics.so.4" && echo "start: hyprgraphics ${newest##*/} linked as libhyprgraphics.so.4"
+    fi
+fi
+
 # GPU path: the patched Mesa/Hyprland/aquamarine builds talk KGSL directly.
 # ProotCommandBuilder already passes this block from the host; it is repeated
 # here so the script is self-contained for a manual launch from a shell, where
