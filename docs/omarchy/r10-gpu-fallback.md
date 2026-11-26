@@ -9,9 +9,9 @@ device claim below is **PENDING** and comes with the command the parent runs.
 |---|---|---|---|
 | 1 | Facts: llvmpipe present? `OMARCHY_GPU_MODE` consumers? what each KGSL variable does, software block | PASS | host `readelf`/`strings`/`grep` on the extracted image, below |
 | 2 | `GpuMode.kt` rule, Graphics setting, `ProotCommandBuilder` env blocks, tests | PASS | `:app:test` 153 tests, 0 failures (host); new: `GpuModeTest` 10, `ProotCommandBuilderTest` 9 (5 new). Log `gradle-test-1.log` |
-| 3a | `start.sh` GPU block honours `OMDROID_GPU` (probe when unset) | PENDING | |
-| 3b | `launch-contract.md` GPU section | PENDING | |
-| 3c | `session-child.sh` one software retry on an early Hyprland exit (stretch) | PENDING | |
+| 3a | `start.sh` GPU block honours `OMDROID_GPU` (probe when unset) | PASS | `bash -n` ok; `GuestGpuScriptsTest` 7 block tests run the real block in bash and compare with the host env (host). Positive control: breaking two lines of the block failed 3 tests; restored (sha256 equal) |
+| 3b | `launch-contract.md` GPU section | PASS | section 9 added (plus the `gpu:` log lines in section 6); same commit as 3a/3c |
+| 3c | `session-child.sh` one software retry on an early Hyprland exit (stretch) | PASS (host, fake Hyprland) | `GuestGpuScriptsTest` 7 fallback tests: retry, no retry on success / user choice / switch off / past the window, exit codes kept, exec path unchanged. `:app:test` 167 tests, 0 failures. Real Hyprland: PENDING (device) |
 | 4 | Phantom process killer: `ProcessLimits.kt` + hook in `ProotService` | PENDING | |
 | 5 | `onTrimMemory` / `onLowMemory` logging in `ProotService` | PENDING | |
 | Gate | `:app:test`, `:app:lintDebug` | PENDING | |
@@ -86,6 +86,22 @@ falls back to CPU compositing after a slow start. That file belongs to the image
 - `proot/ProotDistroManager.kt`, `proot/ProotService.kt`: the service resolves the mode once per start, logs one line
   (`gpu: preference=auto kgsl-usable=false -> software source=auto`, tag `Phoshdroid`) and passes it to the
   session and the root broker.
+
+- `rootfs/overlay/etc/phoshdroid/start.sh` (GPU block only, from `# GPU path` to `# Fake root:`): uses
+  `OMDROID_GPU` when it is `kgsl` or `software`; otherwise probes `/dev/kgsl-3d0` (`-r` and `-w`) and treats
+  the launch as `auto`. If the mode is `kgsl`, the source is `auto` and `$XDG_RUNTIME_DIR/omdroid-gpu-fallback`
+  exists, it starts in software mode (a host retry after a guest fallback). Exports the shared variables,
+  then the mode's block, and `unset`s the other mode's variables. One session-log line:
+  `gpu: mode=<m> source=<s> from=<host|probe|marker>`. No apostrophes in the new comments; `bash -n` ok.
+- `rootfs/overlay/etc/phoshdroid/session-child.sh`: for `OMDROID_GPU=kgsl` with `OMDROID_GPU_SOURCE=auto`
+  (and `OMDROID_GPU_FALLBACK` not `0`) Hyprland runs as a child with signal forwarding; a non-zero exit
+  within `OMDROID_GPU_FALLBACK_WINDOW` (15) seconds that nobody asked for removes the failed start's `hypr/`
+  dir and shell lock, leaves the marker, switches to the software block and `exec`s Hyprland once more. Every other
+  case still `exec`s Hyprland as before.
+- `docs/omarchy/launch-contract.md`: section 9 (who decides, the two variables, the per-mode table, the guest
+  rule, the fallback, how it meets `SessionExit`, logs, what is not shipped).
+- `app/src/test/.../launch/GuestGpuScriptsTest.kt`: runs both scripts in bash with a clean environment, a
+  temporary runtime dir, a fake Hyprland and a fake `pkill` (the real one would hit the machine running the tests).
 
 ## Host proof
 
