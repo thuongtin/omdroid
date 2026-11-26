@@ -31,6 +31,17 @@
         <item>2</item>
     </string-array>
 
+    <string-array name="gpu_mode_entries">
+        <item>Auto</item>
+        <item>Adreno GPU (KGSL)</item>
+        <item>Software (slow, any phone)</item>
+    </string-array>
+    <string-array name="gpu_mode_values">
+        <item>auto</item>
+        <item>kgsl</item>
+        <item>software</item>
+    </string-array>
+
     <string-array name="refresh_entries">
         <item>60 Hz</item>
         <item>90 Hz</item>

@@ -13,6 +13,8 @@ import androidx.core.app.NotificationCompat
 import com.phoshdroid.app.LauncherActivity
 import com.phoshdroid.app.PhoshdroidApp
 import com.phoshdroid.app.R
+import com.phoshdroid.app.launch.GpuMode
+import com.phoshdroid.app.launch.GpuModeRule
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import java.io.File
@@ -34,6 +36,8 @@ class ProotService : Service() {
     private var scale = 2
     private var refreshMhz = 120_000
     private var bindSdcard = true
+    private var gpu = GpuMode.KGSL
+    private var gpuSource = GpuModeRule.SOURCE_SETTING
 
     private val prefixDir get() = "${applicationContext.filesDir}/usr"
 
@@ -98,6 +102,16 @@ class ProotService : Service() {
                 )
         refreshMhz = prefs.refreshMhz
         bindSdcard = prefs.bindSdcard
+        // The GPU path is decided once per session and handed to the guest as OMDROID_GPU
+        // (contract section 9). One log line, so a device round can see why a path was chosen.
+        val gpuPreference = prefs.gpuMode
+        val kgslUsable = GpuModeRule.isKgslUsable()
+        gpu = GpuModeRule.resolve(gpuPreference, kgslUsable)
+        gpuSource = GpuModeRule.source(gpuPreference)
+        android.util.Log.i(
+            "Phoshdroid",
+            "gpu: preference=$gpuPreference kgsl-usable=$kgslUsable -> ${gpu.value} source=$gpuSource",
+        )
 
         startForeground(NOTIFICATION_ID, buildNotification())
         startSession()
@@ -147,6 +161,8 @@ class ProotService : Service() {
                 scale = scale,
                 refreshMhz = refreshMhz,
                 bindSdcard = bindSdcard,
+                gpu = gpu,
+                gpuSource = gpuSource,
             )
         val process =
             try {
@@ -206,6 +222,8 @@ class ProotService : Service() {
                 height = height,
                 scale = scale,
                 refreshMhz = refreshMhz,
+                gpu = gpu,
+                gpuSource = gpuSource,
             )
 
         Thread({
@@ -227,6 +245,8 @@ class ProotService : Service() {
                             height = height,
                             scale = scale,
                             refreshMhz = refreshMhz,
+                            gpu = gpu,
+                            gpuSource = gpuSource,
                         )
                     runProcess(prootProcess, "proot retry").first
                 } else {

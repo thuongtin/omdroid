@@ -37,6 +37,15 @@ class PhoshdroidPreferences(context: Context) {
             ?: com.phoshdroid.app.launch.UiScale.AUTO
         set(value) = prefs.edit().putString("ui_scale", value).apply()
 
+    /**
+     * Which GPU path the guest uses: `auto` (KGSL when the Adreno node is usable, software
+     * otherwise), `kgsl` or `software`. Resolved at session start by
+     * [com.phoshdroid.app.launch.GpuModeRule.resolve].
+     */
+    var gpuMode: String
+        get() = com.phoshdroid.app.launch.GpuModeRule.normalise(prefs.getString("gpu_mode", null))
+        set(value) = prefs.edit().putString("gpu_mode", value).apply()
+
     /** Panel refresh reported to the guest, in millihertz (Hyprland's unit). */
     var refreshMhz: Int
         get() = prefs.getString("refresh_mhz", "120000")?.toIntOrNull() ?: 120_000

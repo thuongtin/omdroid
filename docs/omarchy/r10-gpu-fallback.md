@@ -8,7 +8,7 @@ device claim below is **PENDING** and comes with the command the parent runs.
 | Step | What | Status | Proof |
 |---|---|---|---|
 | 1 | Facts: llvmpipe present? `OMARCHY_GPU_MODE` consumers? what each KGSL variable does, software block | PASS | host `readelf`/`strings`/`grep` on the extracted image, below |
-| 2 | `GpuMode.kt` rule, Graphics setting, `ProotCommandBuilder` env blocks, tests | PENDING | |
+| 2 | `GpuMode.kt` rule, Graphics setting, `ProotCommandBuilder` env blocks, tests | PASS | `:app:test` 153 tests, 0 failures (host); new: `GpuModeTest` 10, `ProotCommandBuilderTest` 9 (5 new). Log `gradle-test-1.log` |
 | 3a | `start.sh` GPU block honours `OMDROID_GPU` (probe when unset) | PENDING | |
 | 3b | `launch-contract.md` GPU section | PENDING | |
 | 3c | `session-child.sh` one software retry on an early Hyprland exit (stretch) | PENDING | |
@@ -72,7 +72,20 @@ falls back to CPU compositing after a slow start. That file belongs to the image
 
 ## What changed
 
-(filled in as steps land)
+- `launch/GpuMode.kt` (new): `GpuMode` (`KGSL`, `SOFTWARE`) and `GpuModeRule`: `resolve(preference, kgslUsable)`,
+  `normalise`, `source` (`auto` or `setting`), and the one probe `isKgslUsable()` (`/dev/kgsl-3d0` exists, readable
+  and writable). The rule is pure; only `isKgslUsable` touches the file system.
+- `settings/PhoshdroidPreferences.kt`: `gpuMode` (key `gpu_mode`, default `auto`, unknown values read as `auto`).
+- `res/xml/preferences.xml` + `res/values/strings.xml`: a "Graphics" category with one list, Auto / Adreno GPU
+  (KGSL) / Software (slow, any phone). It takes effect at the next desktop start.
+- `proot/ProotCommandBuilder.kt`: `buildEnvironment(..., gpu, gpuSource)`. The KGSL entries are the old ones
+  unchanged; the software mode drops `VK_ICD_FILENAMES`, `FD_KGSL_ENABLE_DMABUF`, `HYPRLAND_ANDROID_DMABUF` and
+  adds `LIBGL_ALWAYS_SOFTWARE=1`, `GALLIUM_DRIVER=llvmpipe`, `MESA_LOADER_DRIVER_OVERRIDE=swrast`,
+  `OMARCHY_GPU_MODE=software`. Both modes add `OMDROID_GPU=<kgsl|software>` and `OMDROID_GPU_SOURCE=<auto|setting>`.
+  A caller that passes neither gets KGSL and source `setting`, so no guest fallback.
+- `proot/ProotDistroManager.kt`, `proot/ProotService.kt`: the service resolves the mode once per start, logs one line
+  (`gpu: preference=auto kgsl-usable=false -> software source=auto`, tag `Phoshdroid`) and passes it to the
+  session and the root broker.
 
 ## Host proof
 
