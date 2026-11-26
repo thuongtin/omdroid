@@ -28,12 +28,18 @@ point the switch at a scratch copy, OMDROID_ROOT is honoured by omdroid-ui.sh
 itself, and OMARCHY_WATCH_LOG moves the log out of /tmp. `switch_ui(mode)` is the
 entry point the dry run calls; with no Hyprland it applies the files and reports
 the shell restart as deferred.
+
+Hyprland is queried over its own request socket (`hypr/<signature>/.socket.sock`,
+`j/monitors` / `j/layers`), so a poll forks nothing; `hyprctl` stays only for the
+state-changing calls and as the fallback when the socket does not answer.
+OMDROID_WATCH_LEGACY=1 restores the forking path for the device A/B.
 """
 import ctypes
 import glob
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 
@@ -42,6 +48,7 @@ MARKER = os.path.join(RUNTIME, "omarchy-ready")
 LOG_PATH = os.environ.get("OMARCHY_WATCH_LOG", "/tmp/omarchy-watch.log")
 POLL = 0.25          # seconds between evaluations
 STABLE_S = 1.5       # a new monitor size must hold this long before we act
+LEGACY = os.environ.get("OMDROID_WATCH_LEGACY") == "1"  # old hyprctl-every-tick path
 RETRY_CAP = 3        # actions per monitor size, then give up loudly
 OMARCHY = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
 ACT = os.environ.get("OMARCHY_WATCH_ACT", "1") == "1"
@@ -120,6 +127,50 @@ def ctl(what, sig, timeout=5):
         return None
 
 
+def socket_request(what, sig, timeout=2.0):
+    """`j/<what>` on Hyprland's request socket: parsed JSON, or None.
+
+    Hyprland answers and closes the connection, so read to EOF. A missing
+    socket, a refused connect, a read timeout or a malformed answer returns
+    None, and the caller falls back to `hyprctl` for that call.
+    """
+    path = os.path.join(RUNTIME, "hypr", sig, ".socket.sock")
+    if not os.path.exists(path):
+        return None
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(path)
+        sock.sendall(("j/" + what).encode())
+        data = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    try:
+        return json.loads(data.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+
+
+def hypr(what, sig, timeout=2.0):
+    """`j/<what>` from Hyprland: the socket first, `hyprctl -j` as the fallback.
+
+    The fallback keeps a protocol surprise at the old behaviour (one hyprctl
+    fork for that query); OMDROID_WATCH_LEGACY=1 forces it for the device A/B.
+    """
+    if not LEGACY:
+        value = socket_request(what, sig, timeout)
+        if value is not None:
+            return value
+    return ctl(what, sig)
+
+
 def surface(it):
     """`WxH` of a layer surface dict, or `none`."""
     if not it:
@@ -127,9 +178,14 @@ def surface(it):
     return f"{it.get('w')}x{it.get('h')}"
 
 
-def evaluate():
-    """One snapshot. Returns a dict; `missing` names what is not there yet."""
-    root = xroot()
+def evaluate(root=None, hypr_data=None):
+    """One snapshot. Returns a dict; `missing` names what is not there yet.
+
+    `hypr_data` lets the caller reuse a query it already made; the default
+    queries Hyprland now.
+    """
+    if root is None:
+        root = xroot()
     if not root:
         return {"missing": "no X display"}
     rw, rh = root
@@ -137,15 +193,16 @@ def evaluate():
     sig = signature()
     if not sig:
         return {"missing": "no Hyprland instance dir"}
-    mons = ctl("monitors", sig)
+    if hypr_data is None:
+        hypr_data = (hypr("monitors", sig), hypr("layers", sig))
+    mons, layers = hypr_data
     if not isinstance(mons, list):
         return {"missing": "Hyprland IPC does not answer"}
     enabled = [m for m in mons if not m.get("disabled")]
     if len(enabled) != 1:
         return {"missing": f"{len(enabled)} enabled monitors"}
     m = enabled[0]
-    layers = ctl("layers", sig) or {}
-    levels = (layers.get(m.get("name"), {}) or {}).get("levels", {}) or {}
+    levels = ((layers or {}).get(m.get("name"), {}) or {}).get("levels", {}) or {}
     surf = {}
     for items in levels.values():
         for it in items or []:
