@@ -45,13 +45,15 @@ AUR_URL = "https://aur.archlinux.org/yay-bin.git"
 # `sudo` (the guest's sudo is the broker client). Everything here resolves
 # without touching an installed package, which is what keeps the desktop's
 # pinned libraries intact.
+# debugedit, groff and texinfo are deliberately absent: debugedit needs gdb, and
+# gdb and groff were 404 on the mirrors on a real run, while makepkg here runs
+# with !debug and nothing in a build needs the man-page tools.
 BUILD_TOOLS = [
     "archlinux-keyring",
     "autoconf",
     "automake",
     "binutils",
     "bison",
-    "debugedit",
     "fakeroot",
     "file",
     "findutils",
@@ -60,7 +62,6 @@ BUILD_TOOLS = [
     "gcc",
     "gettext",
     "grep",
-    "groff",
     "gzip",
     "libtool",
     "m4",
@@ -68,7 +69,6 @@ BUILD_TOOLS = [
     "patch",
     "pkgconf",
     "sed",
-    "texinfo",
     "which",
 ]
 
@@ -81,6 +81,24 @@ CONFLICT_MARKERS = (
 # pacman's own wording when a mirror does not carry a package the database
 # lists (Arch Linux ARM's DBs are built ahead of the mirrors now and then).
 FETCH_FAILED = re.compile(r"failed retrieving file '([^']+)'")
+
+# A mirror that cannot be reached at all is not a missing package: the mirrorlist
+# ships dead hosts (a real run failed on `Could not resolve host:
+# vn.mirror.archlinuxarm.org`), and retrying rotates to another server, while
+# skipping the package would silently drop a build tool.
+NETWORK_ERRORS = (
+    "Could not resolve host",
+    "invalid url for server",
+    "Resolving timed out",
+    "Connection timed out",
+    "Operation too slow",
+    "Failed to connect",
+    "Couldn't connect to server",
+)
+
+
+def network_failed(output):
+    return any(marker in output for marker in NETWORK_ERRORS)
 
 
 def cache_dir():
@@ -138,13 +156,26 @@ def exec_real(argv):
 
 
 def install_pacman(targets, log):
-    """Run one install; if a mirror cannot serve some package, skip just those."""
+    """Install targets; retry a mirror that could not be reached, and skip only
+    the packages a reachable mirror genuinely does not carry."""
     command = ["sudo", "pacman", "-S", "--needed", "--noconfirm"] + targets
-    code, output = run_step(command, log)
-    if code == 0:
-        return code, output
-    missing = unfetchable(output)
-    if missing:
+    output = ""
+    for attempt in range(3):
+        code, output = run_step(command, log)
+        if code == 0:
+            return code, output
+        # Only a failure with no 404 in it is a mirror worth retrying; a 404 is
+        # the same on every mirror, and the dead ones in the mirrorlist make
+        # `-Sy` print DNS errors beside it.
+        if not network_failed(output) or unfetchable(output):
+            break
+        sys.stderr.write(
+            "yay: a mirror could not be reached; trying another (attempt %d of 3)\n"
+            % (attempt + 1)
+        )
+        sys.stderr.flush()
+    missing = sorted(set(unfetchable(output)))
+    if missing and not network_failed(output):
         sys.stderr.write(
             "yay: the guest's mirrors do not carry %s right now; installing the rest\n"
             % ", ".join(missing)
@@ -154,9 +185,26 @@ def install_pacman(targets, log):
     return code, output
 
 
+def sync_databases(log):
+    """pacman -Sy, retried while the failure is an unreachable mirror."""
+    output = ""
+    for attempt in range(3):
+        code, output = run_step(["sudo", "pacman", "-Sy", "--noconfirm"], log)
+        if code == 0:
+            return code, output
+        if not network_failed(output):
+            return code, output
+        sys.stderr.write(
+            "yay: a mirror could not be reached; trying another (attempt %d of 3)\n"
+            % (attempt + 1)
+        )
+        sys.stderr.flush()
+    return code, output
+
+
 def install_build_environment(log):
     """Steps 1-3. Returns a failure line, or None."""
-    code, _ = run_step(["sudo", "pacman", "-Sy", "--noconfirm"], log)
+    code, _ = sync_databases(log)
     if code != 0:
         return "syncing the package databases failed (exit %d)" % code
 
@@ -165,16 +213,17 @@ def install_build_environment(log):
     code, output = install_pacman(["base-devel", "git"], log)
     if code == 0:
         return None
-    if not needs_a_system_upgrade(output):
-        return "installing base-devel failed (exit %d)" % code
+    if network_failed(output) and not unfetchable(output):
+        return "a package mirror could not be reached (exit %d)" % code
 
-    # The image is a snapshot: today's base-devel meta package wants a newer
-    # pacman and sudo, which this guest cannot take without upgrading its
-    # pinned base system. Install the tools themselves instead; nothing that is
-    # already installed is replaced.
+    # The image is a snapshot: today's base-devel meta package either wants a
+    # newer pacman and sudo, which this guest cannot take without upgrading its
+    # pinned base system, or pulls a tool the mirrors do not carry right now (a
+    # real run hit 404s for gdb through debugedit). Install the build tools
+    # themselves instead; nothing already installed is replaced.
     sys.stderr.write(
-        "yay: base-devel here would upgrade the guest's pacman and sudo; "
-        "installing the build tools directly, the guest's libraries stay as they are\n"
+        "yay: base-devel cannot be installed as one package here; installing the "
+        "build tools directly, the guest's libraries stay as they are\n"
     )
     sys.stderr.flush()
     code, _ = install_pacman(BUILD_TOOLS + ["git"], log)
