@@ -1,5 +1,15 @@
 # R7 dock device round: docking on the tablet (M1-M3)
 
+**Result:** on the fixed build (`omdroid-dock-final.apk`, tree `60fe8ef`) a live dock moves the
+running session to the simulated 1920x1080 display at its full size in ~5 s, an undock brings it
+back to the tablet in mobile UI, windows and PIDs survive five cycles, SUPER and typing reach the
+docked desktop. Four failures of the test2 build were fixed (F1-F4, plus F5 found in the code);
+one is open: a session keeps the UI scale it started with (F6).
+
+Builds: **test2** (`a239a8c5…`, installed 08:53) ran T0-T4 and the first T2/T3; **fix1** =
+**final** (`3b4166ab…`, tree `60fe8ef`, installed 09:15) ran T2b-T6 (`phase2.log`) and T2c/T3c/T8
+(`final.log`). Scratch logs and screenshots: `<scratch>/omarchy/r7/device/`.
+
 Brief: `docs/omarchy/brief-r7-dock-device.md` (with its AMENDMENT). Device: the Xiaomi tablet
 (serial passed in the launcher prompt, exported as `TABLET_SERIAL`, never written here).
 Scratch: `<scratch>/omarchy/r7/device/`.
@@ -10,20 +20,20 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | --- | --- | --- | --- |
 | T0 | Baseline: install test2, cold start, probe, undocked mobile, dock lines, touch, key capture, `sudo id` | **PASS** (dock baseline) / **FAIL** (`sudo id`, not this round's fix) | install sha `a239a8c5…12fc407a0` PASS; cold start handover +7.6 s, desktop PASS +8.0 s; `dock: undocked`; `wl_touch`; KeyInterceptor bound; `sudo id` -> `omdroid-rootd: peer is not this app` |
 | T1 | How a second display works on this tablet | **PASS** | `overlay_display_devices 1920x1080/160` -> display 2, `type OVERLAY`, `FLAG_PRESENTATION, FLAG_TRUSTED` (not PRIVATE), density 160; `activities_on_secondary_displays` present; `am start --display 2` Settings -> `Display #2` fullscreen; no other setting needed |
-| T2 | Dock (M1 + M2) | **FAIL** (geometry) / PASS (move, UI switch, no restart) | X activity MOVED to display 3 (same ActivityRecord, same task); `ui switch` +3.9 s; foot pid 7306 kept; but X root **1920x915** (165 px key-bar gap kept), Hyprland monitor **3200x1970** (start-time mode re-applied), `dock: ui mobile written (docked)` names the wrong mode |
-| T3 | Undock (M2) | **PASS** (one log FAIL, same as T2's FAIL 3) | X activity back on display 0 by itself (same ActivityRecord); xroot 3200x1971, monitor 3200x1970; mobile UI back; foot 7306 kept; desktop ready +13.1 s; log `dock: ui desktop written (undocked)` names the old mode |
-| T4 | Pin | **FAIL** (the guest ignores the pin) / PASS (host never writes) | `dock: ui desktop kept (pinned)` on dock and undock, `ui` untouched (`mobile`); but `pin=desktop` left the UI `mobile` undocked AND docked (5 omamobile plugins throughout); `auto` -> follows (nothing to switch) |
-| T5 | Repeat x5 | PENDING | |
-| T6 | Input while docked | PENDING | |
-| T7 | Fixes | IN PROGRESS | 4 root causes, 4 fixes: `3ed2f47`, `9ad4c2b` (+ termux-x11 `57790ca`), `60fe8ef`; gate `BUILD SUCCESSFUL`, `unit tests 100 failed 0`, lint 0 errors; APK `omdroid-dock-fix1.apk` sha256 `3b4166ab…20cf0c2`; device re-proof running |
-| T8 | Hand-off and cleanup | PENDING | |
+| T2 | Dock (M1 + M2) | test2: **FAIL** (F1 gap, F2 start-time mode, F3 log) / fix1: **PASS** | fix1 T2c: X activity MOVED to display 13 (same ActivityRecord), xroot = cage = monitor **1920x1080** (scale 2, logical 960x540), `x-view margins top=0 bottom=0 (display 13)`, `monitor fit 1920x1080 rc=0`, desktop UI, foot 10935 kept, switch +5.4 s, ready **+5.9 s** |
+| T3 | Undock (M2) | test2: **PASS** (+F3 log) / fix1: **PASS** | fix1 T3c: back on display 0 by itself, `x-view margins top=0 bottom=165 (built-in display)`, `dock: ui mobile written (undocked)`, xroot 3200x1971, mobile UI, foot kept, ready **+29.4 s** (one `omarchy-restart-shell rc=1`, recovered by the layer remedy) |
+| T4 | Pin | test2: **FAIL** (F4) / fix1: **PASS** | fix1: `pin=desktop` undocked -> desktop UI (0 omamobile); dock + undock pinned: `dock: ui desktop kept (pinned)` x2, `ui` stays `mobile`; `auto` -> mobile again |
+| T5 | Repeat x5 | fix1: **PASS** | 5/5 cycles: dock 4.1 / 4.2 / 5.0 / 5.1 / 2.8 s, undock 17.4 / 15.4 / 15.7 / 11.9 / 13.6 s; X activity on displays #7-#11 and back on #0 each time; foot 24331, cage, Hyprland same pids; 0 crash lines; 1/10 switches rate-limited -> queued (superseded 1 s later) |
+| T6 | Input while docked | fix1: **PASS** | uhid SUPER+Return: clients 1 -> 2 (foot 7882 on the docked monitor), typed `dockok` round trip, SUPER+W: 2 -> 1; keys via the accessibility KeyInterceptor (`MiuiInputKey: application accessibility handled this event,info=...KeyInterceptor`), capture API absent (SDK 36.0) |
+| T7 | Fixes | **PASS** (F1-F5) / **F6 open** | `3ed2f47`, `9ad4c2b` (+ termux-x11 `57790ca`), `60fe8ef`; gate BUILD SUCCESSFUL, `unit tests 100 failed 0`, lint 0 errors; re-proven on fix1 (T2c-T6). F6: a session keeps its start-time scale (root cause + proposed fix below) |
+| T8 | Hand-off and cleanup | **PASS** | overlay `null`, stay-awake `0`, desktop-mode `0`, freeform `0` read back; session undocked, mobile, display 0, probe PASS; final APK `omdroid-dock-final.apk` sha256 `3b4166ab…20cf0c2` |
 
 ## Settings changed on the tablet (restore list)
 
 | Setting | Recorded value | Set to | Restore command | Restored / read back |
 | --- | --- | --- | --- | --- |
-| `global overlay_display_devices` | `null` | `1920x1080/160` (T1-T6) | `adb -s $TABLET_SERIAL shell settings delete global overlay_display_devices` (it read `null`) | |
-| `global stay_on_while_plugged_in` | `0` | `2` | `adb -s $TABLET_SERIAL shell settings put global stay_on_while_plugged_in 0` | |
+| `global overlay_display_devices` | `null` | `1920x1080/160` (T1-T6) | `adb -s $TABLET_SERIAL shell settings delete global overlay_display_devices` (it read `null`) | deleted, reads `null`, 0 overlay displays |
+| `global stay_on_while_plugged_in` | `0` | `2` | `adb -s $TABLET_SERIAL shell settings put global stay_on_while_plugged_in 0` | reads `0` |
 
 ## Log
 
@@ -231,3 +241,170 @@ in 1m 7s (no OOM at 4 GB): `omdroid-dock-fix1.apk`, 1,715,760,502 B, sha256
 `3b4166ab6106ac08cd4c35d42fa9270c6aadf546ef1d6edf37bd1d46220cf0c2`, tree `60fe8ef` + Phil's
 uncommitted `gradle.properties` heap line; its `assets/guest-overlay` watcher and `omdroid-ui.sh`
 equal HEAD (`b8acadac…`, `ab6ae227…`).
+
+### Device re-proof on fix1 (09:15-09:24 UTC)
+
+Install: `pm install: Success`, base.apk sha256 `3b4166ab…20cf0c2`; the guest copies of
+`omarchy-watch.py` and `omdroid-ui.sh` equal HEAD after the cold start (`b8acadac…`, `ab6ae227…`).
+
+**Cold start while docked (unplanned: my F2 probe had left the simulated display on).**
+`dock: docked display=5 1920x1080@160`, `launch: ui desktop unchanged`, `launch: handover done
+display=5 on-target=true`, handover +5.9 s, desktop PASS +6.2 s: X root 1920x1080, monitor
+1920x1080 **scale 1** (UiScale from the display's 160 dpi), desktop UI. The `T2b` row of `phase2.log`
+therefore measured nothing (already docked); T2c below is the brief's flow.
+
+**T3b, undock of that docked-start session.** `x-view margins top=0 bottom=165 (built-in display)`
+(the docked launch's `phoshdroid_builtin_bottom_padding_px` at work), `dock: ui mobile written
+(undocked)` (F3 fixed), `monitor fit 3200x1970 rc=0` after the switch's reload had put the
+session's start-time 1920x1080 back (F2 fixed in reverse), mobile UI, probe PASS at +16.6 s - but
+at **scale 1**: logical 3200x1970, a 44 px bar on a 440 dpi screen (F6).
+
+**T4b, pin.** `pin=desktop` undocked: the watcher switched to desktop by itself (`ui switch` 09:17:50,
+scan 37 blocks / 0 omamobile) while `ui` still said `mobile` (F4 fixed). Dock and undock pinned:
+`dock: ui desktop kept (pinned)` both times, `ui` untouched, monitor fitted (`monitor 3200x1970 !=
+X root 1920x1080 (even-rounded): monitor fit 1920x1080 rc=0`), layers re-fitted, probe PASS at
+1920x1080 and 3200x1970. `pin=auto`: back to mobile (`ui switch` 09:19:08), PASS.
+
+**T5, five cycles** (`dock.py` = `settings put` to switch logged + probe PASS at the display's
+size; in the docked-start session, scale 1):
+
+| Cycle | Dock: switch / ready | X activity | Undock: switch / ready | X activity |
+| --- | --- | --- | --- | --- |
+| 1 | 3.8 / 4.1 s | display #7 | 0.1 / 17.4 s | #0 |
+| 2 | 3.9 / 4.2 s | #8 | 0.1 / 15.4 s | #0 |
+| 3 | 4.7 / 5.0 s | #9 | 15.5 / 15.7 s | #0 |
+| 4 | 4.8 / 5.1 s | #10 | 9.5 / 11.9 s | #0 |
+| 5 | 2.5 / 2.8 s | #11 | 11.1 / 13.6 s | #0 |
+
+After the five: foot **24331** (same pid as before T3b), cage 23840 / Hyprland 23841 unchanged,
+`ui=mobile`, 5 omamobile, probe PASS. Crash lines in logcat (`FATAL EXCEPTION|Fatal signal|F
+DEBUG|ANR in com.phoshdroid`): **0**. Each undock logged one `monitor fit 3200x1970` (the reload
+put the start-time mode back) and no `giving up`. Rate limit: cycle 5's dock hit it
+(`09:20:33 ui switch: ... shell restart rate limited (6 per 60 s, 2 s apart), queued`); the mobile
+shell stayed up for ~1 s until the next undock's own restart superseded the queue, so the final UI
+was right. The queued restart itself running was not observed on the device (F5's path).
+
+**T6, input while docked** (display #12; focus `mCurrentFocus=Window{... com.phoshdroid.app/
+com.termux.x11.MainActivity}`; uhid keyboard from `mkhid.py`):
+- SUPER+Return: LorieNative `Sending key: 133 (125 0 1)`, `36 (28 0 1)` -> `clients 1: foot pid=24331`
+  -> `clients 2: ..., foot pid=7882 mon=0` (the docked monitor is Hyprland's only monitor).
+- Typing `echo dockok > /tmp/typed-dock.txt` + Enter: 70 key events, the file reads `dockok`.
+- SUPER+W: `133` + `25 (17 0 1)` -> `clients 1: foot pid=24331`.
+- Path: `MiuiInputKey: application accessibility handled this event,info=com.phoshdroid.app/
+  com.termux.x11.utils.KeyInterceptor` - the accessibility interceptor, because this tablet is
+  SDK 36.0 (`KeyboardCapture: keyboard capture API absent (needs Android 16.1+)`).
+- Touch on the simulated display is not meaningful (its overlay is drawn on the tablet screen and
+  takes no input of its own): not tested.
+
+### T2c / T3c in the brief's flow (fix1, 09:23 UTC)
+
+Undocked cold start: handover +11.1 s, desktop PASS +10.5 s, scale 2, mobile; one `foot` (10935).
+- Dock: `dock: docked display=13 1920x1080@160 kbd=0 mouse=1 (change)`, **`dock: ui desktop
+  written (docked)`**, `dock: session asked onto display 13`, **`x-view margins top=0 bottom=0
+  (display 13)`**; watcher `ui switch: omdroid-ui rc=0; plugin-index rc=0; monitor fit 1920x1080
+  rc=0; omarchy-restart-shell rc=0; ...; hyprctl reload config-only rc=0`, then once more `monitor
+  3200x1970 != X root 1920x1080 (even-rounded): monitor fit 1920x1080 rc=0, attempt 1/3` (the
+  autoreload landed after the first fit). **Switch +5.4 s, ready +5.9 s.** X activity: `Display #13
+  ... ActivityRecord{56085350 ... t4459}` - the same record as on display 0: moved. xroot
+  **1920x1080** = cage 1920x1080 = monitor 1920x1080 scale 2 (logical 960x540), bar 26, 0 omamobile,
+  foot 10935, cage 10286 / Hyprland 10289 unchanged, probe PASS.
+  `shots/t2c-dock-d2.png`: the stock desktop fills the whole 1920x1080 display - bar with workspaces
+  1-5, `Thursday 09:23` centred and the tray at the right edge, the terminal framed inside the
+  screen, no black band, nothing cropped (at scale 2 everything is large).
+- Undock: `x-view margins top=0 bottom=165 (built-in display)`, `dock: undocked (change)`, **`dock:
+  ui mobile written (undocked)`**; a transient `monitor fit 3200x914` (the X root was 3200x915 for
+  a moment while the window re-laid out on display 0), then the switch, whose
+  `omarchy-restart-shell` returned **rc=1** (`layers still do not fit 8 s after the restart`); the
+  layer remedy restarted the shell 2 s later and `layers fit again 6.0 s after the restart`.
+  **Ready +29.4 s.** X activity back on display #0 (same record), xroot 3200x1971, monitor
+  3200x1970 scale 2, mobile layers, foot 10935, probe PASS. `shots/t3c-undock-tablet.png`: the
+  mobile bar (`09:24`), the terminal maximised, the home pill and the two-row extra-key bar at the
+  bottom, filling the screen.
+- Crash lines: 0.
+
+### F6 (open): a running session keeps the UI scale it started with
+
+Measured: started undocked (scale 2) and docked, the 1920x1080 display gets a 960x540 desktop;
+started docked (scale 1) and undocked, the tablet runs the mobile UI at scale 1 (logical
+3200x1970). Root cause: the scale is decided once - the launcher's `UiScale` result reaches the
+guest as `OMARCHY_SCALE` at session start, `monitors.lua` uses it - and nothing carries a new
+scale on a live display change. Proposed fix (not made this round: call budget): the dock monitor
+resolves `UiScale` for the new display and writes it beside the mode file; the watcher reads it and
+passes it as `scale` to the same runtime `hl.monitor` rule (which already takes a scale), and its
+layer remedy restarts the shell. That is a contract §8 change (a new host-owned file).
+
+### T8. Hand-off and cleanup (09:24 UTC)
+
+- `settings delete global overlay_display_devices` -> reads `null` (as recorded), 0 overlay
+  displays; `stay_on_while_plugged_in` -> `0`; `force_desktop_mode_on_external_displays=0`,
+  `enable_freeform_support=0` (never changed), `force_resizable_activities=1` (as found).
+  `screen.sh` was not used.
+- Session left running undocked: X activity on display #0, `ui=mobile pin=auto`, 5 omamobile,
+  xroot 3200x1971, monitor 3200x1970 scale 2, **`VERDICT: PASS`**.
+- Final APK: `<scratch>/omarchy/r7/device/omdroid-dock-final.apk` (= fix1),
+  1,715,760,502 B, sha256 `3b4166ab6106ac08cd4c35d42fa9270c6aadf546ef1d6edf37bd1d46220cf0c2`,
+  built from `60fe8ef` (only Phil's uncommitted `gradle.properties` heap line beside it).
+- Docs: launch contract §8 (the pin in the guest, the monitor fit and `reload config-only`, the
+  view margins, the new log lines) and README "Docking" (proven on the tablet, the scale limit).
+
+## Manual test for Phil (Galaxy Z Fold8 + real monitor)
+
+1. Install `omdroid-dock-final.apk` (sha256 `3b4166ab…20cf0c2`) over 0.0.15 - an update, the guest
+   stays. Open Omdroid unplugged: the mobile desktop (bar, home pill, extra-key bar).
+2. Open a terminal and run `seq 300; echo before-dock`. Leave it open.
+3. Plug the monitor (USB-C to HDMI/DP) with DeX set to **Extend** (Settings > Connected devices >
+   Samsung DeX > Connected display). Within ~6 s the desktop should be on the monitor, full screen,
+   no black band at the bottom: thin top bar with workspaces 1-5 and the clock, no home pill, no
+   extra-key bar; the same terminal. The phone shows Android. If the desktop stays on the phone,
+   open Omdroid from the monitor's taskbar instead and note it.
+4. Expect a large UI on a 1080p monitor (the session keeps the phone's scale 2, F6). Note the
+   monitor's size and the `dock: docked display=N WxH@dpi` line.
+5. Keyboard: SUPER+Return opens a terminal on the monitor; type `echo kbd-ok`; SUPER+W closes it.
+   SUPER alone must not open the DeX start menu or the app drawer.
+6. Mouse: move over the desktop; left click on workspace 2 in the bar (switches); right click on
+   the terminal; wheel in the terminal scrolls back through the `seq` output.
+7. Unplug with the terminal open. Within ~30 s Omdroid shows the mobile UI on the phone (bar, home
+   pill, extra-key bar, no black band); the terminal still shows `before-dock`.
+8. Plug again: back on the monitor, same terminal.
+9. With DeX set to **Screen mirroring** (if One UI offers it): the phone is mirrored and Omdroid
+   stays in mobile UI (`dock: undocked` - a mirror is not a second display).
+10. Pin: in a terminal `echo desktop > ~/.config/omdroid/ui-pin` - the phone switches to the stock
+    desktop UI within a few seconds; unplug/plug keeps it; `echo auto > ~/.config/omdroid/ui-pin`
+    follows the dock again.
+11. Started docked: force-stop Omdroid, plug the monitor, open Omdroid (from the monitor or the
+    phone): the desktop comes up on the monitor at its own scale; unplug - expect the mobile UI at
+    scale 1 (tiny, F6) and no black band; reopen Omdroid after a force-stop to get scale 2 back.
+12. Logs to send: `adb logcat -s Phoshdroid:* KeyboardCapture:* | grep -E 'dock:|x-view|handover|keyboard capture'`
+    (expect `dock: docked display=N ...`, `dock: ui desktop written (docked)`, `dock: session asked
+    onto display N`, `x-view margins top=0 bottom=0 (display N)`; on unplug `dock: undocked`,
+    `dock: ui mobile written (undocked)`, `x-view margins ... (built-in display)`; on Android 16.1+
+    `keyboard capture on`), and from a terminal `cat /tmp/omarchy-watch.log` (`ui mode mobile ->
+    desktop`, `ui switch: ...`, `monitor fit ...`).
+
+## Risks still open
+
+- **F6, scale:** a live dock keeps the start-time scale (phone 2 -> a 1080p monitor gets 960x540
+  logical); a session started docked keeps scale 1 on the phone after unplug.
+- The monitor fit reacts to the X root as soon as it differs, so a transient size during a move
+  can be fitted first (`monitor fit 3200x914` in T3c) and one shell restart can fail (`rc=1`); the
+  watcher recovered both times (layer remedy, Hyprland following cage), at the cost of an undock
+  taking up to ~30 s.
+- The undock switch is slow (12-29 s against 3-6 s for a dock): the mobile direction's
+  `omdroid-ui.sh` plus plugin index dominate.
+- A queued, rate-limited shell restart (F5) was seen queuing but not running on the device.
+- Samsung's desktop-mode display may be `FLAG_PRIVATE` (then no move: `dock: ... private`, open
+  Omdroid on the monitor), and `keep_process_alive=true` may not be honoured by Android 16 DeX.
+- If the X activity is not alive when a monitor appears (session in the background), the dock
+  monitor's re-launch carries no built-in gap, so after unplug the extra-key bar can overlap the
+  desktop's bottom until the next launch.
+- `sudo` refuses every client on the device (T0, `refused peer uid 10323, accepts [0]`) - the
+  sibling round's fix did not take under the device proot.
+
+## Not verified
+
+Only the phone and a real monitor can show: Samsung DeX (Extend and mirror), whether One UI moves
+the running window (it MOVED here, on HyperOS's simulated display) or needs it opened on the
+monitor, `keep_process_alive` across an unplug, a real mouse (left/right click, wheel - injection
+cannot carry buttons), the monitor's density and DeX's density override, HDMI hot-plug timing,
+Android 16.1's keyboard-capture API (this tablet is 36.0), a 4K or ultrawide monitor, and audio
+over the monitor.

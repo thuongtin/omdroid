@@ -141,12 +141,20 @@ echo mobile  > ~/.config/omdroid/ui-pin   # keep the phone UI, even on the monit
 echo auto    > ~/.config/omdroid/ui-pin   # follow the dock again
 ```
 
-`omdroid-ui.sh` keeps reading only `ui`, so the guest needed no change for the pin.
+The guest applies the pin itself: `omdroid-ui.sh` and `omarchy-watch.py` use `ui-pin` while it
+names a mode and `ui` otherwise. (Until the r7 device round the guest read only `ui`, so a desktop
+pin written while `ui` said `mobile` changed nothing.)
 
-**The live switch.** `omarchy-watch.py` polls `ui` (every 0.25 s). On a change it runs
-`omdroid-ui.sh`, rebuilds the plugin index the shell reads at start, restarts only the shell (the
-same rate-limited path a size change already used) and, when the monitor already equals the X root,
-reloads Hyprland's config for the `looknfeel.lua` half. Windows survive; the session, the X server
+**The live switch.** `omarchy-watch.py` polls `ui-pin` and `ui` (every 0.25 s). On a change of
+the mode they give it runs `omdroid-ui.sh`, rebuilds the plugin index the shell reads at start, puts
+the Hyprland monitor back on the even-rounded X root if a config reload moved it, restarts only the
+shell (the same rate-limited path a size change uses; a restart the limit refuses is queued, never
+dropped) and runs `hyprctl reload config-only` for the `looknfeel.lua` half. A full reload is never
+used: `monitors.lua` builds its mode from the session-start size, so any full reload - including
+the one Hyprland does by itself when `omdroid-ui.sh` edits `looknfeel.lua` - puts that size back.
+After `ready` the watcher therefore keeps the monitor equal to the X root with a runtime rule
+(`hyprctl eval 'hl.monitor({ output = "", mode = "<W>x<H>@<Hz>", position = "auto", scale = <current>,
+transform = 0 })'`) whenever the two differ for 1.5 s. Windows survive; the session, the X server
 and their PIDs are untouched. An older guest image applies a mode change at the next session start
 instead — same file, one start later.
 
@@ -164,7 +172,11 @@ affordance, and its height comes straight out of the X root), and the X activity
 plus `LayoutParams.setKeyboardCaptureEnabled(true)` by reflection, because neither is in the
 compileSdk 35 SDK — so Meta reaches Hyprland instead of opening the system's own shortcut. On a
 platform without it the reflection logs once and Termux:X11's accessibility `KeyInterceptor` stays
-the key path. Undocked: the bar and its gap come back.
+the key path. Undocked: the bar and its gap come back. The X view's margins (the launcher's
+`phoshdroid_top_padding_px` / `phoshdroid_bottom_padding_px`, i.e. the extra-key bar's gap) apply
+only while the X activity is on the built-in display; on any other display the view fills the
+window, so the X root equals the monitor. A launch made while docked also passes
+`phoshdroid_builtin_bottom_padding_px`, the built-in display's gap, for the way back.
 
 **Surviving the unplug.** The `termux-x11` submodule manifest sets
 `com.samsung.android.multidisplay.keep_process_alive=true`: the in-process X server and the proot
@@ -176,6 +188,8 @@ Unplugged, Android migrates the window to the built-in display, the guest switch
 `dock: docked display=2 1920x1080@213 kbd=1 mouse=1` (a private target adds ` private`; `kbd` and
 `mouse` are 1 when Android sees a physical keyboard/mouse), and `dock: undocked`. A dock change
 that writes the mode file also logs `dock: ui desktop written (docked)`, and a launch that goes to
-a monitor logs `launch: handover done display=2 on-target=true`. Guest side,
-`/tmp/omarchy-watch.log` gets `ui mode mobile -> desktop` and
-`ui switch: omdroid-ui rc=0; plugin-index rc=0; …`.
+a monitor logs `launch: handover done display=2 on-target=true`. A display move logs
+`x-view margins top=0 bottom=0 (display 2)` (and `... (built-in display)` on the way back). Guest
+side, `/tmp/omarchy-watch.log` gets `ui mode mobile -> desktop` and
+`ui switch: omdroid-ui rc=0; plugin-index rc=0; …`, plus `monitor fit <W>x<H> rc=0` when a config
+reload had moved the monitor.

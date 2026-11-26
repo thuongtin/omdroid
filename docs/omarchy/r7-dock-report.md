@@ -1,6 +1,6 @@
 # R7 dock build report (host code round, no device)
 
-Status: IN PROGRESS. Worker: one session, no subagents, no adb, no APK build.
+Status: DONE (code round); the device round's results are in `docs/omarchy/r7-dock-device-report.md`. Worker: one session, no subagents, no adb, no APK build.
 Round: brief `docs/omarchy/brief-r7-dock-build.md`; research `docs/omarchy/r7-dock-research.md`.
 Scratch: `<scratch>/omarchy/r7/dock/`.
 
@@ -306,16 +306,18 @@ one-line fix in that older paragraph belongs to whoever merges.
 
 ### D6. Gate
 
-PENDING
+Parent gate on `7a2d54f`, recorded in the status table row D6. The device round re-ran the gate on
+its fixes (`60fe8ef`: BUILD SUCCESSFUL, `unit tests 100 failed 0`, lint 0 errors): device report, T7.
 
 ## Manual test for Phil
 
-PENDING
+Written from measured results in `docs/omarchy/r7-dock-device-report.md`, section "Manual test for
+Phil (Galaxy Z Fold8 + real monitor)".
 
 ## Risks still open
 
-PENDING
+See `docs/omarchy/r7-dock-device-report.md`, "Risks still open" (scale F6 first).
 
 ## Not verified
 
-PENDING
+See `docs/omarchy/r7-dock-device-report.md`, "Not verified".

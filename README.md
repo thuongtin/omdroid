@@ -180,10 +180,15 @@ a file the shell re-reads in place.
   `echo mobile > ~/.config/omdroid/ui-pin` keeps the phone UI on the monitor. `echo auto >` (or
   deleting the file) follows the dock again. `~/.config/omdroid/ui` itself is host-owned while the
   pin is `auto`.
-- **Not proven yet.** Whether the running window really moves to the monitor instead of merely
-  coming to the front on the phone, whether unplug survives Samsung's teardown, and whether an
-  Android build without the keyboard-capture API still delivers Meta through the accessibility
-  service. Those are the dock round's device items; `docs/omarchy/r7-dock-report.md` has the log
+- **Proven on the tablet's simulated display** (`docs/omarchy/r7-dock-device-report.md`): the
+  running window moves to the display and back with the session, its windows and its PIDs
+  untouched, the desktop takes the display's full size, and SUPER reaches the guest through the
+  accessibility service on an Android without the keyboard-capture API.
+- **Not proven yet.** A real monitor, Samsung DeX and whether unplug survives Samsung's teardown;
+  only the phone can show those.
+- **Known limit.** A running session keeps the UI scale it started with: docked from the phone it
+  stays at scale 2 (a 1080p monitor gets a 960x540 desktop), and a session started on the monitor
+  keeps scale 1 after unplug (a tiny phone UI until Omdroid is restarted). Those are the dock round's device items; `docs/omarchy/r7-dock-report.md` has the log
   lines to check and what each one means.
 
 The interface between the app and the guest (the mode file, the pin, the log lines) is in
