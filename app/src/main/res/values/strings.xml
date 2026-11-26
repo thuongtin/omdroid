@@ -3,6 +3,7 @@
     <string name="app_name">Omdroid</string>
     <string name="notification_title">Omarchy desktop is running</string>
     <string name="notification_text">Hyprland session active</string>
+    <string name="notification_limits_short">Android may stop desktop apps. Expand for the fix.</string>
     <string name="action_settings">Settings</string>
     <string name="action_stop">Stop</string>
     <string name="extracting_termux">Extracting Termux environment\u2026</string>

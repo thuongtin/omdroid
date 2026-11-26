@@ -38,6 +38,12 @@
 
     <PreferenceCategory app:title="Advanced">
         <SwitchPreferenceCompat
+            app:key="phantom_limit_fix"
+            app:title="Lift Android's child-process limit"
+            app:summary="Stops Android 12+ from killing desktop apps past 32 background processes. Needs the one-time adb grant from install.sh, otherwise the notification shows the command"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
             app:key="show_terminal"
             app:title="Show Terminal Panel"
             app:summary="Pull-up terminal for shell access inside proot"

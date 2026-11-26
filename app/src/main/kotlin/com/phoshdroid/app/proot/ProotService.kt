@@ -15,6 +15,8 @@ import com.phoshdroid.app.PhoshdroidApp
 import com.phoshdroid.app.R
 import com.phoshdroid.app.launch.GpuMode
 import com.phoshdroid.app.launch.GpuModeRule
+import com.phoshdroid.app.launch.MemorySignals
+import com.phoshdroid.app.launch.ProcessLimits
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import java.io.File
@@ -38,6 +40,10 @@ class ProotService : Service() {
     private var bindSdcard = true
     private var gpu = GpuMode.KGSL
     private var gpuSource = GpuModeRule.SOURCE_SETTING
+
+    // Set when Android's child-process limit is on and this app cannot lift it: the foreground
+    // notification then carries the adb command (ProcessLimits.instruction).
+    private var limitsNote: String? = null
 
     private val prefixDir get() = "${applicationContext.filesDir}/usr"
 
@@ -113,12 +119,29 @@ class ProotService : Service() {
             "gpu: preference=$gpuPreference kgsl-usable=$kgslUsable -> ${gpu.value} source=$gpuSource",
         )
 
+        // Android 12+ kills a session's child processes past a limit; lift it when the grant allows, else
+        // say so in the notification. One log line per start, whatever happened.
+        val limits = ProcessLimits.apply(this, prefs.phantomLimitFix)
+        limitsNote = limits.userNote
+        android.util.Log.i("Phoshdroid", "limits: ${limits.log}")
+
         startForeground(NOTIFICATION_ID, buildNotification())
         startSession()
         return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // Log-only: whether Android ever asks this process to give memory back is a device-round question.
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        android.util.Log.i("Phoshdroid", "memory: onTrimMemory ${MemorySignals.trimLevelName(level)} ($level)")
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        android.util.Log.i("Phoshdroid", "memory: onLowMemory")
+    }
 
     override fun onDestroy() {
         stopSession()
@@ -393,16 +416,22 @@ class ProotService : Service() {
                 PendingIntent.FLAG_IMMUTABLE,
             )
 
-        return NotificationCompat
-            .Builder(this, PhoshdroidApp.CHANNEL_ID)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
-            .setContentIntent(contentIntent)
-            .setOngoing(true)
-            .addAction(0, getString(R.string.action_settings), settingsIntent)
-            .addAction(0, getString(R.string.action_stop), stopIntent)
-            .build()
+        val builder =
+            NotificationCompat
+                .Builder(this, PhoshdroidApp.CHANNEL_ID)
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_text))
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setContentIntent(contentIntent)
+                .setOngoing(true)
+                .addAction(0, getString(R.string.action_settings), settingsIntent)
+                .addAction(0, getString(R.string.action_stop), stopIntent)
+        limitsNote?.let { note ->
+            builder
+                .setContentText(getString(R.string.notification_limits_short))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(note))
+        }
+        return builder.build()
     }
 
     companion object {

@@ -12,9 +12,9 @@ device claim below is **PENDING** and comes with the command the parent runs.
 | 3a | `start.sh` GPU block honours `OMDROID_GPU` (probe when unset) | PASS | `bash -n` ok; `GuestGpuScriptsTest` 7 block tests run the real block in bash and compare with the host env (host). Positive control: breaking two lines of the block failed 3 tests; restored (sha256 equal) |
 | 3b | `launch-contract.md` GPU section | PASS | section 9 added (plus the `gpu:` log lines in section 6); same commit as 3a/3c |
 | 3c | `session-child.sh` one software retry on an early Hyprland exit (stretch) | PASS (host, fake Hyprland) | `GuestGpuScriptsTest` 7 fallback tests: retry, no retry on success / user choice / switch off / past the window, exit codes kept, exec path unchanged. `:app:test` 167 tests, 0 failures. Real Hyprland: PENDING (device) |
-| 4 | Phantom process killer: `ProcessLimits.kt` + hook in `ProotService` | PENDING | |
-| 5 | `onTrimMemory` / `onLowMemory` logging in `ProotService` | PENDING | |
-| Gate | `:app:test`, `:app:lintDebug` | PENDING | |
+| 4 | Phantom process killer: `ProcessLimits.kt` + hook in `ProotService` | PASS (host decision table); device PENDING | `ProcessLimitsTest` 9 tests (decision table over SDK 28-36 x setting x grant); mechanism read from AOSP, section below. Writing and the notification: device PENDING |
+| 5 | `onTrimMemory` / `onLowMemory` logging in `ProotService` | PASS (name table, host); device PENDING | `MemorySignals.trimLevelName` tested for the seven levels; steps 4 and 5 share one commit because both edit `ProotService` |
+| Gate | `:app:test`, `:app:lintDebug` | PASS (host) | `:app:test` 176 tests, 0 failures, `:app:lintDebug` 0 errors, 17 warnings, none new against the parent's `main` report (its 32 include 15 network version-check warnings this offline run cannot make). Log `gradle-test-3.log` |
 
 ## Step 1: facts (host, measured on the 0.0.17 image unless marked read)
 
@@ -102,6 +102,57 @@ falls back to CPU compositing after a slow start. That file belongs to the image
   rule, the fallback, how it meets `SessionExit`, logs, what is not shipped).
 - `app/src/test/.../launch/GuestGpuScriptsTest.kt`: runs both scripts in bash with a clean environment, a
   temporary runtime dir, a fake Hyprland and a fake `pkill` (the real one would hit the machine running the tests).
+
+- `launch/ProcessLimits.kt` (new): the pure rule `decide(sdkInt, reading, canWriteSecureSettings)` ->
+  `NOTHING_TO_DO` / `DISABLE` / `TELL_USER`, and `apply(context, enabled)` that reads `Settings.Global`, writes
+  `settings_enable_monitor_phantom_procs=false` and reads it back (every read and write inside a `try`, a
+  refused or non-sticking write becomes `TELL_USER`). It logs one line per start (tag `Phoshdroid`,
+  `limits: phantom-procs sdk=34 setting=unset write-secure-settings=true -> wrote settings_enable_monitor_phantom_procs=false`).
+  Same pattern as `KeyCapture`: `WRITE_SECURE_SETTINGS` is checked with `checkSelfPermission`, no new manifest line.
+- `proot/ProotService.kt`: calls `ProcessLimits.apply` in `onStartCommand` before `startForeground`. For
+  `TELL_USER` the foreground notification's text becomes "Android may stop desktop apps. Expand for the fix."
+  with the full instruction (the adb command) in its expanded `BigTextStyle`. It is the least intrusive place
+  that a person sees: the notification is already there for the whole session, no second channel, no
+  dismissal state to keep. It also overrides `onTrimMemory` and `onLowMemory` (log only, tag `Phoshdroid`,
+  `memory: onTrimMemory TRIM_MEMORY_RUNNING_LOW (10)`, `memory: onLowMemory`).
+- `settings/PhoshdroidPreferences.kt`, `res/xml/preferences.xml`: `phantom_limit_fix` (default on), the way
+  back for a user who does not want the app to write a system setting.
+
+## The phantom process killer: mechanism and what the app can do (read: AOSP, fetched for this round)
+
+- **The count.** `PhantomProcessList.trimPhantomProcessesIfNecessary()`
+  (`services/core/java/com/android/server/am/PhantomProcessList.java`, line 421 in `android12-release`, 424 in
+  `android12L-release` and later): if `ActivityManagerConstants.MAX_PHANTOM_PROCESSES` (`max_phantom_processes`
+  in DeviceConfig namespace `activity_manager`, default `DEFAULT_MAX_PHANTOM_PROCESSES = 32`, all apps together)
+  is below the number of phantom processes, it sorts them by the parent's `curAdj` (then youngest first) and
+  kills the surplus with the reason "Trimming phantom processes".
+- **The CPU trigger.** `ActivityManagerService.checkExcessivePowerUsage()` (line 14237 in `android12-release`)
+  also walks `mPhantomProcessList.forEachPhantomProcessOfApp` and kills a phantom process "excessive cpu" when
+  its CPU use over the check interval passes the app's limit (`POWER_CHECK_MAX_CPU_1..4`); it only applies to
+  apps whose process state is `PROCESS_STATE_HOME` or worse, so a visible app is not hit by it.
+- **Android 12 (API 31) before QPR3: no switch.** `android12-release`, `android12-qpr1-release`,
+  `android12-qpr2-release`: `PhantomProcessList.java` has no reference to the flag, both kills are unconditional.
+  The only knob is `device_config put activity_manager max_phantom_processes <n>` (needs `WRITE_DEVICE_CONFIG`,
+  so adb). **From `android12-qpr3-release`, `android12L-release` (API 32) and every later release** both kills
+  return early unless `FeatureFlagUtils.isEnabled(context, SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS)`
+  (`PhantomProcessList.java:424-427` and `ActivityManagerService.java:14282-14287` in `android12L-release`; the
+  same in `android14-release` and `android16-release`). The flag name is `settings_enable_monitor_phantom_procs`.
+- **How the flag resolves** (`core/java/android/util/FeatureFlagUtils.java`, `isEnabled`, identical in
+  `android12L-release`, `android14-release`, `android16-release`): `Settings.Global.getString` first; if it is
+  non-empty, `Boolean.parseBoolean` decides (so `0` also means off); else the system property
+  `persist.sys.fflag.override.<flag>`; else the default `true`. An app cannot read the property reliably, so an
+  unset global is treated as "monitor on".
+- **Why the global setting, not the Developer options toggle.** Android 14+ "Disable child process restrictions"
+  writes the property (`FeatureFlagUtils.setEnabled`) and resets it when Developer options are switched off
+  (per the AOSP Settings change cited by agnostic-apollo's documentation, secondary source); a `Settings.Global`
+  value wins over the property and stays. Phil's tablet has the property set by hand
+  (`docs/omarchy/ARCHITECTURE.md:49-50`), so there the global reads `unset` and the app will write it once.
+- **What the app can do.** With `WRITE_SECURE_SETTINGS`, `Settings.Global.putString` works for this key
+  (a public API behind that permission). Without it: nothing but telling the user. On API 31 the write may
+  be a no-op on a build before QPR3 (no reader of the flag); the app cannot tell the builds apart, so the
+  note on API 31 also carries the `device_config` commands.
+- Not tested on a device: that the write sticks, that Android then stops killing, and what the notification
+  looks like.
 
 ## Host proof
 
