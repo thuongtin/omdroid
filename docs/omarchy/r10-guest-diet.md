@@ -12,7 +12,7 @@ PASS looks like.
 | 1 | Hyprland queries over the IPC socket, not `hyprctl` forks | PASS (host) | `watch-ipc-test.py` checks (i) socket and `hyprctl` return the same snapshot and (v) the fallback answers with the socket removed; `7a32550` |
 | 2 | Poll Hyprland only when something can have changed | PASS (host) | check (ii) 0 subprocesses in 120 ticks over 30 s, (iii) 15 rounds / 30 s = 0.50/s (limit 0.50), (iv) 0.00 s after a root change, (vi) marker at 0.25 s; positive control 16 forks in 2 s on the legacy path; `b5d6e1e`, `014ec35` |
 | 3 | Host test harness `docs/omarchy/tools/watch-ipc-test.py` | PASS (host) | `python3 docs/omarchy/tools/watch-ipc-test.py` -> `VERDICT: PASS (6/6 checks)`, exit 0; watcher also passes `python3 -m py_compile` |
-| 4 | Session environment knobs in `start.sh` (arenas, shader cache, `session.env`) | PENDING | |
+| 4 | Session environment knobs in `start.sh` (arenas, shader cache, `session.env`) | PASS (host) | `bash docs/omarchy/tools/session-env-test.sh` -> 9 PASS, `VERDICT: PASS`; block at line 121, watcher at 144; `e941011` |
 | 5 | No Hyprland animations in the mobile UI | PENDING | |
 | 6 | voxtype only when a model exists | PENDING | |
 
@@ -61,6 +61,27 @@ answers `j/monitors` and `j/layers` with JSON shaped like Hyprland 0.56.2's
 `xroot()` monkeypatched and `time` simulated (one tick = one `sleep(0.25)`), and
 `subprocess.run`/`Popen` plus the socket server are counted.
 
+### Step 4: session environment knobs
+
+`rootfs/overlay/etc/phoshdroid/start.sh:120-138` (one block, between the stale
+ready-marker removal and the watcher launch; the GPU block is untouched)
+
+- `export MALLOC_ARENA_MAX=2`: caps the glibc per-thread arenas. COMMON.md
+  correction 3 applies: glibc sizes its arena count from the kernel CPU count,
+  not the fake `cpuinfo`, so the saving is a device measurement and no number is
+  quoted here.
+- `export MESA_SHADER_CACHE_MAX_SIZE=128M`: the default allows 1 GB of shader
+  cache in the guest home.
+- No `MALLOC_MMAP_THRESHOLD_` / `MALLOC_TRIM_THRESHOLD_`: both change the glibc
+  syscall pattern and every syscall is costlier under proot.
+- Then `$HOME/.config/omdroid/session.env`, when present: `set -a`, source,
+  `set +a`, so any plain `key=value` line there overrides the defaults above
+  (`MALLOC_ARENA_MAX=` drops the cap, `OMDROID_ANIMATIONS=1`,
+  `OMDROID_VOXTYPE=1`, `OMDROID_WATCH_LEGACY=1`, `OMDROID_WATCH_HEARTBEAT=1.0`).
+  One line naming the file goes to the session log when it is read.
+- `omdroid-ui.sh` sources the same file for the two switches it owns, because it
+  runs at `start.sh:87`, before this block (see step 5).
+
 ## Host proof
 
 ```
@@ -80,6 +101,20 @@ rc=0
 Before the change the same cadence was 8 `hyprctl` forks per second (the
 positive control above measures 8 per second through the legacy switch on this
 harness).
+
+```
+$ bash docs/omarchy/tools/session-env-test.sh
+PASS bash -n start.sh
+PASS session environment block found (19 lines)
+PASS no MALLOC_MMAP_THRESHOLD_ / MALLOC_TRIM_THRESHOLD_
+PASS block at line 121, watcher at 144, GPU block at 47
+PASS default MALLOC_ARENA_MAX|MESA_SHADER_CACHE_MAX_SIZE|legacy|animations (values:2|128M||)
+PASS no session.env: nothing sourced, no log line
+PASS session.env overrides arenas and switches (values:4|128M|1|1)
+PASS the read file is named in the session log line
+PASS an empty MALLOC_ARENA_MAX drops the cap (values:|128M||)
+VERDICT: PASS
+```
 
 ## Device A/B plan (the parent runs it)
 
