@@ -1,0 +1,126 @@
+From fd1a8641947fd6ba9df2a68cae6490eba54d9f85 Mon Sep 17 00:00:00 2001
+From: Omdroid <dev@omdroid.invalid>
+Date: Thu, 26 Nov 2026 23:10:00 +0000
+Subject: [PATCH] wayland: send the committed damage instead of the whole
+ surface
+
+CWaylandOutput::commit() sent damage_buffer(0, 0, INT32_MAX, INT32_MAX)
+with every buffer, so a nested compositor's parent saw each frame as a
+full-screen change even when Hyprland had re-rendered one cell of the
+bar. On Android that parent is cage over an in-process X server: the
+whole 25 MB frame became cage's output damage, the update region of its
+xcb_present_pixmap, and a full copy in the X server, 60 times a second
+with the desktop idle.
+
+Send what Hyprland committed: the rectangles of the pending output
+state's damage, clipped to the buffer. A commit that carries no damage
+state, a new buffer size, or a wl_buffer the parent has not been sent
+yet still gets the whole surface. A commit whose damage is empty sends no
+rectangles; it still attaches the buffer and requests the frame callback,
+so the frame loop keeps running. More than 32 rectangles collapse to
+their bounding box.
+
+AQ_WAYLAND_FULL_DAMAGE=1 sends the whole surface on every commit, the
+form this patch replaces.
+---
+ include/aquamarine/backend/Wayland.hpp |  1 +
+ src/backend/Wayland.cpp                | 64 +++++++++++++++++++++++++-
+ 2 files changed, 64 insertions(+), 1 deletion(-)
+
+diff --git a/include/aquamarine/backend/Wayland.hpp b/include/aquamarine/backend/Wayland.hpp
+index 2b3ecf5..18a5cba 100644
+--- a/include/aquamarine/backend/Wayland.hpp
++++ b/include/aquamarine/backend/Wayland.hpp
+@@ -31,6 +31,7 @@ namespace Aquamarine {
+         bool usesPresentationDMABUF() const;
+ 
+         bool pendingRelease = false;
++        bool attached       = false; // set once the parent has been sent this wl_buffer, so its first commit carries the whole surface as damage
+ 
+       private:
+         struct {
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index 0c512ea..591dcc9 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -822,6 +822,61 @@ bool Aquamarine::CWaylandOutput::test() {
+     return true; // TODO:
+ }
+ 
++// Damage sent to the parent compositor with every committed buffer.
++//
++// Hyprland adds the region it re-rendered to the output state before each commit: its buffer
++// age damage, in buffer pixels after the output transform. That region covers what changed
++// against the buffer attached before, so it is what the parent has to refresh. cage turns it
++// into the update region of its own present, and the X server behind cage then copies only
++// that region instead of the whole frame.
++//
++//  - No damage committed (a commit that did not come from a render), a new buffer size, or a
++//    wl_buffer the parent has not seen yet: the whole surface, the safe default.
++//  - Damage committed but empty: no rectangles. The buffer is still attached and committed
++//    with its frame callback, so the parent still delivers the callback and the frame loop
++//    keeps its rhythm.
++//  - Otherwise the rectangles, clipped to the buffer. More than MAX_DAMAGE_RECTS collapse to
++//    their bounding box, which only ever adds area.
++//
++// AQ_WAYLAND_FULL_DAMAGE=1 sends the whole surface on every commit, as before this change.
++static constexpr size_t MAX_DAMAGE_RECTS = 32;
++
++static bool             fullDamageForced() {
++    static const bool forced = Aquamarine::envEnabled("AQ_WAYLAND_FULL_DAMAGE");
++    return forced;
++}
++
++struct SSentDamage {
++    bool   whole = false;
++    size_t rects = 0;
++};
++
++static SSentDamage sendSurfaceDamage(const SP<CCWlSurface>& surface, const CRegion& committed, bool damageCommitted, bool needsWhole, const Vector2D& size) {
++    const int width  = static_cast<int>(size.x);
++    const int height = static_cast<int>(size.y);
++
++    if (needsWhole || !damageCommitted || fullDamageForced() || width <= 0 || height <= 0) {
++        surface->sendDamageBuffer(0, 0, INT32_MAX, INT32_MAX);
++        return {.whole = true, .rects = 1};
++    }
++
++    auto region = committed.copy();
++    region.intersect(0, 0, width, height);
++    if (region.empty())
++        return {};
++
++    const auto rects = region.getRects();
++    if (rects.size() > MAX_DAMAGE_RECTS) {
++        const auto extents = region.getExtents();
++        surface->sendDamageBuffer(static_cast<int32_t>(extents.x), static_cast<int32_t>(extents.y), static_cast<int32_t>(extents.w), static_cast<int32_t>(extents.h));
++        return {.rects = 1};
++    }
++
++    for (const auto& rect : rects)
++        surface->sendDamageBuffer(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1);
++    return {.rects = rects.size()};
++}
++
+ bool Aquamarine::CWaylandOutput::commit() {
+     if (!waylandState.configured) {
+         backend->backend->log(AQ_LOG_WARNING, std::format("Output {}: deferring buffer commit until the initial xdg configure", name));
+@@ -893,7 +948,14 @@ bool Aquamarine::CWaylandOutput::commit() {
+         glFinish();
+ 
+     waylandState.surface->sendAttach(wlBuffer->waylandState.buffer.get(), 0, 0);
+-    waylandState.surface->sendDamageBuffer(0, 0, INT32_MAX, INT32_MAX);
++
++    // surfaceSize still holds the size of the previously committed buffer here.
++    const auto bufferSize   = state->internalState.buffer->size;
++    const bool needsWhole   = !wlBuffer->attached || waylandState.surfaceSize != bufferSize;
++    const bool hasDamage    = state->internalState.committed & COutputState::AQ_OUTPUT_STATE_DAMAGE;
++    const auto sentDamage   = sendSurfaceDamage(waylandState.surface, state->internalState.damage, hasDamage, needsWhole, bufferSize);
++    wlBuffer->attached      = true;
++    TRACE(backend->backend->log(AQ_LOG_TRACE, std::format("Output {}: commit damage {} rect(s){}", name, sentDamage.rects, sentDamage.whole ? " (whole surface)" : "")));
+ 
+     // Register the next wl_surface.frame callback as part of this commit's pending state,
+     // but only if one isn't already pending. A consumer that commits twice in quick
+-- 
+2.56.0
+
