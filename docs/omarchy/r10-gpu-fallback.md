@@ -52,8 +52,8 @@ device claim below is **PENDING** and comes with the command the parent runs.
 |---|---|---|
 | `OMARCHY_GPU_MODE` | only read at `omarchy-launch-shell:69` | `software` |
 | `MESA_LOADER_DRIVER_OVERRIDE` | picks the DRI driver name; without it Mesa tries its X11 DRI3/Zink path (`nested-wayland-stack.md`, GPU ladder) | `swrast` |
-| `LIBGL_ALWAYS_SOFTWARE` | makes Mesa's EGL surfaceless platform skip the render-node scan, which cannot succeed without a DRM node | **added**, `1` |
-| `GALLIUM_DRIVER` | picks the pipe driver inside the megadriver | **added**, `llvmpipe` |
+| `LIBGL_ALWAYS_SOFTWARE` | Mesa's switch to its software path; in the host EGL test below it is redundant once `MESA_LOADER_DRIVER_OVERRIDE=swrast` is set, and on its own it is not enough | **added**, `1` (belt and braces) |
+| `GALLIUM_DRIVER` | picks the pipe driver inside the megadriver; also redundant in the host test, kept so the choice is explicit | **added**, `llvmpipe` |
 | `LIBGL_DRIVERS_PATH` | where the loader finds `*_dri.so`; the patched copy is the one that links `libgallium-26.3.0-devel.so` | kept |
 | `LD_LIBRARY_PATH` (`/opt` Mesa first) | the patched libEGL/libgallium win over the stock Arch ones | kept |
 | `VK_ICD_FILENAMES` | freedreno ICD; fails to initialise on a non-Adreno GPU; no lavapipe to replace it | **dropped** |
@@ -128,8 +128,10 @@ falls back to CPU compositing after a slow start. That file belongs to the image
   kills the surplus with the reason "Trimming phantom processes".
 - **The CPU trigger.** `ActivityManagerService.checkExcessivePowerUsage()` (line 14237 in `android12-release`)
   also walks `mPhantomProcessList.forEachPhantomProcessOfApp` and kills a phantom process "excessive cpu" when
-  its CPU use over the check interval passes the app's limit (`POWER_CHECK_MAX_CPU_1..4`); it only applies to
-  apps whose process state is `PROCESS_STATE_HOME` or worse, so a visible app is not hit by it.
+  its CPU use over the check interval passes the app's limit (`POWER_CHECK_MAX_CPU_1..4`); it only looks at
+  apps whose process state is `PROCESS_STATE_HOME` or worse (`ActivityManager.PROCESS_STATE_*` are declared in
+  ascending order, `FOREGROUND_SERVICE` before `HOME`), so while the foreground service runs only the **count**
+  can kill the desktop; the CPU trigger cannot.
 - **Android 12 (API 31) before QPR3: no switch.** `android12-release`, `android12-qpr1-release`,
   `android12-qpr2-release`: `PhantomProcessList.java` has no reference to the flag, both kills are unconditional.
   The only knob is `device_config put activity_manager max_phantom_processes <n>` (needs `WRITE_DEVICE_CONFIG`,
@@ -145,7 +147,7 @@ falls back to CPU compositing after a slow start. That file belongs to the image
 - **Why the global setting, not the Developer options toggle.** Android 14+ "Disable child process restrictions"
   writes the property (`FeatureFlagUtils.setEnabled`) and resets it when Developer options are switched off
   (per the AOSP Settings change cited by agnostic-apollo's documentation, secondary source); a `Settings.Global`
-  value wins over the property and stays. Phil's tablet has the property set by hand
+  value wins over the property and stays. The tablet has the property set by hand
   (`docs/omarchy/ARCHITECTURE.md:49-50`), so there the global reads `unset` and the app will write it once.
 - **What the app can do.** With `WRITE_SECURE_SETTINGS`, `Settings.Global.putString` works for this key
   (a public API behind that permission). Without it: nothing but telling the user. On API 31 the write may
@@ -156,16 +158,110 @@ falls back to CPU compositing after a slow start. That file belongs to the image
 
 ## Host proof
 
-(filled in as steps land)
+**1. Unit tests and lint (host).** `:app:test` 176 tests, 0 failures; `:app:lintDebug` 0 errors, 17 warnings, none
+new against the parent's `main` report. New tests: `GpuModeTest` (10), `ProotCommandBuilderTest` (+5, a
+literal 0.0.17 KGSL environment), `GuestGpuScriptsTest` (14, the real scripts in bash), `ProcessLimitsTest` (9).
+Positive control: two lines of the GPU block broken on purpose, 3 of the 14 script tests failed, file restored
+(sha256 identical).
+
+**2. The software block gets a GL context from the patched Mesa (host, emulated aarch64).** The image was
+extracted, and the skill's `egl-probe.py` run inside it with `bwrap` + `qemu-aarch64-static`
+(`EGL_PLATFORM=surfaceless`, no display, `/opt` Mesa first on `LD_LIBRARY_PATH`):
+
+| Environment | Result |
+|---|---|
+| the software block (`MESA_LOADER_DRIVER_OVERRIDE=swrast LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe`) | `eglInitialize` ok, `eglCreateContext` ok, `eglMakeCurrent` ok; `GL_renderer: llvmpipe (LLVM 22.1.8, 128 bits)`, `OpenGL ES 3.2 Mesa 26.3.0-devel (git-98f3d6229d)` |
+| `MESA_LOADER_DRIVER_OVERRIDE=swrast` alone | same: llvmpipe |
+| `LIBGL_ALWAYS_SOFTWARE=1` alone (no override) | **fails**: `ZINK: vkCreateInstance failed (VK_ERROR_INCOMPATIBLE_DRIVER)`, `eglInitialize -> 0` |
+| the KGSL block (`kgsl` override, freedreno ICD, `FD_KGSL_ENABLE_DMABUF=1`) with **no** `/dev/kgsl-3d0` | **also llvmpipe**: Mesa fell back to software by itself |
+| the software block without `EGL_PLATFORM` | `eglInitialize -> 0` (no display to use; Hyprland chooses its own platform) |
+
+What that does and does not show. It proves the llvmpipe path of this exact Mesa build loads and renders a
+context, the load-bearing variable is `MESA_LOADER_DRIVER_OVERRIDE=swrast`, and the hard-coded KGSL override on
+a machine with no node does **not** fail at the EGL layer here: it quietly lands on llvmpipe. So the premise in
+the brief that a non-Adreno phone cannot create an EGL context is **not confirmed** for the probe's surfaceless
+platform; whether the old block boots on a Mali phone is a device question (Hyprland and aquamarine have more
+KGSL-specific steps than this probe). The explicit mode is still worth having: it states the choice instead of
+relying on Mesa's silent fallback, it drops the Adreno-only dma-buf advertisement and Vulkan ICD, and it gives
+the fallback in `session-child.sh` something real to switch. It does not prove anything about speed (qemu) or
+about proot on a phone. The probe's last lines (`glClearColor`) die on a ctypes argtype bug in the skill copy of
+the script, after the renderer line; the skill script was fixed.
+
 
 ## Device A/B plan (the parent runs it)
 
-(filled in at the end)
+Set `TABLET_SERIAL` (the tools refuse to run without it). All three installs are the same APK; only the
+Graphics setting differs. `gx.sh '<cmd>'` runs a command inside the live guest.
+
+1. **KGSL unchanged on the tablet** (Graphics = Auto). PASS when: `adb -s $TABLET_SERIAL logcat -d -s Phoshdroid:*
+   | grep -E 'gpu:|limits:'` shows `gpu: preference=auto kgsl-usable=true -> kgsl source=auto`;
+   `docs/omarchy/tools/probe.sh` prints `VERDICT: PASS`; the guest log (`gx.sh 'grep "gpu:" /tmp/omarchy-session.log'`)
+   shows `gpu: mode=kgsl source=auto from=host` and no `Hyprland exited` line; the session ends and restarts as it did
+   (the new thing to watch: Hyprland is now a child of `session-child.sh` for this default case; Stop from the
+   notification and a logout from Hyprland must both still end the session, and `ps` should show no orphan
+   Hyprland afterwards). Renderer: `gx.sh 'timeout 25 python3 /path/to/egl-probe.py'` (copy it in with
+   `gpush.sh`) names the Adreno, not llvmpipe. A/B switch: `OMDROID_GPU_FALLBACK=0` (session.env) or Graphics =
+   Adreno GPU (KGSL) restores the old `exec` path.
+2. **Software forced on the same tablet** (Settings -> Graphics -> Software, or `adb shell run-as
+   com.phoshdroid.app` editing `shared_prefs/phoshdroid_prefs.xml` to `<string name="gpu_mode">software</string>`,
+   then stop and start the desktop). PASS when: the log says `-> software source=setting`, the guest log
+   `gpu: mode=software source=setting from=host`, the session reaches `omarchy-ready`, and `egl-probe.py` run with
+   the session environment prints `GL_renderer: llvmpipe (LLVM 22.1.8, ...)`. Record, so the README can say what
+   slow means: frame rate of a full-screen terminal or `weston-simple-egl`-style client, `top -b -n 1` of the
+   guest at idle (real `/proc/stat` is blocked, use the host `top`), cold start to ready, and a note on
+   whether the shell bar, wallpaper and a browser load. Also try `LP_NUM_THREADS=4` once in `session.env`.
+3. **A device with no Adreno node** (any non-Qualcomm phone, Android 12+): Graphics = Auto should log
+   `kgsl-usable=false -> software`; then Graphics = Adreno GPU (KGSL) on the same phone answers the open
+   question above (does the old block boot there by Mesa's own fallback?).
+4. **The fallback**: on the tablet, force a KGSL failure the session can see, e.g. `gpush.sh` a copy of
+   `session-child.sh` whose first line after the shebang is `export MESA_LOADER_DRIVER_OVERRIDE=nonexistent`
+   (restore by restarting the APK sync), Graphics = Auto. PASS when `/tmp/omarchy-session.log` has
+   `gpu: Hyprland exited <rc> after <n>s in kgsl mode; ...` then `gpu: mode=software source=auto from=fallback`,
+   the desktop comes up, `$XDG_RUNTIME_DIR/omdroid-gpu-fallback` exists, and a second cold start does not (the
+   launcher wipes it). If the stand-in does not make Hyprland die within 15 s, the fallback is unexercised: say so.
+5. **The phantom decision**, from `logcat -s Phoshdroid:* | grep limits:`:
+   - tablet (global unset, property set by hand, `install.sh` grant held):
+     `limits: phantom-procs sdk=<n> setting=unset write-secure-settings=true -> wrote settings_enable_monitor_phantom_procs=false`
+     then `adb shell settings get global settings_enable_monitor_phantom_procs` prints `false`. A second start:
+     `setting=false ... -> nothing to do`.
+   - an Android 12+ phone with no grant and the monitor on:
+     `... write-secure-settings=false -> tell user: adb shell settings put global settings_enable_monitor_phantom_procs false`
+     and the notification reads "Android may stop desktop apps. Expand for the fix." with the command when
+     expanded. After running the command: `-> nothing to do`.
+   - Settings -> Advanced -> "Lift Android's child-process limit" off: `limits: ... switched off in Settings`.
+   - Evidence that the limit matters: `adb shell dumpsys activity processes | grep -i phantom` count during a `yay` build.
+6. **Memory callbacks**: `logcat -s Phoshdroid:* | grep memory:` during a heavy session (a browser plus the
+   shell); a line is the answer "yes, Android asked", silence is "no".
 
 ## Risks
 
-(filled in at the end)
+- **The default KGSL path changed shape**: with `auto` on an Adreno phone Hyprland is now a child of
+  `session-child.sh`, not its `exec`. The wait loop forwards `TERM`/`INT`/`HUP` and relays the exit code, and
+  the fake-Hyprland tests cover exit codes and the signal flag, but a real stop was not run (no device). The
+  off switches are `OMDROID_GPU_FALLBACK=0` and an explicit Graphics choice.
+- **A device where KGSL "works" but is wrong** (a renderer that starts and draws garbage) is not detected; only a
+  Hyprland that exits within 15 s is. A slow KGSL failure (a hang) is not caught either.
+- **Every cold start on a device where KGSL fails pays the failed attempt** (up to 15 s) because the marker lives
+  for one launch only. That is deliberate (a transient failure must not pin software for ever); the user can set
+  Graphics = Software.
+- **`pkill -x quickshell` / `pkill -f omarchy-launch-shell`** in the fallback assume `procps` is in the image
+  (stderr is silenced if not; then a leftover shell could keep the one-shot launch lock, which is removed too).
+- **Software mode and GL clients**: Chromium in the image is forced to `--use-angle=vulkan` (freedreno ICD), which
+  is gone in software mode; expect a slow start and CPU compositing. `omarchy-launch-shell` shell is CPU-rendered
+  in both modes already. Not changed (image-owned file).
+- **llvmpipe thread count** follows the real CPU count (8 on these phones) at 3200x1971; it can compete with
+  everything else. `LP_NUM_THREADS` is the knob; no default was set without a measurement.
+- **Writing a global setting** is a bigger side effect than the accessibility merge; it only happens with the
+  grant, it is logged, and it has an off switch. On API 31 builds before QPR3 the write is a no-op.
+- `FeatureFlagUtils` on a vendor ROM may differ from AOSP; the read-back after the write catches a write that
+  does not stick, not a ROM that ignores the flag.
 
 ## What I did not do
 
-(filled in at the end)
+- No device run, no APK assembly, nothing pushed (brief). Every device row above is PENDING.
+- Did not change `AssetExtractor.kt`, `LauncherActivity.kt`, `app/build.gradle.kts`, `README.md`, any `start.sh`
+  line outside the GPU block, `omarchy-watch.py` or `omdroid-ui.sh`; no new overlay file.
+- Did not touch the image's `chromium-flags.conf` or the Hyprland config for software mode.
+- Did not add a persistent "KGSL failed on this device" memory across launches.
+- Did not read `SessionExit`'s retry window from a setting; the interaction is documented in the contract section 9.
+- virgl, ANGLE and any Mali/Xclipse/PowerVR hardware path stay "not shipped" (no driver in the image, no DRM node).
