@@ -33,6 +33,9 @@ import threading
 import time
 import types
 
+# Importing the watcher must not leave a __pycache__ inside the guest overlay.
+sys.dont_write_bytecode = True
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_WATCH = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "rootfs", "overlay", "etc", "phoshdroid", "omarchy-watch.py"))
