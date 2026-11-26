@@ -459,7 +459,20 @@ if [ -f "$mode_file" ]; then
   esac
 fi
 
-log "mode ${mode} (${mode_file})"
+# The pin in ui-pin is the user choice and wins over the host-written mode
+# while it names one (contract section 8); auto, missing or anything else
+# defers to the ui file.
+pin_file="$config/omdroid/ui-pin"
+pin="auto"
+if [ -f "$pin_file" ]; then
+  pin="$(tr -d '[:space:]' < "$pin_file" 2>/dev/null)"
+  case "$pin" in
+    mobile | desktop) mode="$pin" ;;
+    *) pin="auto" ;;
+  esac
+fi
+
+log "mode ${mode} (${mode_file}, pin ${pin})"
 
 case "$mode" in
   mobile)

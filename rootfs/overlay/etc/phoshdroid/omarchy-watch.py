@@ -8,10 +8,16 @@ Started by start.sh before cage starts. Contract halves:
     start.sh removes a stale marker; the host removes it too.
   * section 3 - after a live X root change, keep the shell's layers in step with
     the monitor (no session restart, no user action).
-  * section 8 - when the host changes $HOME/.config/omdroid/ui (dock/undock, or
-    the user's pin), re-apply omdroid-ui.sh and the plugin index and restart only
-    the shell, then reload Hyprland's config for the looknfeel half. The session
-    and its windows are never touched.
+  * section 8 - when the mode changes ($HOME/.config/omdroid/ui-pin when it
+    names a mode, else $HOME/.config/omdroid/ui, which the host writes on a
+    dock/undock), re-apply omdroid-ui.sh and the plugin index, put the monitor
+    back on the X root, restart only the shell, then reload Hyprland's config
+    (config-only) for the looknfeel half. The session and its windows are never
+    touched.
+  * after ready, keep the Hyprland monitor equal to the even-rounded X root:
+    monitors.lua builds its mode from the start-time size, so any config reload
+    (Hyprland reloads by itself when a config file changes) puts the start-time
+    mode back after a dock. A runtime monitor rule (hyprctl eval) undoes it.
 
 The X root is the authority for the size; the host hint is never consulted here.
 Log: /tmp/omarchy-watch.log (guest /tmp), one line per state change.
@@ -41,6 +47,7 @@ OMARCHY = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
 ACT = os.environ.get("OMARCHY_WATCH_ACT", "1") == "1"
 HOME = os.environ.get("HOME", "/home/omarchy")
 UI_FILE = os.path.join(HOME, ".config", "omdroid", "ui")
+UI_PIN = os.path.join(HOME, ".config", "omdroid", "ui-pin")
 UI_SCRIPT = os.environ.get("OMDROID_WATCH_UI_SCRIPT", "/etc/phoshdroid/omdroid-ui.sh")
 INDEX_SCRIPT = os.environ.get("OMDROID_WATCH_INDEX_SCRIPT", "/etc/phoshdroid/omarchy-plugin-index.sh")
 
@@ -156,6 +163,7 @@ def evaluate():
         "target": (tw, th),
         "mon": (m.get("width"), m.get("height")),
         "scale": scale,
+        "hz": m.get("refreshRate"),
         "logical": (lw, lh),
         "bg": bg,
         "bar": bar,
@@ -174,19 +182,25 @@ def write_marker(st):
     os.replace(tmp, MARKER)
 
 
-def ui_mode(path=None):
-    """The mode the host wrote to `~/.config/omdroid/ui`.
-
-    Missing or anything but `mobile`/`desktop` means `mobile`, the same default
-    omdroid-ui.sh uses, so a guest started without the host writing the file
-    behaves exactly as it did before this round.
-    """
+def read_mode(path):
+    """`mobile` or `desktop` from one mode file, or None when absent or anything else."""
     try:
-        with open(path or UI_FILE) as fh:
+        with open(path) as fh:
             value = fh.read().strip()
     except OSError:
-        return "mobile"
-    return value if value in ("mobile", "desktop") else "mobile"
+        return None
+    return value if value in ("mobile", "desktop") else None
+
+
+def ui_mode(path=None, pin_path=None):
+    """The mode the guest applies (contract section 8).
+
+    The user's pin (`~/.config/omdroid/ui-pin`) wins while it names a mode; `auto`,
+    missing or anything else defers to the host's `~/.config/omdroid/ui`. Missing
+    or unknown there means `mobile`, the same default omdroid-ui.sh uses, so a
+    guest started without the host writing either file behaves as before.
+    """
+    return read_mode(pin_path or UI_PIN) or read_mode(path or UI_FILE) or "mobile"
 
 
 def run_script(path, label, timeout=60):
@@ -204,34 +218,67 @@ def run_script(path, label, timeout=60):
 
 
 def reload_config(sig, timeout=15):
-    """`hyprctl reload`, for the looknfeel half of the switch.
+    """`hyprctl reload config-only`, for the looknfeel half of the switch.
 
-    Never while the monitor and the X root disagree: reload re-applies the
-    start-time output mode, so it is only safe once the size has settled. The
-    caller checks that and skips this, leaving the size logic to own it.
+    config-only: a full reload re-applies the monitor rule, and monitors.lua
+    builds that rule from the START-TIME size, so after a dock it would put the
+    session-start mode back (r7 device round: 3200x1970 on a 1920x914 cage).
     """
     exe = shutil.which("hyprctl")
     if not exe or not sig:
         return "hyprctl missing"
     env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=sig)
     try:
-        r = subprocess.run([exe, "reload"], capture_output=True, text=True,
+        r = subprocess.run([exe, "reload", "config-only"], capture_output=True, text=True,
                            timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return f"hyprctl reload failed: {e}"
-    return f"hyprctl reload rc={r.returncode}"
+        return f"hyprctl reload config-only failed: {e}"
+    return f"hyprctl reload config-only rc={r.returncode}"
+
+
+def fit_monitor(st, timeout=10):
+    """Put the Hyprland monitor on the even-rounded X root with a runtime rule.
+
+    Hyprland follows cage on its own, but every config reload (an explicit one,
+    or Hyprland's autoreload when omdroid-ui.sh edits looknfeel.lua) re-applies
+    monitors.lua, whose mode is the size at session start. `hyprctl eval` with
+    `hl.monitor` puts the current size back at once (measured on the tablet:
+    3200x1970 -> 1920x914 in one call); scale and refresh are kept.
+    """
+    exe = shutil.which("hyprctl")
+    sig = signature()
+    if not exe or not sig:
+        return "monitor fit skipped: no hyprctl or Hyprland instance"
+    tw, th = st["target"]
+    hz = st.get("hz") or 120.0
+    lua = ('hl.monitor({ output = "", mode = "%dx%d@%.3f", position = "auto", '
+           'scale = %g, transform = 0 })' % (tw, th, hz, st["scale"]))
+    env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=sig)
+    try:
+        r = subprocess.run([exe, "eval", lua], capture_output=True, text=True,
+                           timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"monitor fit failed: {e}"
+    return f"monitor fit {tw}x{th} rc={r.returncode}"
+
+
+# Non-empty while a UI switch could not restart the shell because of the rate
+# limit: the main loop restarts it as soon as the limit allows, so the old UI
+# is never left on screen (it used to be dropped for good).
+PENDING_RESTART = []
 
 
 def switch_ui(mode, st=None):
     """Apply a UI mode in place (contract section 8). Returns one summary line.
 
-    Step 1, writing `$HOME/.config/omdroid/ui`, is the host's job - this runs only
-    when the file already changed. Then, in this order: omdroid-ui.sh (idempotent
-    and key-level, so a second run rewrites nothing), the plugin index the shell
-    reads instead of scanning, a restart of the shell alone (omarchy-restart-shell,
-    which brings the layers back in about 2.4 s), and finally a Hyprland config
-    reload for the looknfeel.lua block - skipped when the monitor and the X root
-    still differ, because reload re-applies the start-time output mode.
+    Step 1, writing the mode file, is the host's job (or the user's pin) - this
+    runs only when the mode already changed. Then, in this order: omdroid-ui.sh
+    (idempotent and key-level, so a second run rewrites nothing), the plugin
+    index the shell reads instead of scanning, the monitor put back on the X root
+    when a config reload moved it (omdroid-ui.sh edits looknfeel.lua and Hyprland
+    reloads on its own), a restart of the shell alone (omarchy-restart-shell,
+    about 2.4 s; queued when the rate limit is reached, never dropped), and a
+    config-only Hyprland reload for the looknfeel.lua block.
 
     Called directly by the dry run, where there is no Hyprland: the first two
     steps still run and everything after them is reported as deferred.
@@ -242,22 +289,24 @@ def switch_ui(mode, st=None):
     if st.get("missing"):
         parts.append("shell restart deferred: " + st["missing"])
         return "; ".join(parts)
+    if not st.get("mon_is_root"):
+        parts.append(fit_monitor(st))
+        time.sleep(0.5)
     if not ACT:
         parts.append("shell restart off (OMARCHY_WATCH_ACT=0)")
         return "; ".join(parts)
     if not may_act():
-        parts.append("shell restart rate limited (6 per 60 s, 2 s apart)")
+        PENDING_RESTART[:] = [mode]
+        parts.append("shell restart rate limited (6 per 60 s, 2 s apart), queued")
         return "; ".join(parts)
+    PENDING_RESTART[:] = []
     parts.append(act())
     took = settle()
     if took is None:
         parts.append("layers still do not fit 8 s after the restart")
     else:
         parts.append("layers fit again %.1f s after the restart" % took)
-    if st.get("mon_is_root"):
-        parts.append(reload_config(signature()))
-    else:
-        parts.append("hyprctl reload skipped: monitor and X root differ, the size logic owns it")
+    parts.append(reload_config(signature()))
     return "; ".join(parts)
 
 
@@ -324,11 +373,14 @@ def main():
     last_key = None
     size_since = time.monotonic()
     attempts = 0
+    fits = 0
+    limited = False
     while True:
-        # The host writes the mode file; the switch itself stays in here, where
-        # omdroid-ui.sh, the plugin index and the shell live (contract section 8).
-        # Checked before the readiness gate so a mode change that arrives while
-        # Hyprland is still starting is applied rather than dropped.
+        # The host writes the mode file (and the user may pin one); the switch
+        # itself stays in here, where omdroid-ui.sh, the plugin index and the
+        # shell live (contract section 8). Checked before the readiness gate so a
+        # mode change that arrives while Hyprland is still starting is applied
+        # rather than dropped.
         mode = ui_mode()
         if mode != last_ui:
             log("ui mode %s -> %s, switching in place" % (last_ui, mode))
@@ -342,11 +394,21 @@ def main():
             time.sleep(POLL)
             continue
         last_missing = None
+        if PENDING_RESTART and ACT and may_act():
+            queued = PENDING_RESTART[0]
+            PENDING_RESTART[:] = []
+            log("ui switch to %s: queued shell restart: %s" % (queued, act()))
+            took = settle()
+            log("ui switch to %s: %s" % (queued, "layers still do not fit 8 s after the restart"
+                                          if took is None else
+                                          "layers fit again %.1f s after the restart" % took))
+            continue
         key = st["mon"]
         if key != last_key:
             last_key = key
             size_since = time.monotonic()
             attempts = 0
+            fits = 0
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
@@ -362,17 +424,33 @@ def main():
             elif not st["mon_is_root"]:
                 log("not ready: monitor %dx%d != X root %dx%d (even-rounded)" %
                     (st["mon"][0], st["mon"][1], st["target"][0], st["target"][1]))
+        elif not st["mon_is_root"]:
+            # A config reload put the start-time mode back (see fit_monitor).
+            if stable >= STABLE_S and fits < RETRY_CAP:
+                fits += 1
+                log("monitor %dx%d != X root %dx%d (even-rounded): %s, attempt %d/%d" %
+                    (key[0], key[1], st["target"][0], st["target"][1], fit_monitor(st),
+                     fits, RETRY_CAP))
+                size_since = time.monotonic()
         elif not st["layers_ok"]:
             if stable >= STABLE_S:
                 if attempts < RETRY_CAP:
-                    attempts += 1
-                    log("layers do not fit %dx%d (background=%s bar=%s, need background=%dx%d "
-                        "bar width %d): attempt %d/%d" %
-                        (key[0], key[1], surface(st["bg"]), surface(st["bar"]),
-                         st["logical"][0], st["logical"][1], st["logical"][0],
-                         attempts, RETRY_CAP))
-                    if ACT:
-                        if may_act():
+                    if ACT and not may_act():
+                        # A rate-limited pass is not an attempt: wait for the
+                        # limit instead of giving up with stale layers on screen.
+                        if not limited:
+                            log("layers do not fit %dx%d, restart rate limit reached "
+                                "(6 per 60 s, 2 s apart): waiting" % (key[0], key[1]))
+                            limited = True
+                    else:
+                        limited = False
+                        attempts += 1
+                        log("layers do not fit %dx%d (background=%s bar=%s, need background=%dx%d "
+                            "bar width %d): attempt %d/%d" %
+                            (key[0], key[1], surface(st["bg"]), surface(st["bar"]),
+                             st["logical"][0], st["logical"][1], st["logical"][0],
+                             attempts, RETRY_CAP))
+                        if ACT:
                             log("act: " + act())
                             took = settle()
                             if took is None:
@@ -380,8 +458,6 @@ def main():
                             else:
                                 log("act: layers fit again %.1f s after the restart" % took)
                                 attempts = 0
-                        else:
-                            log("act: not acting, restart rate limit reached (6 per 60 s, 2 s apart)")
                     size_since = time.monotonic()
                 elif attempts == RETRY_CAP:
                     attempts += 1
