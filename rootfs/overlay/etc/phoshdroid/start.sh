@@ -127,7 +127,7 @@ rm -f "$XDG_RUNTIME_DIR/omarchy-ready"
 # proot. The optional user file holds plain key=value lines, is sourced with
 # set -a so every assignment is exported, and overrides either default above
 # (for example MALLOC_ARENA_MAX= to drop the cap, OMDROID_ANIMATIONS=1,
-# OMDROID_VOXTYPE=1, OMDROID_WATCH_LEGACY=1, OMDROID_WATCH_HEARTBEAT=1.0).
+# OMDROID_WATCH_LEGACY=1, OMDROID_WATCH_HEARTBEAT=1.0).
 session_env="$HOME/.config/omdroid/session.env"
 export MALLOC_ARENA_MAX=2
 export MESA_SHADER_CACHE_MAX_SIZE=128M
