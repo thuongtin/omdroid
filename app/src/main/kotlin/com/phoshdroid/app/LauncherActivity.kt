@@ -305,6 +305,23 @@ class LauncherActivity : AppCompatActivity() {
                 extraKeysShown = false,
             )
         }
+        val preferences = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        val extraKeysShown =
+            preferences.getBoolean("showAdditionalKbd", false) &&
+                preferences.getBoolean("additionalKbdVisible", false)
+        return builtinGeometry(rows, extraKeysShown, recordWindow = true)
+    }
+
+    /**
+     * The undocked prediction: the launcher's own window on the built-in display.
+     * [recordWindow] false leaves [winWidth]/[winHeight] alone, for the docked
+     * launch that only needs the built-in bottom gap (r7, see [builtinBottomGap]).
+     */
+    private fun builtinGeometry(
+        rows: Int,
+        extraKeysShown: Boolean,
+        recordWindow: Boolean,
+    ): XGeometry {
         val metrics = windowManager.currentWindowMetrics
         val bounds = metrics.bounds
         var width = bounds.width()
@@ -330,13 +347,10 @@ class LauncherActivity : AppCompatActivity() {
             width = prefs.getInt("last_w", 0)
             height = prefs.getInt("last_h", 0)
         }
-        winWidth = width
-        winHeight = height
-
-        val preferences = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-        val extraKeysShown =
-            preferences.getBoolean("showAdditionalKbd", false) &&
-                preferences.getBoolean("additionalKbdVisible", false)
+        if (recordWindow) {
+            winWidth = width
+            winHeight = height
+        }
 
         return DisplayGeometry.compute(
             windowWidth = width,
@@ -362,6 +376,7 @@ class LauncherActivity : AppCompatActivity() {
                 Intent(this, Class.forName("com.termux.x11.MainActivity"))
                     .putExtra("phoshdroid_top_padding_px", 0)
                     .putExtra("phoshdroid_bottom_padding_px", geometry.bottomGap)
+                    .putExtra("phoshdroid_builtin_bottom_padding_px", builtinBottomGap(dock))
                     .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
             // a4: docked, the X activity belongs on the monitor. A refusal (a
             // private display, or a device without secondary-display activities)
@@ -376,6 +391,21 @@ class LauncherActivity : AppCompatActivity() {
             statusText.text = "Display failed: ${e.message}"
         }
     }
+
+    /**
+     * r7: the bottom gap the X view needs once it is on the built-in display.
+     * Undocked it is the launch's own gap. Docked the launch's gap is the
+     * monitor's (none), so this predicts the built-in one with the extra-key bar
+     * shown, as the dock monitor shows it again on unplug.
+     */
+    private fun builtinBottomGap(dock: DockStatus): Int =
+        if (!dock.docked) {
+            geometry.bottomGap
+        } else {
+            runCatching {
+                builtinGeometry(extraKeyRows(), extraKeysShown = true, recordWindow = false).bottomGap
+            }.getOrDefault(0)
+        }
 
     /** The dock state right now (a1), from the Android edge. */
     private fun dockStatus(): DockStatus = DockStatusReader.read(this)
