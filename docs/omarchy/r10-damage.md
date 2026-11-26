@@ -161,16 +161,131 @@ composite instead of scanning out, which changes who copies but not the damage c
 
 ## Device A/B plan (the parent runs it, PENDING)
 
-(filled in below)
+Build under test: an APK whose overlay carries `lib/libaquamarine.so.13` with sha256
+`35a9ffd4c565364900a13c53fee935898c5885bd2508c527228b752d316d1562` (record the APK sha256 and
+commit, as the lib README's three-sided delivery proof asks). `TABLET_SERIAL` set; tools:
+`threads.sh` (per-thread CPU of the app over 10 s), `hc.sh`, `shot.sh`, `pixdiff.py`.
 
-## Stretch: why VFR drops the last frame
+**The switch.** `AQ_WAYLAND_FULL_DAMAGE=1` in the session environment is arm A (the 0.0.18
+behaviour: whole surface every commit); unset is arm B (this patch). Hyprland reads it once, so
+changing it needs a session restart. With S1's `~/.config/omdroid/session.env` merged, put
+`export AQ_WAYLAND_FULL_DAMAGE=1` there and remove it for arm B; without it, run arm A by
+installing the 0002-only library (`git show bbf908d:rootfs/overlay/etc/phoshdroid/lib/libaquamarine.so.13`)
+in a second APK. Confirm the arm on the device each time:
+`tr '\0' '\n' < /proc/<Hyprland pid>/environ | grep AQ_WAYLAND_FULL_DAMAGE` and
+`grep libaquamarine /proc/<Hyprland pid>/maps` (must name `/etc/phoshdroid/lib/libaquamarine.so.13`).
+Also `./hc.sh j/devices` must still list `touch: ["wl_touch"]`.
 
-(filled in below)
+**Checks, each in both arms, three runs, desktop settled 60 s after the ready marker:**
+
+| # | Check | How | PASS (B) |
+|---|---|---|---|
+| 1 | Idle CPU per thread | `threads.sh` with nothing open, screen on | `X11Server` thread under 15 % (arm A is the 77-83 % baseline), renderer thread under 4 %, app total under 30 %. Estimated from "no copy, no redraw trigger"; an empty Present per frame is what remains |
+| 2 | Typing | open `foot` (`./hc.sh '/dispatch hl.dsp.exec_cmd("foot")'`), run `threads.sh` while `adb shell input text` types about 5 characters a second for 10 s | `X11Server` thread under 25 %, and lower than arm A by at least 30 points |
+| 3 | Scrolling | in `foot`, run `while :; do seq 1 60; sleep 0.05; done` (continuous scroll of the window region) and run `threads.sh` | not worse than arm A by more than 5 points; record both numbers |
+| 4 | Correctness against a forced full repaint | for each scenario below: let the screen settle 3 s, `shot.sh before`, force a full repaint with `./hc.sh '/eval hl.config({ debug = { vfr = false } })'` (the parent saw a config eval clear the VFR remnant), 3 s, `shot.sh after`, `python3 pixdiff.py before.png after.png` | `changed=0` outside the pointer and the bar clock, in all three runs of every scenario; any other changed region is a FAIL, keep both PNGs and the `bbox` |
+| 5 | Frame loop still runs | arm B with `/etc/phoshdroid/trace` present (so `AQ_TRACE=1`): the session log shows `commit damage 0 rect(s)` for idle frames and `commit damage N rect(s)` after a keypress, and `scheduleFrame`/commit lines keep a 16 ms rhythm | the rhythm is unchanged against arm A; no stall longer than 100 ms with a window open |
+
+Scenarios for check 4: (a) open `foot` by IPC, then close it (`./hc.sh '/dispatch hl.dsp.exec_cmd("pkill foot")'`);
+(b) a shell toast fading out (raise one the way the parent did for the VFR test, for example
+`sx.sh 'notify-send r10 fadetest'` if the image has `notify-send`) and wait for the fade to end;
+(c) the scrolling terminal of check 3, stopped; (d) a size change as rotation does it
+(`docs/omarchy/tools/screen.sh`, then wait for the shell restart to settle, then close the
+window opened before it). Also judge by eye one frame each of the bar, the open `foot` and the
+toast: the numbers do not see a stale 1-pixel border.
+
+If check 1 fails with arm B near arm A, count whole-surface commits in the trace log
+(`grep -c 'whole surface'`): many means some path commits without damage state and the patch is
+being bypassed, not that the damage chain is wrong. If check 4 fails, switch to arm A to confirm
+the stale pixels disappear, then collect the trace and `grim` output to see which commit
+under-reported.
+
+## Stretch: why VFR drops the last frame (analysis only, mechanism NOT proven)
+
+What the code establishes. The loop's state lives in four places: aquamarine's scheduler
+(`m_pending` = a `wl_surface.frame` callback is in flight, `m_frameScheduled`, `m_frameRunning`),
+the output's `needsFrame` flag, Hyprland's damage ring, and Hyprland's early-out
+`if (!needsFrame && m_forceFullFrames == 0 && !m_damage.hasChanged()) return`
+(`Renderer.cpp:2042-2045`). With `vfr = false` Hyprland calls `scheduleFrame` after every render
+(`Renderer.cpp:2235-2236`), so a lost wakeup costs at most 16 ms. With `vfr = true` that line
+is off and the loop depends on three hand-offs:
+
+1. `CWaylandOutput::scheduleFrame` returns after setting `needsFrame` when a callback is in flight
+   (`!sched.canSchedule()`). The only thing that later turns that into a render is the
+   callback's `done` -> `onFrameDone` -> `frameReady` -> Hyprland `onFrame` -> `renderMonitor`.
+   The 0001 comment at its `FrameScheduler.cpp` hunk (patch line 1433) fixed one hole in this
+   (damage arriving while a render is running). It did not touch the next two.
+2. `commit()` ends with `needsFrame = false` for EVERY commit that attaches a buffer, including
+   ones that did not come from a render (a monitor reconfigure, `ensureBufferPresent`). A
+   `scheduleFrame` that arrived while the callback was pending can therefore be erased before the
+   `done`, and then only `m_damage.hasChanged()` keeps the frame alive; that is false once the
+   damage has been rotated out by a render, which is exactly the case where the render's own
+   commit did not reach the parent.
+3. When the ring is exhausted, `CSwapchain::next` returns null (`Swapchain.cpp`, the comment says a
+   pending callback will wake the renderer) and Hyprland's `beginRender` fails
+   (`Renderer.cpp:1739-1741`, `renderMonitor` returns). `wl_buffer.release` and `wl_callback.done`
+   are independent events: cage's pixman path keeps a client buffer until it is replaced and the
+   X server reports the Present pixmap idle, so a release can arrive AFTER the last `done`.
+   Nothing in the release handler (`CWaylandBuffer` release lambda in 0001) schedules a frame, so
+   with no callback in flight and VFR on, the loop stops with damage still waiting. VFR off hides it
+   because the next 16 ms tick retries.
+
+Which one the device hit is not decided by reading. Observation to explain: the remnant outlived
+a pointer-move frame. A pointer-move frame repaints `current ∪ prev[0] ∪ prev[1]` of the ring, so a
+region still in the ring would have been redrawn; the remnant region therefore had left the ring (a
+render consumed it) yet stayed stale on screen. That points at a frame that was rendered and
+rotated but whose pixels never replaced the root's copy (2 or an unpresented commit), or at a
+buffer whose age was understated (fact 4), more than at hand-off 3 alone. The decisive
+experiment (device, one fade, `vfr = true`): run `grim` (Hyprland's own screencopy of its output) and
+an Android screenshot at the same moment. A remnant in `grim` too means Hyprland or aquamarine kept
+stale pixels; a clean `grim` with a remnant on the Android screen means the loss is downstream (cage
+or the X server). With `/etc/phoshdroid/trace` present, the log shows the last `scheduleFrame` (reason,
+`needsFrame`, `canSchedule`) and the last `commit damage` line: a `scheduleFrame` followed by no
+commit is hand-off 1, 2 or 3; a commit with damage followed by a clean `grim` is downstream.
+
+Fix candidates, none implemented (the first three change when aquamarine asks for a frame, the
+last changes what VFR means):
+- (a) In the `wl_buffer.release` handler, if the last render was skipped for lack of a buffer or
+  `needsFrame` is set and nothing is in flight, call `scheduleFrame(AQ_SCHEDULE_NEEDS_FRAME)`.
+- (b) In `onFrameDone`, after `frameReady.emit()`, if `needsFrame` is still set and no callback is in
+  flight, schedule another idle frame; and let `commit()` clear `needsFrame` only for a commit that
+  carried a render.
+- (c) Give the exhausted-ring path (`next()` returning null) a flag that the next release consumes
+  as in (a).
+- (d) Make VFR "settle": after any commit with non-empty damage, schedule two more frames (the
+  ring length minus one). That is exactly what `vfr = false` does at idle, without the idle loop.
+  With the damage patch, those two frames are cheap (their damage is the buffer-age remainder).
+
+It is safe to set `debug.vfr = true` only when 50 consecutive toast fades, window opens and
+closes and a rotation leave `pixdiff.py` at `changed=0` against a forced repaint, with the trace
+showing no `scheduleFrame` without a following commit. The prize is about 2 % of a core at idle
+(the parent's figure for Hyprland), against the X server thread's 80 % that this patch targets.
 
 ## Risks
 
-(filled in below)
+- Anything that changes pixels without calling `addDamage` now shows stale. Read: software
+  cursor, animations and layer surfaces all go through the monitor damage ring (`PointerManager.cpp:297`,
+  `CMonitor::addDamage`); screencopy and mirrors add to the ring too (`Renderer.cpp:2216-2217`,
+  `ScreenshareFrame.cpp:120`). Commits with no damage state send the whole surface, so
+  `ensureBufferPresent`-style commits behave as before. Switch: `AQ_WAYLAND_FULL_DAMAGE=1`.
+- The root pixmap loses its contents without cage knowing. A root resize copies the old pixels and
+  changes cage's output mode (whole-scene damage), which is check 4(d); an Android surface loss
+  does not touch the X root pixmap (read, not tested): test background/foreground and screen
+  off/on after the numbers.
+- Idle frames still cost something with `vfr = false`: cage commits an idle frame per Hyprland
+  commit (fact 5) and the X server handles one empty Present each. Check 1 measures that; it is
+  the floor of this patch, not zero.
+- If cage ever takes the scanout path with a buffer whose stale regions the X server then flips to
+  the screen, damage-limited updates would show them. Read: `loriePresentFlip` declines these
+  pixmaps (`InitOutput.c:798`, they carry no LorieBuffer), so the X server copies. If a future
+  Xlorie change enables flipping for shared-memory pixmaps, this patch must be off.
+- The mock-parent harness was not run (above); the first execution of the damage rectangles is the
+  device.
 
 ## What I did not do
 
-No adb, no device, no Kotlin, no `start.sh`, no packager, no Hyprland or cage change.
+No adb, no device, no Kotlin, no `start.sh`, no packager, no Hyprland, cage or Xlorie change, no
+implementation of the VFR fixes, no functional host test of the rectangles. The builder container
+`omdroid-aq-r10damage` and the scratch work dir are left running for a repeat build; remove the
+container with `docker rm -f omdroid-aq-r10damage` when done (not run by me: it waits on an
+approval dialog).
