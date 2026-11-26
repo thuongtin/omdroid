@@ -461,14 +461,17 @@ def main():
         now = time.monotonic()
         root = xroot()
         if root != last_root:
-            # First reading, a rotation, a fold or a dock: ask Hyprland at once
-            # and keep asking every tick while the size settles.
+            # A rotation, a fold or a dock: ask Hyprland at once and keep asking
+            # every tick while the size settles. The first reading is not a
+            # change; the pre-ready path already queries every tick.
+            if last_root is not None:
+                hot_until = now + HOT_S
             last_root = root
-            hot_until = now + HOT_S
         sig = signature()
         if sig != last_sig:
+            if last_sig is not None:
+                hot_until = now + HOT_S
             last_sig = sig
-            hot_until = now + HOT_S
         # Ask Hyprland while the session is not ready yet, for HOT_S after any
         # change that can move the monitor or the layers, on the steady
         # heartbeat, or until a first answer arrived. Other ticks read only the
