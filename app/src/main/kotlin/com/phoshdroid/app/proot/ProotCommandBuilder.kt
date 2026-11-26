@@ -1,5 +1,8 @@
 package com.phoshdroid.app.proot
 
+import com.phoshdroid.app.launch.GpuMode
+import com.phoshdroid.app.launch.GpuModeRule
+
 /**
  * Builds the proot command for the Omarchy guest.
  *
@@ -123,6 +126,8 @@ class ProotCommandBuilder(
         scale: Int,
         refreshMhz: Int,
         bindSdcard: Boolean = false,
+        gpu: GpuMode = GpuMode.KGSL,
+        gpuSource: String = GpuModeRule.SOURCE_SETTING,
     ): Map<String, String> {
         val hyprlandStage = "/opt/omarchy-android/hyprland"
         val mesa = "/opt/omarchy-android/mesa"
@@ -141,7 +146,6 @@ class ProotCommandBuilder(
                 "TERM" to "xterm-256color",
                 "OMARCHY_PATH" to "/usr/share/omarchy",
                 "OMARCHY_PROOT" to "1",
-                "OMARCHY_GPU_MODE" to "kgsl",
                 "OMARCHY_SCALE" to scale.toString(),
                 "OMARCHY_REFRESH_MHZ" to refreshMhz.toString(),
                 "PATH" to "$hyprlandStage/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -154,13 +158,9 @@ class ProotCommandBuilder(
                 // the guest's compositor and are ignored by host binaries.
                 "LD_LIBRARY_PATH" to "$nativeLibDir:$mesa/root/usr/lib:/opt/omarchy-android/aquamarine/lib",
                 "LIBGL_DRIVERS_PATH" to "$mesa/root/usr/lib/dri",
-                "MESA_LOADER_DRIVER_OVERRIDE" to "kgsl",
-                "VK_ICD_FILENAMES" to "$mesa/freedreno_icd.json",
-                "FD_KGSL_ENABLE_DMABUF" to "1",
                 "AQ_NO_KMS_REQUIREMENT" to "1",
                 "AQ_NO_MODIFIERS" to "1",
                 "AQ_WAYLAND_REFRESH_MHZ" to refreshMhz.toString(),
-                "HYPRLAND_ANDROID_DMABUF" to "1",
                 "HYPRLAND_SHM_DAMAGE" to "1",
                 "HYPRLAND_EGL_NO_MODIFIERS" to "1",
                 "HYPRLAND_EGL_SURFACELESS" to "1",
@@ -180,6 +180,9 @@ class ProotCommandBuilder(
                 // proot's ELF loader — must be executable (in nativeLibDir)
                 "PROOT_LOADER" to "$nativeLibDir/libproot-loader.so",
             )
+        env.putAll(gpuEnvironment(gpu, mesa))
+        env["OMDROID_GPU"] = gpu.value
+        env["OMDROID_GPU_SOURCE"] = gpuSource
         // A hint only means something when both dimensions are known; the guest
         // falls back to the X root otherwise (contract section 1). In Lua 0 is
         // truthy, so exporting a zero here would force a 0x0 mode.
@@ -192,6 +195,39 @@ class ProotCommandBuilder(
         }
         return env
     }
+
+    /**
+     * The variables that differ between the two GPU modes (contract section 9). Everything else in
+     * [buildEnvironment] is the same in both: the nested Wayland path (`AQ_*`, `HYPRLAND_SHM_DAMAGE`,
+     * the surfaceless EGL switches) does not depend on the GPU vendor.
+     *
+     * The KGSL entries are exactly the ones the environment carried before the software mode existed.
+     * The software mode drops the three that only mean something to an Adreno driver
+     * (`VK_ICD_FILENAMES`, `FD_KGSL_ENABLE_DMABUF`, `HYPRLAND_ANDROID_DMABUF`) and adds the three that
+     * select the patched Mesa's llvmpipe. `start.sh` repeats both blocks for a manual launch; a unit
+     * test keeps the two in step.
+     */
+    private fun gpuEnvironment(
+        gpu: GpuMode,
+        mesa: String,
+    ): Map<String, String> =
+        when (gpu) {
+            GpuMode.KGSL ->
+                mapOf(
+                    "OMARCHY_GPU_MODE" to "kgsl",
+                    "MESA_LOADER_DRIVER_OVERRIDE" to "kgsl",
+                    "VK_ICD_FILENAMES" to "$mesa/freedreno_icd.json",
+                    "FD_KGSL_ENABLE_DMABUF" to "1",
+                    "HYPRLAND_ANDROID_DMABUF" to "1",
+                )
+            GpuMode.SOFTWARE ->
+                mapOf(
+                    "OMARCHY_GPU_MODE" to "software",
+                    "MESA_LOADER_DRIVER_OVERRIDE" to "swrast",
+                    "LIBGL_ALWAYS_SOFTWARE" to "1",
+                    "GALLIUM_DRIVER" to "llvmpipe",
+                )
+        }
 
     companion object {
         /** The broker the rootfs overlay installs; ProotService runs it as the root proot's program. */

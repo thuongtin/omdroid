@@ -60,8 +60,8 @@ this Hyprland build accepts.
 
 1. Host: wipe `<prefix>/tmp/omarchy-runtime/` (it is `XDG_RUNTIME_DIR`: nothing in it is meant to
    survive a session) and stale `<prefix>/tmp/proot-*` entries; keep the logs in `<prefix>/tmp`.
-2. Host: start the X server, then the proot guest with `/etc/phoshdroid/start.sh`, and alongside
-   it the fake-root broker proot (section 7). No host-side Wayland compositor is started (weston
+2. Host: start the X server, then the proot guest with `/etc/phoshdroid/start.sh` (its environment
+   carries the GPU mode, section 9), and alongside it the fake-root broker proot (section 7). No host-side Wayland compositor is started (weston
    is gone; cage inside the guest is the parent).
 3. Guest `start.sh`: build the plugin index, remove a stale ready marker, start the resize helper
    and the ready/resize watcher, exec `dbus-run-session ... cage -- session-child.sh`.
@@ -77,7 +77,7 @@ this Hyprland build accepts.
 - Guest: `/tmp/omarchy-session.log` (session), `/tmp/fit-x11.log`, `/tmp/omarchy-watch.log`
   (watcher: one line per state change, with a timestamp). Guest `/tmp` = `<prefix>/tmp`.
 - Host: logcat tag `Phoshdroid`, lines starting `launch:` carry the phase name and milliseconds
-  since process start.
+  since process start. Lines starting `gpu:` carry the GPU decision (section 9).
 
 ## 7. Fake root (`sudo`)
 
@@ -214,3 +214,75 @@ and pointing devices Android lists, the keyboard cover's included) and `input: c
 side, `/tmp/omarchy-watch.log` gets `ui mode mobile -> desktop` and
 `ui switch: omdroid-ui rc=0; plugin-index rc=0; …`, plus `monitor fit <W>x<H> rc=0` when a config
 reload had moved the monitor.
+
+## 9. GPU path (KGSL or software)
+
+The session has two GPU paths and the host chooses between them. Both run the same patched Mesa
+(`/opt/omarchy-android/mesa`) and the same nested Wayland buffer path; they differ only in which
+Mesa driver Hyprland's EGL context uses.
+
+| Mode | Driver | Needs | Speed |
+|---|---|---|---|
+| `kgsl` | the patched Mesa's `kgsl` Gallium driver (freedreno on the Adreno through `/dev/kgsl-3d0`) | a Qualcomm Adreno phone | GPU |
+| `software` | the same Mesa's `llvmpipe` (`swrast`) on the CPU | nothing; any phone | slow, measured per device |
+
+**Who decides.** The host: `launch/GpuMode.kt`, `GpuModeRule.resolve(preference, kgslUsable)`. The
+preference is Settings -> Graphics (`gpu_mode` in the `phoshdroid_prefs` store): `auto` (default and
+the value of anything unknown), `kgsl` or `software`. `auto` picks `kgsl` when `/dev/kgsl-3d0`
+exists and this app can read and write it, else `software`. An explicit `kgsl` or `software` is
+honoured even when that probe disagrees. The decision is made once per session start by
+`ProotService` and passed to the guest, and to the root broker, as environment:
+
+| Variable | Values | Meaning |
+|---|---|---|
+| `OMDROID_GPU` | `kgsl`, `software` | the resolved mode |
+| `OMDROID_GPU_SOURCE` | `auto`, `setting` | `auto`: the host chose from the device, so the guest may fall back once (below). `setting`: the user chose, nothing overrides it |
+
+**The per-mode variables** (everything else in the guest environment is identical in both):
+
+| Variable | `kgsl` | `software` |
+|---|---|---|
+| `OMARCHY_GPU_MODE` | `kgsl` | `software` (the only reader, `omarchy-launch-shell`, treats every non-`kgsl` value alike) |
+| `MESA_LOADER_DRIVER_OVERRIDE` | `kgsl` | `swrast` |
+| `LIBGL_ALWAYS_SOFTWARE` | unset | `1` |
+| `GALLIUM_DRIVER` | unset | `llvmpipe` (the patched Mesa has no softpipe) |
+| `VK_ICD_FILENAMES` | `/opt/omarchy-android/mesa/freedreno_icd.json` | unset (the image has no lavapipe) |
+| `FD_KGSL_ENABLE_DMABUF` | `1` | unset |
+| `HYPRLAND_ANDROID_DMABUF` | `1` | unset (no dma-buf producer; clients use `wl_shm`) |
+
+`ProotCommandBuilderTest` pins the `kgsl` environment to the literal list 0.0.17 passed, and
+`GuestGpuScriptsTest` runs the guest's `start.sh` block in bash and compares it with what the host
+passes, so the two sides cannot drift.
+
+**The guest.** The GPU block of `start.sh` honours `OMDROID_GPU`. When it is missing or not one of the
+two values (a manual launch from a shell, `bash /etc/phoshdroid/start.sh`), the block probes
+`/dev/kgsl-3d0` itself the same way, sets the source to `auto`, and exports the matching variables;
+it also `unset`s the other mode's variables, so a stale shell cannot leak them. `OMDROID_GPU=software
+bash /etc/phoshdroid/start.sh` forces the software mode by hand. One line goes to
+`/tmp/omarchy-session.log`: `gpu: mode=<mode> source=<source> from=<host|probe|marker>`.
+
+**The fallback.** When the mode is `kgsl` and the source is `auto`, `session-child.sh` runs Hyprland as
+a child instead of `exec`ing it. If Hyprland exits non-zero within 15 s of starting
+(`OMDROID_GPU_FALLBACK_WINDOW`) and nobody asked it to stop, the script logs
+`gpu: Hyprland exited <rc> after <n>s in kgsl mode; ...`, removes the failed start's `hypr/` instance
+dir and shell launch lock, switches to the software block and starts Hyprland once more (`exec`).
+It also leaves `$XDG_RUNTIME_DIR/omdroid-gpu-fallback`: the host wipes the runtime dir before every
+launch, so the marker lives for this launch only, and a host retry of the whole session (next
+paragraph) finds it in `start.sh` and starts in software mode at once (`from=marker`). The fallback
+is off when the user chose a mode (`source=setting`), and `OMDROID_GPU_FALLBACK=0` (for example in
+`~/.config/omdroid/session.env`) turns it off for an auto session. Every other start still `exec`s
+Hyprland exactly as before.
+
+**With the host's retry.** `SessionExit.shouldRetry` restarts a guest that exits non-zero inside its
+first 30 s, once. The two retries do not stack on the same failure: the guest's own fallback runs
+inside the first attempt (up to 15 s lost), and if the software start fails too, the session exits with
+that second Hyprland's code, so the host's one retry (if the 30 s have not passed) starts straight in
+software through the marker rather than trying KGSL a third time. A software failure that also happens
+in the retry shows the session-ended screen as before.
+
+**Logs.** Host, logcat tag `Phoshdroid`: `gpu: preference=auto kgsl-usable=false -> software
+source=auto`. Guest: the `gpu:` lines above in `/tmp/omarchy-session.log`.
+
+**Not shipped.** virgl (the image has no `virpipe` driver and there is no host-side virgl server) and
+ANGLE on the host are not options, and neither is a Mali, Xclipse or PowerVR hardware path: those
+drivers need a DRM render node the app sandbox does not expose.

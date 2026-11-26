@@ -18,6 +18,16 @@
             app:defaultValue="120000" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="Graphics">
+        <ListPreference
+            app:key="gpu_mode"
+            app:title="Graphics"
+            app:entries="@array/gpu_mode_entries"
+            app:entryValues="@array/gpu_mode_values"
+            app:defaultValue="auto"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="Storage">
         <SwitchPreferenceCompat
             app:key="bind_sdcard"
@@ -27,6 +37,12 @@
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Advanced">
+        <SwitchPreferenceCompat
+            app:key="phantom_limit_fix"
+            app:title="Lift Android's child-process limit"
+            app:summary="Stops Android 12+ from killing desktop apps past 32 background processes. Needs the one-time adb grant from install.sh, otherwise the notification shows the command"
+            app:defaultValue="true" />
+
         <SwitchPreferenceCompat
             app:key="show_terminal"
             app:title="Show Terminal Panel"
