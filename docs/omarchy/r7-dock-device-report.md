@@ -15,7 +15,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | T4 | Pin | **FAIL** (the guest ignores the pin) / PASS (host never writes) | `dock: ui desktop kept (pinned)` on dock and undock, `ui` untouched (`mobile`); but `pin=desktop` left the UI `mobile` undocked AND docked (5 omamobile plugins throughout); `auto` -> follows (nothing to switch) |
 | T5 | Repeat x5 | PENDING | |
 | T6 | Input while docked | PENDING | |
-| T7 | Fixes | PENDING | |
+| T7 | Fixes | IN PROGRESS | 4 root causes, 4 fixes: `3ed2f47`, `9ad4c2b` (+ termux-x11 `57790ca`), `60fe8ef`; gate `BUILD SUCCESSFUL`, `unit tests 100 failed 0`, lint 0 errors; APK `omdroid-dock-fix1.apk` sha256 `3b4166ab…20cf0c2`; device re-proof running |
 | T8 | Hand-off and cleanup | PENDING | |
 
 ## Settings changed on the tablet (restore list)
@@ -209,3 +209,25 @@ RESULT t3-undock: ui switch logged at +12.9 s (host), desktop ready (switch + pr
   1920x914. So the start-time mode in T2 came from the switch's config reload, not from the move;
   and the 165 px gap (X root 1920x915) is there with or without a switch (T2's FAIL 1).
 - `echo auto > ui-pin`: `ui=mobile pin=auto`, nothing to switch undocked (correct), mobile PASS.
+
+### T7. Root causes and fixes
+
+| # | Failure (step) | Root cause | Fix | Commit |
+| --- | --- | --- | --- | --- |
+| F1 | X root 1920x915 on a 1920x1080 display (T2) | `MainActivity.onCreate` applied the launcher's 165 px bottom gap once; a display move keeps the activity, and the dock monitor's re-launch extras (0/0) land in `onNewIntent`, which did nothing | termux-x11 `MainActivity.applyPhoshdroidPadding()`: the launcher's gaps apply only on the built-in display, 0 elsewhere; re-applied on configuration change (a move), focus change and new intent; logs `x-view margins top=.. bottom=.. (display N)`. A docked launch passes `phoshdroid_builtin_bottom_padding_px` (launcher `builtinBottomGap`) for the way back | termux-x11 `57790ca`, pointer + launcher `9ad4c2b` |
+| F2 | Hyprland monitor 3200x1970 on a 1920x914 cage after the switch (T2) | `monitors.lua` builds the mode from the session-start `OMARCHY_OUTPUT_*`; Hyprland auto-reloads when `omdroid-ui.sh` edits `looknfeel.lua`, and every full reload puts that start-time mode back. Proven live: `hyprctl eval 'hl.monitor({ output = "", mode = "1920x914@120.000", position = "auto", scale = 2, transform = 0 })'` moved the monitor 3200x1970 -> 1920x914 at once | `omarchy-watch.py`: `fit_monitor()` (that `hl.monitor` rule at the even-rounded X root, current scale and refresh) right after the switch's scripts and, after `ready`, whenever monitor != X root for 1.5 s (3 tries per size); the switch's own reload is `hyprctl reload config-only` | `60fe8ef` |
+| F3 | `dock: ui mobile written (docked)` / `ui desktop written (undocked)` (T2, T3) | `UiModeFile.apply` built `effective` from the file content read BEFORE the write | pin, then the mode just written, then the old file; 2 new tests | `3ed2f47` |
+| F4 | `ui-pin` = `desktop` left the UI `mobile` (T4) | the guest read only `ui`; the host (correctly, per contract) never writes `ui` while pinned, so nothing ever applied the pin | `omdroid-ui.sh` and the watcher's `ui_mode()` use `ui-pin` while it names a mode, else `ui`; 8/8 host-side cases of `ui_mode()` checked against temp files | `60fe8ef` |
+| F5 | (found reading the code for T5) a UI switch refused by the restart rate limit was dropped, leaving the old shell on screen; a rate-limited layer pass counted as one of the 3 attempts | `switch_ui` returned without a restart and `last_ui` moved on | a refused restart is queued (`PENDING_RESTART`) and run as soon as the limit allows; a rate-limited layer pass is not an attempt | `60fe8ef` |
+
+One commit carries F2, F4 and F5 because all three live in `omarchy-watch.py` (F4 also in
+`omdroid-ui.sh`) and were written and gated together.
+
+Gate on `60fe8ef` (GRADLE_USER_HOME in scratch, the project's 4 GB heap):
+`./gradlew :app:compileDebugKotlin :app:test :app:lintDebug --console=plain` -> **BUILD SUCCESSFUL in
+57s**; `unit-count.py` -> **`unit tests 100 failed 0`** (98 + 2); lint **0 errors**, 32 warnings.
+`bash -n omdroid-ui.sh` and an AST parse of the watcher clean. `assembleDebug` -> BUILD SUCCESSFUL
+in 1m 7s (no OOM at 4 GB): `omdroid-dock-fix1.apk`, 1,715,760,502 B, sha256
+`3b4166ab6106ac08cd4c35d42fa9270c6aadf546ef1d6edf37bd1d46220cf0c2`, tree `60fe8ef` + Phil's
+uncommitted `gradle.properties` heap line; its `assets/guest-overlay` watcher and `omdroid-ui.sh`
+equal HEAD (`b8acadac…`, `ab6ae227…`).
