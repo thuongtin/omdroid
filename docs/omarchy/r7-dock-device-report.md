@@ -10,7 +10,7 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 | --- | --- | --- | --- |
 | T0 | Baseline: install test2, cold start, probe, undocked mobile, dock lines, touch, key capture, `sudo id` | **PASS** (dock baseline) / **FAIL** (`sudo id`, not this round's fix) | install sha `a239a8c5…12fc407a0` PASS; cold start handover +7.6 s, desktop PASS +8.0 s; `dock: undocked`; `wl_touch`; KeyInterceptor bound; `sudo id` -> `omdroid-rootd: peer is not this app` |
 | T1 | How a second display works on this tablet | **PASS** | `overlay_display_devices 1920x1080/160` -> display 2, `type OVERLAY`, `FLAG_PRESENTATION, FLAG_TRUSTED` (not PRIVATE), density 160; `activities_on_secondary_displays` present; `am start --display 2` Settings -> `Display #2` fullscreen; no other setting needed |
-| T2 | Dock (M1 + M2) | PENDING | |
+| T2 | Dock (M1 + M2) | **FAIL** (geometry) / PASS (move, UI switch, no restart) | X activity MOVED to display 3 (same ActivityRecord, same task); `ui switch` +3.9 s; foot pid 7306 kept; but X root **1920x915** (165 px key-bar gap kept), Hyprland monitor **3200x1970** (start-time mode re-applied), `dock: ui mobile written (docked)` names the wrong mode |
 | T3 | Undock (M2) | PENDING | |
 | T4 | Pin | PENDING | |
 | T5 | Repeat x5 | PENDING | |
@@ -102,3 +102,62 @@ Scratch: `<scratch>/omarchy/r7/device/`.
 - **Combination that lets an app run on the second display: none needed.** HyperOS left as found:
   `force_desktop_mode_on_external_displays=0`, `enable_freeform_support=0` (not changed);
   `force_resizable_activities=1` was already on before the round (not changed either).
+
+### T2. Dock (build test2, 08:58-09:01 UTC)
+
+Before (`snap.sh t2-before`, fresh cold start: handover +10.3 s, desktop PASS +9.7 s, then one
+`foot` via `hc.sh '/dispatch hl.dsp.exec_cmd("foot")'`): app/X server pid 6096, proot 6222 (root
+broker) and 6243 (session), cage 6514, Hyprland 6516, quickshell 6579, **foot 7306**; X activity
+`ActivityRecord{174012199 ... t4454}` on `Display #0`; xroot 3200x1971, cage 3200x1970, monitor
+3200x1970 scale 2, `clients 1`, `ui=mobile`, scan 42 blocks / 5 omamobile, probe PASS.
+
+`dock.py on` (t0 = device clock at the `settings put`, 08:59:08.911):
+```
++0.47s logcat Phoshdroid: dock: docked display=3 1920x1080@160 kbd=0 mouse=1 (change)
++0.47s logcat Phoshdroid: dock: ui mobile written (docked)
++0.47s logcat Phoshdroid: dock: extra-key bar hidden
++0.50s logcat Phoshdroid: dock: session asked onto display 3
+~1s    watch  ui mode mobile -> desktop, switching in place
+~4s    watch  ui switch: omdroid-ui rc=0; plugin-index rc=0; omarchy-restart-shell rc=0; layers fit again 0.1 s after the restart; hyprctl reload skipped: monitor and X root differ, the size logic owns it
+RESULT t2-dock: ui switch logged at +3.9 s (host), desktop ready (switch + probe PASS at 1920x1080) at +NEVER s
+```
+(The simulated display came up as id 3: Android gives every re-added overlay a new id.)
+
+After (`snap.sh t2-after`, 09:00:35):
+- **Where the X activity is: moved, not re-launched.** `Display #3 ... topResumedActivity=
+  ActivityRecord{174012199 u0 com.phoshdroid.app/com.termux.x11.MainActivity t4454}` - the same
+  ActivityRecord and task as before, the same app pid 6096; `Display #0` is back on the HyperOS
+  launcher. No `launch:` line: the launcher was not involved.
+- Session untouched: pids 6096 / 6222 / 6243 / cage 6514 / Hyprland 6516 unchanged, **foot 7306
+  still there** (`clients 1`, `class=foot ws=1`); only quickshell is new (6579 -> 8025, the switch's
+  shell restart). No `FATAL`/`AndroidRuntime`.
+- Guest: `ui=desktop`, scan file 37 blocks / **0 omamobile**, layers `omarchy-background`
+  + `omarchy-bar` (bar 26 px logical, the stock desktop bar), no omamobile layer.
+- **FAIL 1 - X root 1920x915, not 1920x1080.** cage window 1920x914. 1080 - 915 = 165 = the
+  tablet's extra-key-bar gap (`XLORIE geometry: 3200x1971 (window 3200x2136, bottom gap 165)`).
+  The view's margins are applied once in `MainActivity.onCreate` from the launch extras; the move
+  keeps the activity (no recreate, `configChanges` covers it) and the dock monitor's re-launch with
+  `phoshdroid_bottom_padding_px=0` reaches `onNewIntent`, which does not apply them. The bar itself
+  is hidden (`dock: extra-key bar hidden`), so the 165 px are a black band.
+- **FAIL 2 - Hyprland monitor 3200x1970 scale 2**, not the cage size: `probe: VERDICT: FAIL Hyprland
+  monitor 3200x1970 != cage window 1920x914`. Hyprland's own log (`hyprctl rollinglog`):
+  `Output WAYLAND-1: configure toplevel with 1920x914` -> `Swapchain: Reconfigured ... 1920, 914`
+  -> `Swapchain: Reconfigured ... 3200, 1970`. Hyprland did follow cage, then a config reload put
+  the start-time mode back: `monitors.lua` builds the mode from `OMARCHY_OUTPUT_WIDTH/HEIGHT`, which
+  are fixed at session start, and Hyprland auto-reloads its config when a config file changes
+  (`misc:disable_autoreload` = false) - `omdroid-ui.sh` edits `looknfeel.lua` during the switch
+  (mtime 08:59). The watcher's own `hyprctl reload` was skipped, but its premise (a reload
+  re-applies the CURRENT mode when monitor = root) is wrong in any case: it re-applies the
+  START-TIME mode. After `ready` the watcher has no remedy for monitor != X root.
+- **FAIL 3 - log line:** `dock: ui mobile written (docked)` while the file now says `desktop`
+  (contract §8 promises `dock: ui desktop written (docked)`).
+- Scale: the session keeps its start-time scale 2 on a 160 dpi display (a cold start while docked
+  would resolve scale 1 through `UiScale`); with FAIL 2 fixed the docked desktop would be 960x540
+  logical.
+- Screens: `shots/t2-dock-d2.png` (display 3, SurfaceFlinger id 11529215047708466855): the stock
+  desktop bar (workspaces 1-5, `Thursday 09:00`) and the foot terminal, cropped - only the top-left
+  1920x914 of a 3200x1970 output is visible (the terminal runs off the right edge), black band
+  across the bottom 165 rows. `shots/t2-dock-tablet.png`: the tablet is on the HyperOS home screen,
+  with the small "Overlay #1" window top-left showing the same cropped desktop.
+- Time from `settings put` to the switch: **3.9 s** (ui switch logged); to a desktop at the
+  display's size: never (FAIL 1 + 2).
