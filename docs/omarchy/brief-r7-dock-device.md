@@ -136,3 +136,28 @@ your report's sections, so neither file is left with PENDING placeholders.
 Final reply, at most 10 lines: T0-T8 with the decisive number or log line each, how the X activity
 reached the second display (moved or re-launched), the switch times, the fixes with commits, the
 final APK path and sha256, and what Phil must test on the phone.
+
+## AMENDMENT (parent, before launch) — read this before T0
+
+- **Two adb devices are attached**: the tablet (serial in your launcher prompt) and Phil's phone
+  over wireless adb. Never run any command against the phone, not even a read. Every adb call
+  goes through `-s $TABLET_SERIAL` or the tools in `docs/omarchy/tools/` (they require it).
+- **Install `<mesh dir>/omdroid-0.0.15-test2.apk`** (sha256 `a239a8c5…12fc407a0`,
+  see "The build" above). It also carries the sudo broker fix; after the cold start in T0 run
+  `sudo id` in the guest once (`sx.sh 'sudo id'`) and record the line: Phil saw
+  `omdroid-rootd: peer is not this app` on the previous build, this one must print `uid=0(root)`.
+  If it does not, quote `/tmp/omdroid-root/rootd.log` and `/tmp/root-broker.log`, record FAIL, and
+  carry on with the dock steps (sudo is not this round's fix).
+- **Gradle is impaired on this machine right now**: `~/.gradle/caches` is an empty root-owned mount
+  (Phil's disk move in another session, not yours to repair; do not touch it, `/mnt/data` or
+  `gradle.properties`, which Phil's session changed to a 4 GB heap). If T7 needs a build, run gradle
+  with `GRADLE_USER_HOME=<scratch>/omarchy/r7/gradle-home` (it downloads its own
+  cache once) and the heap the project file sets. If `assembleDebug` runs out of memory there, do
+  not raise the heap: for guest-only fixes (files under `rootfs/overlay/etc/phoshdroid/`) patch the
+  test APK the way the last section of `docs/omarchy/r6-sudo-report.md` describes (replace the
+  changed `assets/guest-overlay/...` entries, `zipalign -P 16 -f 4`, `apksigner` with
+  `~/.config/.android/debug.keystore`, alias `androiddebugkey`, pass `android`), or simply
+  `gpush.sh` the file for the re-test and say so; for Kotlin fixes commit them with unit tests and
+  mark the device re-proof PENDING with the reason.
+- The scratch directory `<scratch>/omarchy/r7/` was pruned by a cleanup; create
+  `r7/device/` yourself.
