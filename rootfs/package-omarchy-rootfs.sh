@@ -85,6 +85,11 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/sudo" "$WORK/stage/etc/phoshdroid/sudo"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid_root.py" "$WORK/stage/etc/phoshdroid/omdroid_root.py"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/fakeroot" "$WORK/stage/etc/phoshdroid/fakeroot"
 cp -a "$OVERLAY_DIR/etc/phoshdroid/yay" "$WORK/stage/etc/phoshdroid/yay"
+# Hard-link repair for guests an older extractor left without their hard-link
+# members (docs/omarchy/r6-sudo-report.md). hardlinks.txt lists them as
+# member<TAB>target and must match the image this script builds.
+cp -a "$OVERLAY_DIR/etc/phoshdroid/omdroid-repair-links.sh" "$WORK/stage/etc/phoshdroid/omdroid-repair-links.sh"
+cp -a "$OVERLAY_DIR/etc/phoshdroid/hardlinks.txt" "$WORK/stage/etc/phoshdroid/hardlinks.txt"
 # aquamarine with wl_touch (lib/README.md). start.sh puts /etc/phoshdroid/lib first
 # in LD_LIBRARY_PATH; the image copy in /opt/omarchy-android/aquamarine stays as is.
 cp -a "$OVERLAY_DIR/etc/phoshdroid/lib" "$WORK/stage/etc/phoshdroid/lib"
@@ -96,7 +101,8 @@ chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/sess
     "$WORK/stage/etc/phoshdroid/omdroid_root.py" \
     "$WORK/stage/etc/phoshdroid/sudo" \
     "$WORK/stage/etc/phoshdroid/fakeroot" \
-    "$WORK/stage/etc/phoshdroid/yay"
+    "$WORK/stage/etc/phoshdroid/yay" \
+    "$WORK/stage/etc/phoshdroid/omdroid-repair-links.sh"
 # The vendored helpers go on the session PATH through /usr/local/bin, so the
 # bar and the launcher find them by bare name. The symlinks are image-time; the
 # scripts they point at are APK-synced into /etc/phoshdroid every start.

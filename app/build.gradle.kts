@@ -77,6 +77,7 @@ val syncGuestOverlay =
             include("start.sh", "session-child.sh", "omarchy-plugin-index.sh", "fit-x11.py", "omarchy-watch.py")
             include("omdroid-ui.sh")
             include("omdroid-rootd.py", "sudo", "omdroid_root.py", "fakeroot", "yay")
+            include("omdroid-repair-links.sh", "hardlinks.txt")
             include("omamobile/**")
             include("fake-proc/**")
             include("lib/**")

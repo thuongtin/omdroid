@@ -80,6 +80,10 @@ rm -f /run/user/1000/wayland-omarchy /run/user/1000/wayland-omarchy.lock
 # purpose: all of it lives in omdroid-ui.sh.
 bash /etc/phoshdroid/omdroid-ui.sh
 
+# Hard-link members an older extractor dropped (gcc needs /usr/bin/ld). Copies
+# them from their targets once, then a marker skips the scan on later starts.
+bash /etc/phoshdroid/omdroid-repair-links.sh
+
 # Build the shell plugin index for this session. In proot mode Quickshell reads
 # this file instead of scanning, and upstream writes it only when uname -r
 # reports PRoot, which proot-distro does not. Without it the shell loads with
