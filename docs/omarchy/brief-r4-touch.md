@@ -5,7 +5,7 @@ never call `delegate_task`.
 
 Repo: `<repo>` (branch `main`, read `AGENTS.md`).
 Tools: `docs/omarchy/tools/` (run them from that directory). Every tool needs
-`export TABLET_SERIAL=<tablet serial>` first. Never write that serial into any repo file.
+`export TABLET_SERIAL=<adb serial>` first. Never write that serial into any repo file.
 Your report, created in your FIRST calls and updated after EVERY item:
 `docs/omarchy/r4-touch-report.md`, starting with a STATUS TABLE (rows T0-T4, `PENDING` until
 proven, then `PASS`/`FAIL`/`BLOCKED` plus the numbers). Write a row in the same call that produced
@@ -44,7 +44,7 @@ Facts you can rely on:
 - Device: ONLY `<tablet serial>`. Another device (a phone) may be attached: never touch it.
 - **The tablet has a PIN lock.** Never type or tap anything while the keyguard shows (that would
   be a PIN guess). Check with
-  `adb -s <tablet serial> shell dumpsys window | grep isKeyguardShowing`.
+  `adb -s $TABLET_SERIAL shell dumpsys window | grep isKeyguardShowing`.
 - Phil may be using the tablet. Do what the brief needs and nothing else on it.
 - NEVER `adb install`, `adb uninstall`, `pm clear`, or delete under `files/usr`. Install only with
   `./install.sh` (it drives the on-device installer). NEVER run the packager
@@ -74,17 +74,17 @@ Facts you can rely on:
 
 ### T0. Unlock, stay awake, install the release
 1. If the keyguard shows, wait for Phil to unlock it with at most four calls of
-   `timeout 380 bash -c 'while adb -s <tablet serial> shell dumpsys window | grep -q "isKeyguardShowing=true"; do sleep 10; done' || echo STILL-LOCKED`.
+   `timeout 380 bash -c 'while adb -s $TABLET_SERIAL shell dumpsys window | grep -q "isKeyguardShowing=true"; do sleep 10; done' || echo STILL-LOCKED`.
    Still locked after four: mark T0 `BLOCKED (locked)`, write the report and end your turn.
-2. Record `adb -s <tablet serial> shell settings get global stay_on_while_plugged_in` in the report,
-   then `adb -s <tablet serial> shell svc power stayon usb` so the screen does not lock again. At the
+2. Record `adb -s $TABLET_SERIAL shell settings get global stay_on_while_plugged_in` in the report,
+   then `adb -s $TABLET_SERIAL shell svc power stayon usb` so the screen does not lock again. At the
    end, and before you stop for any reason, restore it (`svc power stayon false` when the
    recorded value was 0) and put the read-back in the report.
 3. Install the published release:
    `./install.sh <repo>/app/build/outputs/apk/debug/omdroid-0.0.14-alpha.apk`
    (sha256 `ee8cdaf9…b59f`; expect `INSTALL: PASS`). Then `./coldstart.sh 2 --tag r4-base`
    (600 s timeout). Record per run: handover, desktop, and from logcat
-   (`adb -s <tablet serial> logcat -d -s Phoshdroid:*`) every `launch: decision`, `launch: guest-overlay`
+   (`adb -s $TABLET_SERIAL logcat -d -s Phoshdroid:*`) every `launch: decision`, `launch: guest-overlay`
    and `launch: ready` line. If the install fails, say so and work on the installed build.
 
 ### T1. Reproduce, with numbers
@@ -94,9 +94,9 @@ record whether the expected thing happened:
   `./hc.sh j/layers` gains a layer (record its namespace; close it with `./sx.sh 'omarchy-menu close'`);
   a tray icon -> any new layer or popup in `j/layers`, or nothing (record which).
   Go back to workspace 1 between taps.
-- input kinds: touch tap `adb -s <tablet serial> shell input touchscreen tap X Y`; long touch
-  `adb -s <tablet serial> shell input touchscreen swipe X Y X Y 150`; mouse click
-  `adb -s <tablet serial> shell input mouse tap X Y`. Also try the touch tap at y = 45 for two targets
+- input kinds: touch tap `adb -s $TABLET_SERIAL shell input touchscreen tap X Y`; long touch
+  `adb -s $TABLET_SERIAL shell input touchscreen swipe X Y X Y 150`; mouse click
+  `adb -s $TABLET_SERIAL shell input mouse tap X Y`. Also try the touch tap at y = 45 for two targets
   (rule out the top screen edge).
 - control: open two foot windows (`./hc.sh '/dispatch hl.dsp.exec_cmd("foot")'` twice), touch-tap
   the one that is not focused, record `./hc.sh j/activewindow` before and after, and

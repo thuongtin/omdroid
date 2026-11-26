@@ -52,7 +52,7 @@ foreground call over 400 s), and say so.
 
 ## Steps
 
-**D0. Device.** `export TABLET_SERIAL=<tablet serial>` (never write the serial into a repo file). Tools in
+**D0. Device.** `export TABLET_SERIAL=<adb serial>` (never write the serial into a repo file). Tools in
 `docs/omarchy/tools/` (read a tool's head before first use). If the keyguard shows, never enter a
 PIN: `BLOCKED (keyguard)`, bounded waits (4 x 380 s). Record `stay_on_while_plugged_in`, set `2`,
 restore and read back at the end. `probe.sh -q` PASS on what is installed now.

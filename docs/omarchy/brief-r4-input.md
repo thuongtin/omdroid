@@ -5,7 +5,7 @@ never call `delegate_task`.
 
 Repo: `<repo>` (branch `main`, read `AGENTS.md`).
 Tools: `docs/omarchy/tools/` (run them from that directory); every tool needs
-`export TABLET_SERIAL=<tablet serial>` first. Never write that serial into a repo file.
+`export TABLET_SERIAL=<adb serial>` first. Never write that serial into a repo file.
 **Read first, whole: `docs/omarchy/r4-input-research.md`** (the source study this brief is built
 on; it cites file:line for everything below). Also `docs/omarchy/r4-touch-report.md` (the round
 that just finished on the same device: its touch change is already in the tree).
@@ -55,9 +55,9 @@ service, which can never switch on in this app because its code hard-codes the c
 ## Hard rules
 
 - Device: ONLY `<tablet serial>`. Another device may be attached: never touch it. **The tablet has a
-  PIN lock**: never type or tap while `adb -s <tablet serial> shell dumpsys window | grep isKeyguardShowing`
+  PIN lock**: never type or tap while `adb -s $TABLET_SERIAL shell dumpsys window | grep isKeyguardShowing`
   says true. If locked, wait with at most four calls of
-  `timeout 380 bash -c 'while adb -s <tablet serial> shell dumpsys window | grep -q "isKeyguardShowing=true"; do sleep 10; done' || echo STILL-LOCKED`,
+  `timeout 380 bash -c 'while adb -s $TABLET_SERIAL shell dumpsys window | grep -q "isKeyguardShowing=true"; do sleep 10; done' || echo STILL-LOCKED`,
   then mark the device rows BLOCKED and finish the code rows.
 - Stay awake: record `settings get global stay_on_while_plugged_in`, set `svc power stayon usb`,
   restore the recorded value at the end (and before you stop for any reason); read-back in the report.
@@ -125,10 +125,10 @@ defaults `true`/`false`, rebuild, and report both results).
 
 ### K4. Build, grant, prove on the device
 1. Build, gate, `./install.sh <apk>`.
-2. Grants: `adb -s <tablet serial> shell pm grant com.phoshdroid.app android.permission.WRITE_SECURE_SETTINGS`;
+2. Grants: `adb -s $TABLET_SERIAL shell pm grant com.phoshdroid.app android.permission.WRITE_SECURE_SETTINGS`;
    then try the restricted-settings gate from adb (research §2.3: `appops set ... allow` for the op
    that gates it; find the exact op name on this device with
-   `adb -s <tablet serial> shell appops get com.phoshdroid.app`). Cold start (`./coldstart.sh 1 --tag k4`).
+   `adb -s $TABLET_SERIAL shell appops get com.phoshdroid.app`). Cold start (`./coldstart.sh 1 --tag k4`).
    Record the `launch: key-capture` line, `settings get secure enabled_accessibility_services`,
    and whether `dumpsys accessibility` shows the service BOUND. If it does not bind because of
    the restricted-settings gate, add `install.sh`-style instructions for Phil to the report

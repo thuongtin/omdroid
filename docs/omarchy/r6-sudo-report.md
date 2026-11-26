@@ -215,7 +215,7 @@ the guest.
 1. Install, cold start, size probe:
    ```bash
    cd ~/Development/personal/proot-post
-   export TABLET_SERIAL=<tablet serial>
+   export TABLET_SERIAL=<adb serial>
    docs/omarchy/tools/install.sh <scratch>/omarchy/r6/sudo/omdroid-sudo-test.apk
    docs/omarchy/tools/coldstart.sh 1
    docs/omarchy/tools/probe.sh -q

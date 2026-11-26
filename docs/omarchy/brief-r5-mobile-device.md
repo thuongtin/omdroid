@@ -13,7 +13,7 @@ Scratch: `<scratch>/omarchy/r5/device/` (screenshots, logs).
 
 ## The device
 
-- The tablet (Xiaomi Pad, Android 16, HyperOS). `export TABLET_SERIAL=<tablet serial>` in your shell;
+- The tablet (Xiaomi Pad, Android 16, HyperOS). `export TABLET_SERIAL=<adb serial>` in your shell;
   **never write that serial into a repo file**. Tools: `docs/omarchy/tools/` (every one needs
   `TABLET_SERIAL`): `install.sh <apk>` (tries `pm install` from `/data/local/tmp`, prints
   `INSTALL: PASS` + sha256), `coldstart.sh`, `probe.sh -q` (`VERDICT: PASS`), `hc.sh`

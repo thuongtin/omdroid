@@ -60,9 +60,9 @@ apps that check ownership). Add a **root broker**:
 
 ## Steps
 
-**S0. Premises, on the device.** `export TABLET_SERIAL=<tablet serial>` (never write the serial into a
+**S0. Premises, on the device.** `export TABLET_SERIAL=<adb serial>` (never write the serial into a
 repo file). If `adb devices` does not list it, do S1-S4 first, then wait with bounded checks
-(`timeout 380 bash -c 'until adb devices | grep -q "<tablet serial>.device"; do sleep 10; done'`, at
+(`timeout 380 bash -c 'until adb devices | grep -q "$TABLET_SERIAL.device"; do sleep 10; done'`, at
 most 4 times) and write `BLOCKED (tablet not connected)` if it never appears. Keyguard rule: never
 enter a PIN; `BLOCKED (keyguard)` and bounded waits. Record `stay_on_while_plugged_in`, set `2`,
 restore and read back at the end. Then prove by hand, with the live session running, that a
