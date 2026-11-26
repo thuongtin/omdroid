@@ -186,10 +186,16 @@ def install_pacman(targets, log):
 
 
 def sync_databases(log):
-    """pacman -Sy, retried while the failure is an unreachable mirror."""
+    """pacman -Syy, retried while the failure is an unreachable mirror.
+
+    The double y is deliberate: the guest's databases come from image build time,
+    and a plain -Sy keeps them when a lagging mirror answers with an old copy
+    (measured: the guest listed patch 2.8-1 while the mirrors served 2.8.1-1, so
+    every package fetch 404ed). -Syy always re-downloads.
+    """
     output = ""
     for attempt in range(3):
-        code, output = run_step(["sudo", "pacman", "-Sy", "--noconfirm"], log)
+        code, output = run_step(["sudo", "pacman", "-Syy", "--noconfirm"], log)
         if code == 0:
             return code, output
         if not network_failed(output):
