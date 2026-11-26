@@ -94,10 +94,13 @@ class UiModeFile(
         val current = current()
         val written = UiMode.write(pin, current, docked)
         if (written != null) write(UiMode.MODE_PATH, written)
+        // The mode just written wins over the one it replaced: `current` was read
+        // before the write (r7 device round: the log said `ui mobile written
+        // (docked)` while the file had become `desktop`).
         val effective =
             UiMode.normalisePin(pin).takeIf { it != UiMode.AUTO }
+                ?: written
                 ?: UiMode.normaliseMode(current)
-                ?: UiMode.normaliseMode(written)
                 ?: UiMode.MOBILE
         val reason =
             when {

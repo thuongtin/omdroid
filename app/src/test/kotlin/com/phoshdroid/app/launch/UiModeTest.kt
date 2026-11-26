@@ -151,4 +151,28 @@ class UiModeTest {
         )
         assertTrue(modeFile.readText().endsWith("\n"))
     }
+
+    @Test
+    fun `the outcome names the mode just written, not the one it replaced`() {
+        modeFile.parentFile.mkdirs()
+        modeFile.writeText("mobile\n")
+        val docked = UiModeFile(rootfs).apply(docked = true)
+        assertEquals(UiMode.DESKTOP, docked.written)
+        assertEquals(UiMode.DESKTOP, docked.effective)
+        val undocked = UiModeFile(rootfs).apply(docked = false)
+        assertEquals(UiMode.MOBILE, undocked.written)
+        assertEquals(UiMode.MOBILE, undocked.effective)
+    }
+
+    @Test
+    fun `a pinned outcome names the pin the guest applies`() {
+        pinFile.parentFile.mkdirs()
+        pinFile.writeText("desktop\n")
+        modeFile.writeText("mobile\n")
+        val outcome = UiModeFile(rootfs).apply(docked = false)
+        assertEquals(null, outcome.written)
+        assertEquals(UiMode.DESKTOP, outcome.effective)
+        assertEquals("pinned", outcome.reason)
+        assertEquals("mobile", modeFile.readText().trim())
+    }
 }
