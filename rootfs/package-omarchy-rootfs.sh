@@ -2,13 +2,14 @@
 # Builds the Omarchy guest rootfs asset for the APK.
 #
 # Source: the upstream Omarchy-Android release bundle (MIT), sha256-pinned in
-# docs/omarchy/payload-findings.md. Its rootfs.tar.xz is repacked to gzip with
-# this project's overlay applied, because AssetExtractor reads GZIP + tar.
+# docs/omarchy/payload-findings.md. Its rootfs.tar.xz is repacked to zstd
+# (OMDROID_IMAGE_CODEC=gzip switches back) with this project's overlay applied;
+# AssetExtractor picks the decoder from the stream's magic bytes.
 #
 # Output: app/src/main/assets/rootfs.bin
 #
 # Usage: ./rootfs/package-omarchy-rootfs.sh [--bundle PATH]
-# Requires ~6 GB free (staging copy + gzip output).
+# Requires ~6 GB free (staging copy + compressed output).
 
 set -euo pipefail
 
@@ -19,6 +20,16 @@ OVERLAY_DIR="$SCRIPT_DIR/overlay"
 CACHE_DIR="${OMARCHY_PAYLOAD_DIR:-$HOME/omarchy-payload}"
 BUNDLE="$CACHE_DIR/omarchy-android-aarch64-0.1.1.bundle.tar"
 BUNDLE_SHA256="7e9f1cd67533bc0d3988b5cb3831aef52f1527dd90391d9d868ed9345021cdb2"
+
+# Archive codec and level for the guest image. AssetExtractor picks the decoder
+# from the stream's own magic bytes, so a gzip image keeps working (the
+# bootstrap stays gzip either way). zstd -19 --long=26 measured 28% smaller than
+# gzip -6 and 3x faster to decode here; the 64 MiB window captures 6.9% of the
+# 7.4% the maximum window buys while needing ~70 MB to decode instead of ~140 MB
+# (docs/omarchy/r10-image-size.md).
+IMAGE_CODEC="${OMDROID_IMAGE_CODEC:-zstd}"
+ZSTD_LEVEL="${OMDROID_ZSTD_LEVEL:-19}"
+ZSTD_EXTRA="${OMDROID_ZSTD_EXTRA:---long=26}"
 
 if [ "${1:-}" = "--bundle" ]; then
     BUNDLE="$2"
@@ -166,11 +177,65 @@ EOF
 
 # The pmOS-era overlay pieces (bwrap shim, pmroot, gschema override, Firefox
 # prefs) are Phosh-specific and are deliberately not installed here.
-echo "Repacking to gzip (this takes a few minutes)..."
-mkdir -p "$(dirname "$OUTPUT")"
-( cd "$WORK/stage" && tar -cf - . ) | gzip > "$OUTPUT"
+
+# Prune what no process in the session reads (docs/omarchy/r10-image-size.md).
+# The session runs with LC_ALL=C.UTF-8, so no gettext catalog is ever loaded; it
+# reads no man/info/doc pages; and Qt apps here install no translator. NEVER add
+# usr/include or *.a here: yay builds AUR packages against the headers and static
+# libs, and libc_nonshared.a is named by the libc.so linker script.
+# OMDROID_PRUNE=0 packs the unpruned tree, which is the baseline the equivalence
+# check in docs/omarchy/r10-image-size.md compares against.
+if [ "${OMDROID_PRUNE:-1}" = "0" ]; then
+    echo "Prune skipped (OMDROID_PRUNE=0)"
+else
+    echo "Pruning docs, non-English translations and the Python test suite..."
+    for prune_dir in usr/share/doc usr/share/man usr/share/info usr/share/gtk-doc usr/share/help; do
+        rm -rf "${WORK:?}/stage/$prune_dir"
+    done
+    # gettext catalogs: keep en*, drop every other language (and their now-empty
+    # LC_MESSAGES directories).
+    find "$WORK/stage/usr/share/locale" -type f -name '*.mo' \
+        ! -path '*/locale/en/*' ! -path '*/locale/en_*/*' -delete 2>/dev/null || true
+    find "$WORK/stage/usr/share/locale" -mindepth 2 -type d -empty -delete 2>/dev/null || true
+    # Qt's own translations (usr/share/qt6/translations); English is compiled in, the
+    # *_en.qm files are kept because they are free.
+    find "$WORK/stage/usr/share/qt6/translations" -maxdepth 1 -type f -name '*.qm' \
+        ! -name '*_en.qm' -delete 2>/dev/null || true
+    # The Python standard library's test suite; nothing imports it.
+    rm -rf "$WORK/stage"/usr/lib/python3*/test
+fi
+
+# A later `pacman -S` would put the pruned bulk straight back, so the image's
+# pacman.conf gets matching NoExtract globs. pacman's globs cannot express
+# "everything except en", so a new install skips all catalogs; that is fine
+# because nothing in the session reads one (LC_ALL=C.UTF-8). `pacman -Qk` will
+# now report the pruned paths as missing (docs/omarchy/r10-image-size.md).
+NOEXTRACT="NoExtract   = usr/share/doc/* usr/share/man/* usr/share/info/* usr/share/gtk-doc/* usr/share/help/* usr/share/locale/*/LC_MESSAGES/*.mo usr/share/qt6/translations/*.qm usr/lib/python3*/test/*"
+awk -v line="$NOEXTRACT" '
+    $0 == "#NoExtract   =" {
+        print "# Omdroid image: docs and non-English translations are pruned at packaging"
+        print "# time (rootfs/package-omarchy-rootfs.sh); these globs keep a later"
+        print "# pacman -S from extracting the bulk again."
+        print line
+        next
+    }
+    { print }
+' "$WORK/stage/etc/pacman.conf" > "$WORK/stage/etc/pacman.conf.new"
+mv "$WORK/stage/etc/pacman.conf.new" "$WORK/stage/etc/pacman.conf"
+
+if [ "$IMAGE_CODEC" = "zstd" ]; then
+    echo "Repacking to zstd -$ZSTD_LEVEL (this takes a few minutes)..."
+    mkdir -p "$(dirname "$OUTPUT")"
+    ( cd "$WORK/stage" && tar -cf - . ) | zstd -"$ZSTD_LEVEL" $ZSTD_EXTRA -T8 -q --force -o "$OUTPUT"
+    TAR_CODEC="--zstd"
+else
+    echo "Repacking to gzip (this takes a few minutes)..."
+    mkdir -p "$(dirname "$OUTPUT")"
+    ( cd "$WORK/stage" && tar -cf - . ) | gzip > "$OUTPUT"
+    TAR_CODEC="-z"
+fi
 
 echo "Wrote $OUTPUT"
 ls -lh "$OUTPUT"
 sha256sum "$OUTPUT"
-echo "Members: $(tar -tzf "$OUTPUT" | wc -l)"
+echo "Members: $(tar "$TAR_CODEC" -tf "$OUTPUT" | wc -l)"

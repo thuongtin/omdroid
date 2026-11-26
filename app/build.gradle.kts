@@ -119,6 +119,12 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation(libs.commons.compress)
+    // zstd-compressed guest image (rootfs.bin from R10). The AAR carries the four
+    // Android ABIs - every bundled .so is 16 KB LOAD-aligned (readelf -lW: 0x4000)
+    // and needs only libc/libm/libdl - while the plain jar gives the JVM unit tests
+    // the same decoder with its linux/amd64 native.
+    implementation("com.github.luben:zstd-jni:1.5.7-9@aar")
+    testImplementation("com.github.luben:zstd-jni:1.5.7-9")
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 
