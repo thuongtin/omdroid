@@ -229,12 +229,35 @@ class ProotService : Service() {
             SessionAction.HOME -> handBackToAndroid()
             else -> {
                 userRequest = action
-                stopBroker()
                 // Not stopSession(): the monitor thread must see this exit and report the
-                // request instead of retrying a cold-start collapse.
-                prootProcess?.destroy()
+                // request instead of retrying a cold-start collapse. Off the main thread: a
+                // process that is slow to die must never freeze the looper, which also carries
+                // the next request, the notification and the launcher.
+                Thread({ endGuestForRequest(action) }, "SessionRequest").start()
             }
         }
+    }
+
+    /** Ends the broker and the guest for a Logout, Restart or Shutdown, with a log line per step. */
+    private fun endGuestForRequest(action: SessionAction) {
+        stopBroker()
+        val proc = prootProcess
+        if (proc == null) {
+            android.util.Log.w("Phoshdroid", "session: request $action: no guest process to end")
+            return
+        }
+        proc.destroy()
+        val exited =
+            try {
+                proc.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                false
+            }
+        if (!exited) {
+            android.util.Log.w("Phoshdroid", "session: request $action: guest still alive after ${GUEST_STOP_WAIT_S}s, forcing")
+            proc.destroyForcibly()
+        }
+        android.util.Log.i("Phoshdroid", "session: request $action: guest process ended (forced=${!exited})")
     }
 
     /** Suspend and Lock: the Android home screen comes up, the session keeps running. */
@@ -315,7 +338,11 @@ class ProotService : Service() {
         brokerProcess = null
         try {
             process.destroy()
-            process.waitFor()
+            // Bounded: this can run on the main thread (the notification Stop), and a broker
+            // that ignores SIGTERM must not freeze it.
+            if (!process.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+            }
         } catch (_: Exception) {
         }
         android.util.Log.i("ProotService", "session: root-broker stopped")
@@ -593,6 +620,9 @@ class ProotService : Service() {
         private const val EXTRA_WIDTH = "width"
         private const val EXTRA_HEIGHT = "height"
         private const val EXTRA_SCALE = "scale"
+
+        /** How long a process may take to die after SIGTERM before it is killed. */
+        private const val GUEST_STOP_WAIT_S = 3L
 
         // True from the moment a session is requested until it is stopped, the
         // guest exits for good or the service dies. The launcher's readiness
