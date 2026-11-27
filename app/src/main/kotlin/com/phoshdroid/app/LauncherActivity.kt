@@ -603,11 +603,6 @@ class LauncherActivity : AppCompatActivity() {
             .getDefaultSharedPreferences(this)
             .edit()
             .putString("touchMode", "3")
-            // Keep the Termux:X11 shortcut toolbar (ESC, CTRL, arrows, etc.) visible
-            // on the phone. Docked it is hidden: a monitor has a real keyboard, and
-            // its 165 px would come straight out of the X root.
-            .putBoolean("showAdditionalKbd", !dock.docked)
-            .putBoolean("additionalKbdVisible", !dock.docked)
             // Hardware keyboard and touchpad, r4-input K3 (docs/omarchy/r4-input-research.md
             // §2.2). This block is the only place that can set them: LoriePreferences is
             // android:enabled="false" in our manifest, so the submodule's own screen is
