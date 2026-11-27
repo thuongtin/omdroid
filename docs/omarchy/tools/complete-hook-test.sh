@@ -25,8 +25,9 @@ mkdir -p "$HOME/.config/omarchy/extensions" "$T/bin" "$T/omarchy-bin" "$T/host" 
 for c in omarchy-osd omarchy-hyprland-window-close-all; do printf '#!/bin/bash\n: stub\n' > "$T/stubs/$c"; chmod 755 "$T/stubs/$c"; done
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/notified"\n' "$T" > "$T/stubs/omarchy-notification-send"; chmod 755 "$T/stubs/omarchy-notification-send"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/pkill.calls"\n' "$T" > "$T/stubs/pkill"; chmod 755 "$T/stubs/pkill"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/hyprctl.calls"\nexit ${HYPRCTL_RC:-0}\n' "$T" > "$T/stubs/hyprctl"; chmod 755 "$T/stubs/hyprctl"
 export PATH=$T/stubs:$PATH
-for c in omarchy-osd omarchy-hyprland-window-close-all omarchy-notification-send; do
+for c in omarchy-osd omarchy-hyprland-window-close-all omarchy-notification-send pkill hyprctl; do
     case "$(command -v $c)" in "$T"/stubs/*) ;; *) echo "refusing to run: $c is not stubbed"; exit 2 ;; esac
 done
 cp "$OMARCHY/config/omarchy/extensions/omarchy-menu.jsonc" "$HOME/.config/omarchy/extensions/" 2> /dev/null || printf '{\n}\n' > "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
@@ -113,8 +114,13 @@ bash "$D/bin/omdroid-session" lock
 check "lock is mapped to home" "[ \$(grep -c '^home ' $T/seen) = 2 ]"
 bash "$D/bin/omdroid-session" stop; bash "$D/bin/omdroid-session" restart; bash "$D/bin/omdroid-session" shutdown
 check "stop, restart and shutdown are written as such" "grep -q '^stop ' $T/seen && grep -q '^restart ' $T/seen && grep -q '^shutdown ' $T/seen"
-check "stop, restart and shutdown end the session themselves: one SIGTERM to Hyprland each" "[ \\$(grep -c -- '-TERM -x Hyprland' $T/pkill.calls) = 3 ]"
-check "home and lock never signal Hyprland" "[ \\$(grep -c . $T/pkill.calls) = 3 ]"
+check "stop, restart and shutdown end the session through Hyprland's exit dispatcher (3 calls)" "[ \$(grep -c -F 'dispatch hl.dsp.exit()' $T/hyprctl.calls) = 3 ]"
+check "... and tell the root broker to end each time, never signal Hyprland while the dispatcher works" "[ \$(grep -c -F '[o]mdroid-rootd' $T/pkill.calls) = 3 ] && ! grep -q -- '-x Hyprland' $T/pkill.calls"
+check "home and lock never touch Hyprland or the broker" "[ \$(grep -c . $T/hyprctl.calls) = 3 ] && [ \$(grep -c . $T/pkill.calls) = 3 ]"
+HYPRCTL_RC=1 bash "$D/bin/omdroid-session" stop
+check "when the exit dispatcher fails the guest falls back to SIGTERM on Hyprland" "grep -q -- '-TERM -x Hyprland' $T/pkill.calls"
+OMDROID_SESSION_END=term bash "$D/bin/omdroid-session" stop
+check "OMDROID_SESSION_END=term skips the dispatcher" "[ \$(grep -c -- 'dispatch' $T/hyprctl.calls) = 4 ]"
 bash "$D/bin/omdroid-session" nonsense 2> /dev/null; rc=$?
 check "an unknown action is refused with status 2" "[ $rc = 2 ]"
 : > "$T/seen"
@@ -127,10 +133,10 @@ touch "$T/stop-host"; wait "$HOST" 2> /dev/null
 
 # --- no host answers: the script must say so, not stay quiet
 rm -f "$OMDROID_HOST_DIR/request"
-pk_before=$(grep -c . "$T/pkill.calls")
+pk_before=$(grep -c . "$T/pkill.calls"); hc_before=$(grep -c . "$T/hyprctl.calls")
 bash "$D/bin/omdroid-session" stop > /dev/null 2>&1; rc=$?
 check "no host: exit 1, a normal-urgency notification that names the cause, and the request file is cleaned up" "[ $rc = 1 ] && grep -q -- '-u normal.*does not answer' $T/notified && [ ! -e $OMDROID_HOST_DIR/request ]"
-check "no host: the session is not ended (no extra pkill)" "[ \\$(grep -c . $T/pkill.calls) = $pk_before ]"
+check "no host: the session is not ended (no extra pkill, no dispatcher call)" "[ \$(grep -c . $T/pkill.calls) = $pk_before ] && [ \$(grep -c . $T/hyprctl.calls) = $hc_before ]"
 
 rm -rf "$T"
 [ $fail = 0 ] && echo "all passed" || echo FAILED

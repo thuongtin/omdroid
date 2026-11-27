@@ -370,6 +370,11 @@ class ProotService : Service() {
             // that ignores SIGTERM must not freeze it.
             if (!process.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)) {
                 process.destroyForcibly()
+                if (!process.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)) {
+                    // Seen on the device (r11): a broker proot that outlived SIGKILL until the
+                    // app process ended. Say so; the guest asks its python program to end too.
+                    android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL")
+                }
             }
         } catch (_: Exception) {
         }
