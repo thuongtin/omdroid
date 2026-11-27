@@ -83,6 +83,15 @@ phase_log "enabled, three-finger swipe: before [$before] after [$(ws_line) $(cli
 "$TOOLS/shot.sh" ws3-after > /dev/null 2>&1
 tl_run three-swipe-enabled --steps 30 move 1000 1000 1800 1000 1500 1000 2300 1000 2000 1000 2800 1000
 hcq '/eval hl.config({ gestures = { workspace_swipe_touch = false } })' > /dev/null
+
+phase_log "=== V7.4 informational: the Hyprland 0.5x gesture binding (hl.gesture, three fingers horizontal)"
+phase_log "eval answer: $(hcq '/eval hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })' | head -3 | tr '\n' ' ')"
+hcq '/dispatch hl.dsp.focus({ workspace = "1" })' > /dev/null; sleep 1
+before="$(ws_line) top=$(top_activity)"
+adb_ shell uinput $MT > /dev/null 2>&1
+sleep 2
+phase_log "gesture bound, three-finger swipe: before [$before] after [$(ws_line) $(clients_line) top=$(top_activity)]"
+"$TOOLS/shot.sh" ws4-after > /dev/null 2>&1
 gx 'pkill -x foot; echo foot closed'
 case "$(top_activity)" in *com.termux.x11.MainActivity*) ;; *) adb_ shell am start -n $PKG/com.termux.x11.MainActivity > /dev/null 2>&1 ;; esac
 phase_log "V7 done; synthetic devices left behind: $(adb_ shell dumpsys input | grep -c 'Test Touchscreen')"
