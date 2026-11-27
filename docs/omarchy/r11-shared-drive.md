@@ -171,6 +171,13 @@ provider log stayed **empty** - nothing asked it for anything. `openDocument` is
 provider method not observed on the device. Phase 7 is the last attempt: it seeds the picker with our
 document URI as the intent's data, and falls back to a swipe-opened drawer.
 
+**Phase 7, first queue: never ran.** Another stream's phase hung on `adb jdwp` (which streams forever)
+and held the tablet lock from ~03:00 to 08:04; every phase queued behind it waited out `flock -w 10800`
+and gave up without starting, so `phase7.log` holds only its `ALLDONE` line and `step5f.txt` does not
+exist. Re-queued at 08:06 with the picker's own "Preview the file …" action as the first tap, and with
+the waiter bounded to 25 minutes. Every adb call in this stream's phases is already non-streaming
+(`logcat -d`, `uiautomator dump`, `am start`, `input`).
+
 ## Switches
 
 - `bind_sdcard_mode` = `auto` | `on` | `off` (Settings -> Storage -> Share Android storage). `auto`
