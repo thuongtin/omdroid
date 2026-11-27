@@ -4,7 +4,9 @@
 Started by start.sh before cage starts. Contract halves:
   * section 2 - write $XDG_RUNTIME_DIR/omarchy-ready once the desktop is really
     drawn: Hyprland answers, one enabled monitor equals the even-rounded X root,
-    and the layers omarchy-background and omarchy-bar fit its logical size.
+    the layers omarchy-background and omarchy-bar fit its logical size, and in
+    the mobile UI the bottom layer (omamobile-dock on an empty workspace, or the
+    omamobile-home-strip under an app) is mapped.
     start.sh removes a stale marker; the host removes it too.
   * section 3 - after a live X root change, keep the shell's layers in step with
     the monitor (no session restart, no user action).
@@ -23,6 +25,12 @@ Started by start.sh before cage starts. Contract halves:
     monitors.lua builds its mode from the start-time size, so any config reload
     (Hyprland reloads by itself when a config file changes) puts the start-time
     mode back after a dock. A runtime monitor rule (hyprctl eval) undoes it.
+  * the mobile UI's bottom layer is judged the same way as the bar and the
+    background: when neither the dock nor the home strip is mapped and nothing
+    explains it (no drawer, no fullscreen window, no lock), the same shell
+    restart is the remedy. Without this the watcher was blind to the dock, so a
+    shell that lost it through an Android activity covering the surface stayed
+    without one for the rest of the session (r12 preferences excursion).
 
 The X root is the authority for the size; the host hint is never consulted here.
 Log: /tmp/omarchy-watch.log (guest /tmp), one line per state change.
@@ -87,6 +95,15 @@ UI_SCALE = os.environ.get("OMDROID_WATCH_SCALE_FILE", os.path.join(HOME, ".confi
 SCALE_FOLLOW = os.environ.get("OMDROID_SCALE_FOLLOW", "1") != "0"
 UI_SCRIPT = os.environ.get("OMDROID_WATCH_UI_SCRIPT", "/etc/phoshdroid/omdroid-ui.sh")
 INDEX_SCRIPT = os.environ.get("OMDROID_WATCH_INDEX_SCRIPT", "/etc/phoshdroid/omarchy-plugin-index.sh")
+# The mobile UI's bottom layer (omamobile.launcher): the dock on an empty
+# workspace, the home strip under an app. Both are Variants over
+# Quickshell.screens and neither is the shell's bar or background, so this
+# watcher used to check only those two and could not see the dock stay gone
+# after a preferences excursion (r12): the marker, the layer fit and every
+# remedy were all happy while the bottom of the screen stayed empty.
+BOTTOM_NAMES = ("omamobile-dock", "omamobile-home-strip")
+DRAWER = "omamobile-launcher"
+LOCK_PREFIX = "omarchy-lock"
 
 
 def log(msg):
@@ -208,6 +225,59 @@ def surface(it):
     return f"{it.get('w')}x{it.get('h')}"
 
 
+def fullscreen_here(st, clients):
+    """A real fullscreen window (mode bit 2) on the monitor's active workspace.
+
+    A maximized window reports 1, and the mobile UI keeps its bottom surfaces
+    for it; only a real fullscreen window hides both, so only bit 2 skips the
+    bottom-layer check. Clients are read only when that check needs them.
+    """
+    ws = st.get("workspace")
+    for c in clients or []:
+        if not isinstance(c, dict):
+            continue
+        if ws and (c.get("workspace") or {}).get("name") not in (None, ws):
+            continue
+        try:
+            if int(c.get("fullscreen") or 0) & 2:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def bottom_state(st, mode, clients=None):
+    """Is the mobile UI's bottom layer there when it should be? `(verdict, detail)`.
+
+    `ok`      a dock or a home strip is mapped, or the desktop UI is loaded (it
+              has no dock of ours, and the watcher has never judged its bottom
+              edge).
+    `skip`    neither is mapped and that is right: the drawer is open over an
+              app (the strip goes away under it), a real fullscreen window is on
+              the active workspace (both hide for it), or the screen is locked.
+              Restarting the shell here would be a blink for nothing.
+    `missing` neither is mapped and nothing explains it: the shell lost its
+              bottom layer, which is the fault this check exists for.
+    `unknown` the verdict needs the client list and none was passed; the caller
+              re-asks with `j/clients` and never acts on a blind reading.
+    """
+    if mode != "mobile":
+        return "ok", "desktop ui"
+    surf = st.get("surf") or {}
+    for name in BOTTOM_NAMES:
+        if name in surf:
+            return "ok", name
+    if DRAWER in surf:
+        return "skip", "drawer open"
+    if any(str(n).startswith(LOCK_PREFIX) for n in surf):
+        return "skip", "locked"
+    if clients is None:
+        return "unknown", "needs the client list"
+    if fullscreen_here(st, clients):
+        return "skip", "fullscreen window"
+    return "missing", "no dock and no home strip"
+
+
 def evaluate(root=None, hypr_data=None):
     """One snapshot. Returns a dict; `missing` names what is not there yet.
 
@@ -254,6 +324,8 @@ def evaluate(root=None, hypr_data=None):
         "scale": scale,
         "hz": m.get("refreshRate"),
         "logical": (lw, lh),
+        "workspace": (m.get("activeWorkspace") or {}).get("name"),
+        "surf": surf,
         "bg": bg,
         "bar": bar,
         "mon_is_root": (m.get("width"), m.get("height")) == (tw, th),
@@ -483,16 +555,23 @@ def may_act():
     return True
 
 
-def settle(timeout=8.0):
+def settle(timeout=8.0, mode=None):
     """Wait for the restarted shell to draw its layers again.
 
     Returns the seconds it took, or None if they are still missing: judging a
-    half-built shell would fire another restart at it.
+    half-built shell would fire another restart at it. The mobile UI's bottom
+    layer counts as one of them, so a restart that brings the bar and the
+    wallpaper back while the dock stays gone is not mistaken for a fix.
     """
+    if mode is None:
+        mode = ui_mode()
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout:
         st = evaluate()
-        if not st.get("missing") and st.get("layers_ok"):
+        # "unknown" (needs the client list) never blocks: this wait polls every
+        # 0.25 s and must not fork a client query per tick.
+        if (not st.get("missing") and st.get("layers_ok")
+                and bottom_state(st, mode)[0] != "missing"):
             return time.monotonic() - t0
         time.sleep(0.25)
     return None
@@ -536,8 +615,10 @@ def shell_after_failure():
     if st.get("missing"):
         return "unknown", "no reading: " + st["missing"]
     procs = shell_processes()
-    facts = "layers background=%s bar=%s quickshell=%s" % (
+    bottom, why = bottom_state(st, ui_mode())
+    facts = "layers background=%s bar=%s bottom=%s quickshell=%s" % (
         surface(st.get("bg")), surface(st.get("bar")),
+        "ok" if bottom in ("ok", "skip", "unknown") else why,
         "unknown" if procs is None else procs)
     if (st.get("bg") is None and st.get("bar") is None) or procs == 0:
         return "failed", facts
@@ -600,14 +681,18 @@ def recover(st):
     while time.monotonic() - t0 < RECOVER_WAIT:
         time.sleep(0.5)
         now = evaluate()
-        if not now.get("missing") and now.get("layers_ok"):
+        if (not now.get("missing") and now.get("layers_ok")
+                and bottom_state(now, ui_mode())[0] != "missing"):
             took = time.monotonic() - t0
             log("recovery: recovered after one recovery restart %.1f s" % took)
             return True, "recovered after one recovery restart %.1f s" % took
     now = evaluate()
     procs = shell_processes()
-    facts = "layers background=%s bar=%s quickshell=%s" % (
-        surface(now.get("bg")), surface(now.get("bar")), "unknown" if procs is None else procs)
+    bottom, why = bottom_state(now, ui_mode())
+    facts = "layers background=%s bar=%s bottom=%s quickshell=%s" % (
+        surface(now.get("bg")), surface(now.get("bar")),
+        "ok" if bottom in ("ok", "skip", "unknown") else why,
+        "unknown" if procs is None else procs)
     write_failure(facts)
     log("recovery: the recovery restart did not bring the layers back (%s): %dx%d is left alone, "
         "no further actions" % (facts, key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
@@ -688,6 +773,21 @@ def main():
             time.sleep(POLL)
             continue
         last_missing = None
+        # The mobile UI's bottom layer, judged once per pass so the readiness gate,
+        # the remedy and the settle wait all look at the same thing. The client
+        # list is read only when neither surface is mapped and the reason decides
+        # whether this is a fault (a fullscreen window hides both on purpose).
+        bottom, bottom_why = bottom_state(st, mode)
+        if bottom == "unknown":
+            bottom, bottom_why = bottom_state(st, mode, hypr("clients", sig))
+        problem = None
+        if not st["layers_ok"]:
+            problem = ("layers do not fit %dx%d (background=%s bar=%s, need background=%dx%d "
+                       "bar width %d)" % (st["mon"][0], st["mon"][1], surface(st["bg"]),
+                                          surface(st["bar"]), st["logical"][0],
+                                          st["logical"][1], st["logical"][0]))
+        elif bottom == "missing":
+            problem = "the bottom layer is gone (%s)" % bottom_why
         if PENDING_RESTART and ACT and may_act():
             queued = PENDING_RESTART[0]
             PENDING_RESTART[:] = []
@@ -731,7 +831,9 @@ def main():
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
                  st["root"][0], st["root"][1], surface(st["bg"]), surface(st["bar"])))
         stable = time.monotonic() - size_since
-        mark_ok = st["mon_is_root"] and st["layers_ok"]
+        # The bottom layer is part of "fully drawn" in the mobile UI: a desktop
+        # without its dock is not a desktop the host should hand the screen to.
+        mark_ok = st["mon_is_root"] and st["layers_ok"] and problem is None
         if not ready:
             if mark_ok:
                 write_marker(st)
@@ -741,6 +843,8 @@ def main():
             elif not st["mon_is_root"]:
                 log("not ready: monitor %dx%d != X root %dx%d (even-rounded)" %
                     (st["mon"][0], st["mon"][1], st["target"][0], st["target"][1]))
+            elif problem:
+                log("not ready: " + problem)
         elif not st["mon_is_root"]:
             # A config reload put the start-time mode back (see fit_monitor).
             if stable >= STABLE_S and fits < RETRY_CAP:
@@ -763,31 +867,27 @@ def main():
                 size_since = time.monotonic()
                 hot_until = size_since + HOT_S
                 hypr_data = None
-        elif not st["layers_ok"] and EXHAUSTED and EXHAUSTED[0] == key:
+        elif problem is not None and EXHAUSTED and EXHAUSTED[0] == key:
             # A restart lost the shell for this size and the one recovery launch did not bring it
             # back. Nothing more is done here: another restart is the retry the guard forbids.
             if not exhausted_logged:
-                log("layers do not fit %dx%d: this size is left alone after a lost shell "
+                log("the desktop is incomplete at %dx%d: this size is left alone after a lost shell "
                     "(no further actions; a new size or the user is the way back)" % key)
                 exhausted_logged = True
-        elif not st["layers_ok"]:
+        elif problem is not None:
             if stable >= STABLE_S:
                 if attempts < RETRY_CAP:
                     if ACT and not may_act():
                         # A rate-limited pass is not an attempt: wait for the
                         # limit instead of giving up with stale layers on screen.
                         if not limited:
-                            log("layers do not fit %dx%d, restart rate limit reached "
-                                "(6 per 60 s, 2 s apart): waiting" % (key[0], key[1]))
+                            log("%s, restart rate limit reached "
+                                "(6 per 60 s, 2 s apart): waiting" % problem)
                             limited = True
                     else:
                         limited = False
                         attempts += 1
-                        log("layers do not fit %dx%d (background=%s bar=%s, need background=%dx%d "
-                            "bar width %d): attempt %d/%d" %
-                            (key[0], key[1], surface(st["bg"]), surface(st["bar"]),
-                             st["logical"][0], st["logical"][1], st["logical"][0],
-                             attempts, RETRY_CAP))
+                        log("%s: attempt %d/%d" % (problem, attempts, RETRY_CAP))
                         if ACT:
                             log("act: " + act())
                             took = settle()
@@ -819,10 +919,10 @@ def main():
                     size_since = time.monotonic()
                 elif attempts == RETRY_CAP:
                     attempts += 1
-                    log("giving up on %dx%d after %d attempts (background=%s bar=%s)" %
-                        (key[0], key[1], RETRY_CAP, surface(st["bg"]), surface(st["bar"])))
+                    log("giving up on %dx%d after %d attempts (%s)" %
+                        (key[0], key[1], RETRY_CAP, problem))
         elif attempts:
-            log("layers fit %dx%d again after %d attempt(s)" %
+            log("the desktop at %dx%d is whole again after %d attempt(s)" %
                 (key[0], key[1], attempts))
             attempts = 0
         time.sleep(POLL)

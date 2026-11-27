@@ -28,8 +28,11 @@ File: `$XDG_RUNTIME_DIR/omarchy-ready` in the guest = `<prefix>/tmp/omarchy-runt
 on the host (`<prefix>` = `/data/data/com.phoshdroid.app/files/usr`).
 
 - Written by the guest, atomically (write a temp name, then `mv`), when ALL of these hold:
-  Hyprland's IPC answers, it has one enabled monitor whose size equals the X root, and the layers
-  `omarchy-bar` and `omarchy-background` exist and fit the monitor's logical size.
+  Hyprland's IPC answers, it has one enabled monitor whose size equals the X root, the layers
+  `omarchy-bar` and `omarchy-background` exist and fit the monitor's logical size, and in the mobile
+  UI (`~/.config/omdroid/ui` = `mobile`) its bottom layer is mapped too: `omamobile-dock` on an
+  empty workspace, or `omamobile-home-strip` under an app. The desktop UI has no bottom layer of
+  ours, so nothing extra is asked there.
 - Content, one line: `ready <unix-seconds> <width>x<height> scale=<scale>` (monitor pixels).
 - The guest removes a stale marker at session start, before cage starts. The host removes it
   too, before it starts the session.
