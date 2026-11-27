@@ -152,7 +152,19 @@ picker by name, not by `content`.
   matched `omdroid-provider-create.txt` when told to tap "Omdroid" (exact-text matching now). The
   `OPEN_DOCUMENT` arm's drawer tap did not open the drawer in this run; `CREATE_DOCUMENT`'s did.
 
-**Phase 5:** appended when it has run (the read path, `openDocument`, then the test files removed).
+**Phase 5** (same APK; `<scratch>/share/phase5/step5d.txt`): the picker remembered the provider's
+folder from phase 4 and opened **inside** it:
+
+- `Files from Omdroid/The Omarchy home inside Omdroid` with both files and their real sizes and
+  times - `omdroid-provider-create.txt 0 B 01:31` and `omdroid-read-test.txt 26 B 02:14` (the 26 B
+  file was written from the host over `run-as` a second before). That is `queryChildDocuments` +
+  `COLUMN_SIZE` + `COLUMN_LAST_MODIFIED` on the device.
+- Provider log: `queryDocument root`, `queryDocument doc:Downloads`,
+  `children of 'doc:Downloads' (Downloads): 2 [omdroid-provider-create.txt, omdroid-read-test.txt]`.
+- The read tap itself missed: opening the roots drawer moved the picker to "Recent", so the file row
+  was gone by the time the tap landed. Phase 6 taps the row before touching the drawer.
+
+**Phase 6:** appended when it has run (the row tap / the picker's preview action, i.e. `openDocument`).
 
 ## Switches
 
