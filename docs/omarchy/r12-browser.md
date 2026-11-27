@@ -89,3 +89,76 @@ linked, and the switch off removes them.
   It already worked via Omarchy's own flags, which the launcher duplicates.
 - A cold start carrying this fix: no APK with it has been built yet, so the links in the running
   session came from running the hook by hand.
+
+## Follow-up: Chromium in software GPU mode
+
+`r10-gpu-fallback.md` left one thing open: the image's `~/.config/chromium-flags.conf` forces
+`--use-angle=vulkan`, which only the KGSL path can serve. This closes it in the launcher, because
+the flags file belongs to the image and Arch's Chromium launcher reads no environment variable for
+flags.
+
+### What happens without the fix
+
+Measured outside the tablet: the image's own Chromium 151.0.7922.137 and Mesa in an arm64 Linux
+container, with the software-mode environment as `start.sh` exports it, `cage` on the wlroots
+headless backend standing in for the session, no proot. Three starts:
+
+- the GPU process is started 3 to 5 times per browser start and exits every time
+  (`eglInitialize Vulkan failed with error EGL_NOT_INITIALIZED`, `Initialization of all (1) EGL
+  display types failed`, `Exiting GPU process due to errors during initialization`);
+- the browser then runs without one: `SystemInfo.getInfo` reports `gl=disabled`, WebGL off,
+  compositing and rasterisation in software, and `canvas.getContext('webgl')` returns null;
+- pages still draw. A page that requests an animation frame every frame got 60 per second, and a
+  scripted 6000 px scroll kept its frame count. No slow start showed in the container (the
+  DevTools pipe answered in about 0.3 s on a warm profile); on the tablet each failed GPU process
+  is a process start under proot, and that was not measured.
+
+### The fix
+
+In software mode, and only when the browser's flags file asks for `--use-angle=vulkan`, the
+launcher adds `--use-angle=gles --disable-gpu-compositing`. Arch's launcher puts the file's flags
+before its arguments and Chromium keeps the last value of a switch, so these override the file and
+a caller's own switches still override these. Brave has no flags file and is left as it was, and
+KGSL mode gets exactly the three sandbox flags as before.
+
+| variant, same container and image | GPU process | WebGL | animation frames per second | log lines that are not D-Bus noise |
+| --- | --- | --- | --- | --- |
+| before, 3 runs | exits 3 to 5 times, then none | no | 60.0 | 63, 105, 105 |
+| `--use-angle=gles` alone, 2 runs | ANGLE on llvmpipe, GPU compositing | yes | 46.6, 49.0 | 4 |
+| `--use-angle=gles --disable-gpu-compositing` (the fix), 3 runs | ANGLE on llvmpipe, software compositing | yes, by readback | 59.8 | 4 |
+| `--disable-gpu`, 1 run | none | no | 60.0 | 0 |
+
+GLES alone keeps GPU compositing, so llvmpipe draws every frame, and the rate fell by about a
+fifth on a 14-core host; a tablet has less to spare. Turning GPU compositing off keeps the
+software compositor that the unfixed browser ends up with anyway, and keeps the GPU process for
+WebGL. The ozone platform is not touched: `--ozone-platform=wayland --use-angle=gles` was tried
+too and gave the same renderer, with GPU compositing dropping to software by itself after a
+failed context.
+
+### The desktop entry
+
+Arch's `chromium.desktop` says `Exec=/usr/bin/chromium %U`, so the app launcher walks past the
+link in `/usr/local/bin` and never reaches this launcher. That went unnoticed because the flags
+file already carries the sandbox flags. The hook now writes a copy of such an entry to
+`/usr/local/share/applications`, which `XDG_DATA_DIRS` lists before `/usr/share`, with the path
+dropped from each `Exec` line. The copy is rewritten every session, ends with a marker line, and
+only a file that ends with that marker is ever replaced or removed. `OMDROID_COMPLETE_BROWSER=0`
+removes it together with the links.
+
+### Host gate
+
+`complete-hook-test.sh` gained 13 checks: the entry copy (made for a full-path `Exec`, not made
+for a bare one, other lines kept, somebody else's file neither replaced nor removed, removed by
+the switch) and the launcher's argument list (KGSL mode, no mode, software mode, a caller's
+switch last, a browser without a Vulkan flags file, the last `--use-angle` of the flags files
+deciding). The fake browsers print their arguments, so the checks compare the exact list.
+
+### Not verified
+
+- Nothing here ran on a tablet: no software-mode session, no proot. The container shows what this
+  image's Chromium does with these flags against this image's Mesa, not start time or frame pacing
+  on a device.
+- That the Omarchy app launcher picks the copy in `/usr/local/share/applications`. It follows from
+  the XDG lookup order and was not observed.
+- KGSL mode is unchanged by construction: the launcher adds nothing unless `OMDROID_GPU=software`.
+  The host gate pins that; no device run does.
