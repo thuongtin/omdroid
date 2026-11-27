@@ -206,6 +206,17 @@ Observation, not a failure: every pacman transaction on the fresh guest prints `
   `showSessionEnded` (`LauncherActivity.kt:923`), or the X display activity's teardown (the in-process X server
   loses its only client at that moment). I did not stop at a guess: phase 7 repeats all three cases without touching
   the screen first and captures the main thread's `/proc` state and every thread's Java stack through JDWP.
+- **Reproduced without touching the screen (phase 7 case A, 03:01-03:03 UTC; **measured**).** The counter-check repeated the clean
+  end from a force-stopped cold start and read only `/proc` for the first 8 s (no screenshot, no uiautomator, no input). At
+  +3 s and again at +7 s after `proot exited (0)`: top activity `.LauncherActivity`, Hyprland gone, and the app's **main
+  thread in `state=S wchan=futex_wait_queue` (syscall 98, futex)**, not parked in the looper's `epoll_wait` as an idle
+  main thread is; `X11Server` threads in `do_epoll_wait`, three `Thread-10` and three `DefaultDispatch` threads in
+  `futex_wait_queue`. A main thread blocked on a futex for 4+ s with the launcher on top is the ANR's mechanism: it is waiting
+  for a lock, a `Thread.join`/`waitFor`, or a condition, and cannot run `onNewIntent`. So the earlier harness caveat is
+  answered: the screenshot and the dump did not cause the hang. What is still missing is the Java stack of that main
+  thread (which lock, held by whom): phase 7 was to read it through JDWP and hung before it got there (see "Incident").
+  The owner of the fix is S4 (`LauncherActivity`, `ProotService`); `jdb -attach` on a forwarded `jdwp:<pid>` with
+  `timeout`, or `kill -3` plus a readable trace on a debuggable build, gives the stack. V6 is re-verified on S4's APK, not this one.
 - **Harness caveat, stated against myself:** phase 3 took a screenshot and a uiautomator dump within 5 s of the
   end. Neither sends input, but the ANR timing alone cannot rule out that the dump contributed. Phase 7 reads
   `/proc` and the log only for the first 8 s and touches the screen last. If the ANR appears there too, it is the product.
@@ -248,6 +259,18 @@ straight lines, 30 steps of 16 ms), and `touchlog` (R5 build, sha256 `68a58e97â€
   `workspace_swipe_touch = true` alone binds no gesture in this version. Phase 8 binds a two-finger and a four-finger
   workspace gesture at runtime (counts the system does not use), swipes each way from a cold start, and runs the two-finger
   swipe with nothing bound as the control.
+
+### Incident: phase 7 held the tablet lock for five hours (my script, **measured**)
+
+`verify-p7-v6-recheck.sh` called `adb jdwp | tr` to list debuggable pids. `adb jdwp` streams pids and never exits, so the phase
+sat on that line from 03:03 to 08:04 UTC with the tablet lock held; every phase queued behind it (mine and the other streams')
+waited out `flock -w 10800`. The parent stopped it by exact PID; its EXIT trap restored the owner state (cold start 14.0 s,
+`probe.sh` PASS, installed APK `bef783d7â€¦`, no parked or test guest left). Fixes, all committed (`aa2c547`):
+`timeout 3` on `adb jdwp`; `chain.sh` now runs every phase as `flock -w 7200 <lock> timeout -k 30 1500 bash <phase>`, so no phase
+of mine can hold the lock past 25 minutes (the phase's own EXIT trap still restores the owner state on that SIGTERM); the other
+phases were audited for streaming commands (`logcat` is always `-d`, every `tail -F` is under `timeout`). Phases 6 and 8
+had also timed out in the queue behind it without running; both were re-queued after the fix. Phases 4 and 5 had already run
+(logs and results above); the parent's note listed them as lost, they were not.
 
 ## V8, the owner-only checklist (do NOT attempt from an agent)
 
