@@ -44,6 +44,10 @@ Details that cost a round each and are worth keeping:
 - **Start order.** The hook runs before cage starts, so the bridge waits for `:0` (60 s) and for a
   Wayland socket that accepts `wl-paste` (60 s), and re-starts the watch if Hyprland restarts under
   it.
+- **Both halves must use the same compositor.** `wl-copy` inherited the hook's
+  `WAYLAND_DISPLAY=wayland-omarchy` (cage) and wrote the text into cage's clipboard, so Hyprland's
+  stayed empty while the log said the copy had succeeded and `wl-paste` answered "Nothing is
+  copied". `wl-copy` now gets the display the watch found.
 - **`wl-copy` must not be waited on.** It can serve the selection in the foreground, and a blocking
   wait stalled the loop that notices the next Android copy: measured as a 4 s delay between the
   ownership change and the conversion. It is started, handed the text and left running now, with

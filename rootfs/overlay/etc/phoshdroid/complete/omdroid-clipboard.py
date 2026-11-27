@@ -224,9 +224,15 @@ class Bridge:
         # blocking wait here stalls this loop, and the loop is what notices the
         # next Android copy. Start it, hand it the text, keep the handle.
         try:
+            env = dict(os.environ)
+            # Both halves must speak to the compositor the watch found: the hook
+            # inherits WAYLAND_DISPLAY=wayland-omarchy (cage's socket), and a
+            # wl-copy sent there leaves Hyprland's clipboard empty.
+            if self.wl is not None and self.wl.display:
+                env["WAYLAND_DISPLAY"] = self.wl.display
             proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE,
                                     stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+                                    stderr=subprocess.DEVNULL, env=env)
             if proc.stdin is None:
                 return
             proc.stdin.write(text.encode("utf-8"))

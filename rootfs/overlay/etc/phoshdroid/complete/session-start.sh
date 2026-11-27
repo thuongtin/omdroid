@@ -139,20 +139,30 @@ fi
 # back whatever someone else puts there. Text only, 1 MiB cap, no images.
 cb_pid=$STATE/clipboard.pid
 cb_cmd=${OMDROID_COMPLETE_CLIPBOARD_CMD:-$D/omdroid-clipboard.py}
+stop_bridge() {
+    if [ -f "$cb_pid" ]; then
+        kill "$(cat "$cb_pid" 2> /dev/null)" 2> /dev/null
+        rm -f "$cb_pid"
+    fi
+    # Backstop for an instance left without a pid file. Only a python interpreter
+    # whose second argument is this very script counts: a looser match also hits
+    # any wrapper (proot, bash -c) whose command line merely carries the text, and
+    # that kills the caller.
+    for p in /proc/[0-9]*; do
+        pid=${p#/proc/}
+        [ "$pid" = "$$" ] && continue
+        set -- $(tr '\0' '\n' < "$p/cmdline" 2> /dev/null)
+        case "${1##*/}" in python3*) ;; *) continue ;; esac
+        case "${2:-}" in */omdroid-clipboard.py) kill "$pid" 2> /dev/null ;; esac
+    done
+}
 if [ "$clipboard" != 0 ]; then
-    [ -f "$cb_pid" ] && kill "$(cat "$cb_pid" 2> /dev/null)" 2> /dev/null
-    # Anchored: an unanchored pattern matches the proot wrapper that carries this
-    # script's text in its own command line, which kills the caller.
-    pkill -f "^$cb_cmd" 2> /dev/null
+    stop_bridge
     nohup "$cb_cmd" >> "$LOG" 2>&1 < /dev/null &
     echo $! > "$cb_pid"
     say "clipboard: bridge started (pid $(cat "$cb_pid"))"
 else
-    if [ -f "$cb_pid" ]; then
-        kill "$(cat "$cb_pid" 2> /dev/null)" 2> /dev/null
-        rm -f "$cb_pid"
-        pkill -f "^$cb_cmd" 2> /dev/null
-    fi
+    stop_bridge
     say "clipboard: bridge off (switch)"
 fi
 
