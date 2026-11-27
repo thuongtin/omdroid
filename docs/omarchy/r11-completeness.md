@@ -11,11 +11,11 @@ that commit, **phase 3** = the APK built from the commit named in `phase3.log` (
 | Step | What | State | Proof |
 | --- | --- | --- | --- |
 | 1 | Audit: menu, bar widgets, default keybindings | **PARTIAL** | Menu, tools, toggles, power, lock and idle measured on the tablet (R10, `audit-1.log`); 187 default bindings classified from source (read), not pressed one by one; bar widgets read plus seen in screenshots. Section 1. |
-| 2 | F6: the UI scale follows the display, live | **FIX COMMITTED, device proof PENDING** | d69b2d4 run: dock wrote `ui-scale 1`, the watcher fitted scale 1 (`monitor fit 1920x1080 scale 1 rc=0; GDK_SCALE 1`), then the config reload put scale 2 back and the old size fit re-applied 2; the run undocked 6 s later, so the docked end state was never sampled (my own screenshot of that moment shows the scale-2 bar). Fix `c0a9e92` (size fit carries the wanted scale); the watcher test reproduces the bug on the old code (evals `['1','2','1']`) and passes on the new (12/12). Control `OMDROID_SCALE_FOLLOW=0`: the docked monitor stays `scale 2.00` (the old behaviour, measured). Phase 3 settles both directions. |
-| 3 | Power and session entries | **PARTIAL** | Menu verified by screenshot on d69b2d4 (rows: Back to Android, Logout, Restart, Shutdown; no Lock, Screensaver, Hibernate). The host took `restart` (`session: request RESTART`) but the guest was not ended, and `omdroid-session stop` / `shutdown` then exited 1 (never taken). The first `home` request (via `omarchy-system-lock`) returned 0 but left no host log line and the X activity stayed on top. Cause not proven (main-thread block suspected: `stopBroker()` waited on the main thread). Fix `084c213` (kill off the main thread, bounded waits, a log line per step) and `28039e9` (guest request log). Phase 3 re-runs every request with a full logcat per step. |
+| 2 | F6: the UI scale follows the display, live | **PASS** (device, phase 3, APK from `28039e9`) | Dock (overlay 1920x1080/160): scale 1.00 and `probe.sh` PASS 2 s after the setting, monitor 1920x1080 logical 1920x1080, layers `omarchy-background` 1920x1080, `omarchy-bar` 1920x26, Hyprland pid 16531 before and after. Undock: scale 2.00, 3200x1970, logical 1600x985, mobile layers (bar 1600x44, dock, launcher), probe PASS, same pid. Watcher log `ui-scale 2 -> 1`, `monitor fit 1920x1080 scale 1 rc=0; GDK_SCALE 1 rc=0` (also in the size fit after the reload, the `c0a9e92` fix), then `ui-scale 1 -> 2`. Control, d69b2d4 run: `OMDROID_SCALE_FOLLOW=0` leaves the docked monitor at `scale 2.00` (the F6 bug). My look at `p3-docked.png`: a 1920x1080 desktop UI at scale 1 (thin bar with workspaces 1-5, clock, indicators). |
+| 3 | Power and session entries | **PARTIAL, fix in test** | Menu (screenshot, d69b2d4): Back to Android, Logout, Restart, Shutdown; no Lock, Screensaver, Hibernate. `home` **PASS** (phase 3: `omdroid-session home` -> `top=com.miui.home`, Hyprland pid unchanged, an icon tap returns the X activity). `restart`, `stop`, `shutdown` **FAIL** on `28039e9`: the host took each request (guest log `ack_after=0ms taken=yes`) but SIGTERM then SIGKILL on the proot process did not end the guest (pid 16531 unchanged, X activity on top, app pid unchanged, no `session ended by request`). Fix `b5dd09d`: the guest ends itself after the acknowledgement (SIGTERM to Hyprland, as a real logout does) and the host signals proot only as a fallback after 10 s. Phase 4 re-runs all of them. |
 | 4 | Idle lock | **DECIDED** | Cause: `/etc/pam.d/omarchy-lock-password` is absent from the image (measured `ls`; read `lock/Service.qml:497,532`), so `omarchy-shell lock lock` answers `missing-pam` on stdout and `omarchy-system-lock` exits 0 without locking (measured, audit-1). Decision: Android owns locking; the guest idle service is held off with Omarchy's own stay-awake flag (measured on d69b2d4: `idle-cycle-cancel: stay-awake`), the Lock row is hidden. Section 4. |
-| 5 | Clipboard Android <-> Omarchy | **PENDING** | Guest-internal `wl-copy` -> `wl-paste` works (measured, audit-1). The bridge question is measured in phase 3, section D. |
-| 6 | Hyprland start-up warning banners | **PENDING** | Code `690baf0` (marked block in `looknfeel.lua` setting `misc.disable_hyprland_guiutils_check` and `disable_watchdog_warning`; both option names read from the shipped binary with `strings`). Device screenshot comparison in phase 3. |
+| 5 | Clipboard Android <-> Omarchy | **GAP MEASURED, design only** | The X selections CLIPBOARD and PRIMARY on the display Xlorie serves have no owner (`owner=0x0`) before and after a guest `wl-copy`, while `wl-paste` in the guest returns the text (phase 3 D). Nothing carries the Wayland clipboard to the X display, so nothing reaches Android. Section 5. |
+| 6 | Hyprland start-up warning banners | **PASS** (device, one start each side) | R10 cold start screenshot (`audit1/shots/aud-cold-1.png`) shows both banners at the top right ("does not have hyprland-guiutils installed", "started without start-hyprland"). The same capture point on the `28039e9` build (`phase3/shots/p3-cold2-1.png`) shows neither (only two stale Omdroid test toasts, see risks). Code `690baf0`: a marked block in `looknfeel.lua` setting `misc.disable_hyprland_guiutils_check` and `disable_watchdog_warning`; both option names read from the shipped binary with `strings`. |
 
 ## 1. Audit
 
@@ -89,18 +89,42 @@ Making the Omarchy lock work needs `/etc/pam.d/omarchy-lock-password` and a pass
 
 Host gates: `:app:test` 193/0 at `d69b2d4` (the later commits change the service only; the phase 3 build chain re-runs it); `complete-scale-test.py` 12/12, `complete-menu-test.py` 10/10, `complete-hook-test.sh` all passed. `:app:lintDebug` not run.
 
+## 5. Clipboard: the measured gap and the design
+
+**Measured** (phase 3 D, `28039e9`): `printf r11-clip | wl-copy` then `wl-paste` in the session returns `r11-clip`, while a small Xlib client on `DISPLAY=:0` reads `CLIPBOARD owner=0x0` and `PRIMARY owner=0x0` before and after. So the Wayland clipboard inside Hyprland is a closed world.
+
+**Read, Termux:X11 side** (`termux-x11/app/src/main/cpp/lorie/clipboard.c`): Xlorie is the one that talks to Android. When any X client takes the CLIPBOARD selection (`SelectionSetOwner` callback, `lorieSelectionCallback`) it asks that client for TARGETS and the text and sends it to Android; when Android copies, Xlorie takes CLIPBOARD ownership itself and answers `ConvertSelection` requests (`lorieProcConvertSelection`). The preference `clipboardEnable` defaults to true (`preferences.xml:55`). So the Android half already exists; only the guest has no X client that owns or reads the selection. Under cage's x11 backend nothing turns a Wayland data offer into an X selection (consistent with the measurement; I did not read wlroots).
+
+**Design** (not built, no X server on the build machine to test it against without touching the owner's desktop): one guest helper, `python3` plus `libX11` and `libXfixes` through `ctypes` (all present in the guest, like `fit-x11.py`), started by the `complete` hook:
+
+1. Guest to Android: `wl-paste --watch` (or the plugin's own offer) feeds each new text into the helper, which takes CLIPBOARD on `:0` with its own window and answers `SelectionRequest` for `TARGETS`, `UTF8_STRING`, `STRING` and `TEXT`. Xlorie's callback then forwards it to Android.
+2. Android to guest: `XFixesSelectionNotify` on CLIPBOARD for an owner that is not the helper's window means Xlorie took it; the helper sends `XConvertSelection(UTF8_STRING)`, reads the property and runs `wl-copy`.
+3. Loop guard: ignore a change whose owner window or whose text equals what the helper last set itself. Text only, no INCR transfer (cap at about 1 MB), no images.
+4. Switch `OMDROID_CLIPBOARD_BRIDGE=0`. Test plan: a host test with `Xvfb` or a nested X server and a stub `wl-copy`/`wl-paste`, then on the tablet `uiautomator`/`input text` into an Android field, `am broadcast` a clipboard set, and a `wl-paste` round trip in both directions; the positive control is the `owner=0x0` reading above turning into the helper's window id.
+
 ## Device proof
 
-(phase 3 results are written here when the job lands)
+| Phase | APK | What it proved |
+| --- | --- | --- |
+| audit-1 | R10 `bef783d7` | the audit (section 1): tools, menu, toggles, power, lock, idle |
+| phase 2 | `d69b2d4` `8e71f124` | menu block (screenshot); idle held by stay-awake; F6 bug reproduced and fixed by `c0a9e92`; `restart` taken but not ended |
+| phase 3 | `28039e9` `db8977f9` | F6 both directions PASS; terminal shim and nano editor PASS (floating terminal class `org.omarchy.terminal`; `omarchy-launch-config-editor` opens nano on `monitors.lua`, screenshot); banners gone; `home` PASS; `restart`/`stop`/`shutdown` not ending the guest; clipboard gap measured |
+| phase 4 | `b5dd09d` (queued) | guest-driven end for the three requests, the `home` round trip sampled three times, a guest process listing before and after |
+
+Open items from phase 3, not yet explained:
+
+- The first cold start after the install took 22.3 s with the bar missing for about 40 s (`layers do not fit ... bar=none`, attempt 3/3, then `omarchy-restart-shell` brought it up); the second start of the same build took 12.6 s, and the phase 2 starts were 11.4 s. One sample, no cause. Phase 4 starts twice.
+- `probe.sh` four seconds after `omdroid-session home` reported no `omarchy-background` and no `omarchy-bar` layer (Android home on top, Hyprland pid unchanged). Not sampled again before the icon tap. Phase 4 samples it at +4, +10 and +20 s and after the return.
 
 ## Risks
 
 - The request watcher and the kill path are device-only; a bug there leaves a session that cannot be ended from the menu (the notification Stop still works).
 - The `systemctl` wrapper changes what every guest script sees for the three power verbs; every other verb still reaches the real binary.
 - The banner block edits the user's `looknfeel.lua` like the mobile-UI block does (marked, removed whole).
+- Test residue in the owner's guest: the d69b2d4 run's two critical "Omdroid could not ..." notifications are persistent and reappear at every shell start (visible in the phase 3 screenshots). The notice is now normal-urgency (`b5dd09d`), and phase 4 clears the history (`qs ipc ... notifications clear`) at the start and at the end.
 
 ## What I did not do
 
 - Capture, nightlight, brightness, Wi-Fi and Bluetooth rows are not fixed or hidden (1.2 rows 6-9).
-- Clipboard bridge (step 5): measurement queued, no code.
+- Clipboard bridge (step 5): measured and designed, not built.
 - No key-by-key test of the 187 bindings.
