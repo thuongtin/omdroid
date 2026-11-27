@@ -102,7 +102,7 @@ second one. The clock box is x 110-175, y 20-70 of the mobile bar.
 
 | Step | Screen | Commit trace (`commit damage` lines in the window) |
 | --- | --- | --- |
-| control 1: clean frame vs painted frame | **CHANGED**, 100,000 px = exactly the rectangle (viewed: the magenta box on the wallpaper, the diff panel marks the same box) | |
+| control 1: clean frame vs painted frame | **CHANGED**, 100,426 px in cycle 1 (100,000 = the 400x250 rectangle, 426 = the clock turning over), 100,000 in the repeat and in session 2 (viewed, cycle 1: the magenta box lower right in the after panel, the diff panel marks the same box and the clock digits) | |
 | control 2: bare `hl.config({ debug = { vfr = false } })`, 2.5 s | painted frame vs after: **ZERO**, the remnant stays | 183 zero-rect, **0 with rects**, 0 whole-surface |
 | candidate A: `damage_tracking = 0` for 1.5 s, then `= 2` | after vs the clean frame: **ZERO** (or the clock only), the remnant is **gone** | 190 zero-rect, **54 with rects**, `debug:damage_tracking` read back `int: 2` |
 
@@ -115,7 +115,7 @@ After-vs-forced, the primary check, 24 comparisons:
 
 | Scenario (runs 1-3) | after vs forced | before vs forced (where the screen returns to the earlier state) |
 | --- | --- | --- |
-| toast fade | ZERO, ZERO, ZERO | n/a: the unread badge goes 1 -> 2 -> 3 and the pointer moved (viewed), so it is not the earlier state |
+| toast fade | ZERO, ZERO, ZERO | n/a, the screen does not return to the earlier state: toast 1 left a new unread badge "1" beside the clock and the pointer had moved (viewed, 4,071 px); toasts 2 and 3 differ by 202 and 268 px (counts only, crops not viewed) |
 | window open (foot) | ZERO, ZERO, CLOCK_ONLY | n/a |
 | window close | **CHANGED**, **CHANGED**, **CHANGED** (24 px each, below) | CLOCK_ONLY, ZERO, CLOCK_ONLY |
 | scrolling terminal stopped | ZERO, ZERO, CLOCK_ONLY | n/a |
@@ -126,18 +126,17 @@ After-vs-forced, the primary check, 24 comparisons:
 
 - **Totals: 24 comparisons: 15 ZERO, 2 CLOCK_ONLY, 7 CHANGED.** In every one of the 7: `changed=24 max_diff=1 bbox=3057,88,3083,89 outside_clock=24`
   (close-1 shows 390 changed = the clock's 366 plus the same 24). The forced frame equals the frame before the event in 9 of 9 returning cases (clock aside):
-  a full repaint reproduces the earlier picture exactly. Nothing else is stale: no window remnant after a close or a rotation, no toast remnant (toast area clean in all 3 runs).
+  a full repaint reproduces the earlier picture exactly. Nothing else is stale: no window remnant after a close or a rotation, no toast remnant in the after-vs-forced diffs (ZERO in all 3 runs; crops not viewed).
 - **What the 24 pixels are.** Row y=88 is the first wallpaper row under the 88 px bar (bar colour `(26,27,37)` on rows 86-87). At x 3057-3082 the after-close frame has
   R=132 where the full repaint and the frame before the window opened have R=131 (`close-2`: A `(132,55,143)`, F and P `(131,55,143)`), one level of one channel,
-  24 pixels. Viewed at 6x: the before and after panels are indistinguishable, the diff panel is one short magenta line on the bar's lower edge. It is not
+  24 pixels. Viewed (`close-2` crop, 2x): the before and after panels are indistinguishable (bar right end with the wifi-off icon, wallpaper below), the diff panel is one short magenta line, broken once, at the bar's lower edge. It is not
   an old picture left on screen (the older frame equals the repaint); it is a freshly drawn pixel that differs by a rounding step from the repaint's.
 - **Verdict.** The stated rule is "0 changed pixels outside the clock in every comparison": **FAIL, 7 of 24**, by 24 pixels at one level. In every
   other respect the result is clean, and there is no visible defect. I did not weaken the rule. One counter-check (phase 10, queued): arms B A A B with `AQ_WAYLAND_FULL_DAMAGE=1`
   as the control (it makes aquamarine send the whole surface every commit), three open/close cycles per arm. The same sliver in both arms means Hyprland's own damage-limited
   render, not the damage patch; a sliver in the shipped arm only means the patch.
-- **Side facts from the same run.** After each rotation the desktop probe passed 7 to 14 s later (samples 14, 6, 7, 7, 14, 14 s, counting a fixed 6 s first); in the first run, 3 of 6 probes at a fixed 10 s read `no omarchy-bar layer (shell not up)`,
-  so the shell takes up to ~14 s to be whole after a rotation here (R10 run 1 says no shell restart on rotation; this run does not agree, not investigated).
-  Viewed: the toast at the top right ("R11 V2 redo toast 1 / this toast fades out"), the portrait desktop with the terminal prompt and the key bar intact. The two sticky notifications of phase 2 are gone from these screenshots (the session was restarted).
+- **Side facts from the same run.** After each rotation the desktop probe passed 6 to 14 s later (rotate, rotate back, per run: 14 and 6, 7 and 7, 14 and 14 s; each count includes a fixed 6 s wait, polling every 2 s). In the first, unforced run 3 of 6 probes at a fixed 10 s read `no omarchy-bar layer (shell not up)` (log `old-r2/p9-first.log`). So the shell bar is not back at 10 s after a rotation, and takes up to ~14 s; consistent with AGENTS.md (a live size change restarts the shell), though not the 2-3 s blink it describes. The app pid stayed the same through all six rotations.
+  Viewed: the toast at the top right of the landscape desktop ("R11 V2 redo toast 1 / this toast fades out") with the search bar and key bar below, and the portrait desktop (`rot-1-portrait-open-F`) with the terminal prompt, bar clock 09:18 with badge "3", and the key bar intact.
 
 ### V2, correctness against a forced full repaint (phase 2, 01:51-02:01 UTC): WITHDRAWN, the forcing step repainted nothing
 
