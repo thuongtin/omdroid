@@ -1,5 +1,7 @@
 package com.phoshdroid.app.proot
 
+import com.phoshdroid.app.launch.GpuMode
+import com.phoshdroid.app.launch.GpuModeRule
 import java.io.File
 
 /** Rootfs location and login entry point for the proot guest. */
@@ -46,10 +48,12 @@ class ProotDistroManager(
         height: Int,
         scale: Int,
         refreshMhz: Int,
+        gpu: GpuMode = GpuMode.KGSL,
+        gpuSource: String = GpuModeRule.SOURCE_SETTING,
     ): Process {
         return processRunner.start(
             commandBuilder.buildLoginCommand(startupScript, bindSdcard),
-            commandBuilder.buildEnvironment(width, height, scale, refreshMhz, bindSdcard),
+            commandBuilder.buildEnvironment(width, height, scale, refreshMhz, bindSdcard, gpu, gpuSource),
         )
     }
 }

@@ -13,6 +13,10 @@ import androidx.core.app.NotificationCompat
 import com.phoshdroid.app.LauncherActivity
 import com.phoshdroid.app.PhoshdroidApp
 import com.phoshdroid.app.R
+import com.phoshdroid.app.launch.GpuMode
+import com.phoshdroid.app.launch.GpuModeRule
+import com.phoshdroid.app.launch.MemorySignals
+import com.phoshdroid.app.launch.ProcessLimits
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import java.io.File
@@ -34,6 +38,12 @@ class ProotService : Service() {
     private var scale = 2
     private var refreshMhz = 120_000
     private var bindSdcard = true
+    private var gpu = GpuMode.KGSL
+    private var gpuSource = GpuModeRule.SOURCE_SETTING
+
+    // Set when Android's child-process limit is on and this app cannot lift it: the foreground
+    // notification then carries the adb command (ProcessLimits.instruction).
+    private var limitsNote: String? = null
 
     private val prefixDir get() = "${applicationContext.filesDir}/usr"
 
@@ -98,6 +108,22 @@ class ProotService : Service() {
                 )
         refreshMhz = prefs.refreshMhz
         bindSdcard = prefs.bindSdcard
+        // The GPU path is decided once per session and handed to the guest as OMDROID_GPU
+        // (contract section 9). One log line, so a device round can see why a path was chosen.
+        val gpuPreference = prefs.gpuMode
+        val kgslUsable = GpuModeRule.isKgslUsable()
+        gpu = GpuModeRule.resolve(gpuPreference, kgslUsable)
+        gpuSource = GpuModeRule.source(gpuPreference)
+        android.util.Log.i(
+            "Phoshdroid",
+            "gpu: preference=$gpuPreference kgsl-usable=$kgslUsable -> ${gpu.value} source=$gpuSource",
+        )
+
+        // Android 12+ kills a session's child processes past a limit; lift it when the grant allows, else
+        // say so in the notification. One log line per start, whatever happened.
+        val limits = ProcessLimits.apply(this, prefs.phantomLimitFix)
+        limitsNote = limits.userNote
+        android.util.Log.i("Phoshdroid", "limits: ${limits.log}")
 
         startForeground(NOTIFICATION_ID, buildNotification())
         startSession()
@@ -105,6 +131,17 @@ class ProotService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // Log-only: whether Android ever asks this process to give memory back is a device-round question.
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        android.util.Log.i("Phoshdroid", "memory: onTrimMemory ${MemorySignals.trimLevelName(level)} ($level)")
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        android.util.Log.i("Phoshdroid", "memory: onLowMemory")
+    }
 
     override fun onDestroy() {
         stopSession()
@@ -147,6 +184,8 @@ class ProotService : Service() {
                 scale = scale,
                 refreshMhz = refreshMhz,
                 bindSdcard = bindSdcard,
+                gpu = gpu,
+                gpuSource = gpuSource,
             )
         val process =
             try {
@@ -181,15 +220,23 @@ class ProotService : Service() {
         }, "RootBrokerMonitor").start()
     }
 
+    /**
+     * Ends the fake-root broker. Never waits on the calling thread: this runs from `onDestroy`
+     * on the main thread, and the broker proot has outlived SIGTERM and SIGKILL on the device.
+     * The R10 build waited here with an unbounded `waitFor()`, which froze the main thread when a
+     * session ended from inside (no ended screen, then an ANR).
+     */
     private fun stopBroker() {
         val process = brokerProcess ?: return
         brokerProcess = null
-        try {
-            process.destroy()
-            process.waitFor()
-        } catch (_: Exception) {
+        val stoppable = JavaProcessStoppable(process)
+        ProcessStop.stopAsync("BrokerStop", stoppable, GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+            when (it) {
+                StopOutcome.SURVIVED ->
+                    android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL: ${stoppable.survivorStatus()}")
+                else -> android.util.Log.i("ProotService", "session: root-broker stopped ($it)")
+            }
         }
-        android.util.Log.i("ProotService", "session: root-broker stopped")
     }
 
     private fun startProot() {
@@ -206,6 +253,8 @@ class ProotService : Service() {
                 height = height,
                 scale = scale,
                 refreshMhz = refreshMhz,
+                gpu = gpu,
+                gpuSource = gpuSource,
             )
 
         Thread({
@@ -227,6 +276,8 @@ class ProotService : Service() {
                             height = height,
                             scale = scale,
                             refreshMhz = refreshMhz,
+                            gpu = gpu,
+                            gpuSource = gpuSource,
                         )
                     runProcess(prootProcess, "proot retry").first
                 } else {
@@ -277,9 +328,11 @@ class ProotService : Service() {
             // The Stop action may have arrived between the guest's exit and this
             // runnable: a Stop is the user's decision to go quiet, so it wins.
             if (stopping) return@post
-            active = false
+            // The exit is recorded before `active` drops: a launcher thread that sees the session
+            // dead must find this exit, not the previous one.
             lastExitCode = exitCode
             lastExitAtMs = System.currentTimeMillis()
+            active = false
             stopForeground(STOP_FOREGROUND_REMOVE)
             val shown =
                 try {
@@ -306,9 +359,13 @@ class ProotService : Service() {
     private fun stopSession() {
         stopping = true
         active = false
+        // Main thread (the notification Stop and onDestroy): no waiting here. A guest that already
+        // exited is a no-op; a live one is signalled on its own thread, and the monitor thread returns
+        // on `stopping` when it goes.
         prootProcess?.let { proc ->
-            proc.destroy()
-            proc.waitFor()
+            ProcessStop.stopAsync("GuestStop", JavaProcessStoppable(proc), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+                android.util.Log.i("ProotService", "session: guest process stopped ($it)")
+            }
         }
         prootProcess = null
         stopBroker()
@@ -373,16 +430,22 @@ class ProotService : Service() {
                 PendingIntent.FLAG_IMMUTABLE,
             )
 
-        return NotificationCompat
-            .Builder(this, PhoshdroidApp.CHANNEL_ID)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
-            .setContentIntent(contentIntent)
-            .setOngoing(true)
-            .addAction(0, getString(R.string.action_settings), settingsIntent)
-            .addAction(0, getString(R.string.action_stop), stopIntent)
-            .build()
+        val builder =
+            NotificationCompat
+                .Builder(this, PhoshdroidApp.CHANNEL_ID)
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_text))
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setContentIntent(contentIntent)
+                .setOngoing(true)
+                .addAction(0, getString(R.string.action_settings), settingsIntent)
+                .addAction(0, getString(R.string.action_stop), stopIntent)
+        limitsNote?.let { note ->
+            builder
+                .setContentText(getString(R.string.notification_limits_short))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(note))
+        }
+        return builder.build()
     }
 
     companion object {
@@ -393,6 +456,10 @@ class ProotService : Service() {
         private const val EXTRA_WIDTH = "width"
         private const val EXTRA_HEIGHT = "height"
         private const val EXTRA_SCALE = "scale"
+
+        // A stop waits this long for SIGTERM and then this long for SIGKILL, off the main thread
+        // (ProcessStop); r11 phase 4 measured a broker and a guest that outlived both.
+        private const val GUEST_STOP_WAIT_S = 3L
 
         // True from the moment a session is requested until it is stopped, the
         // guest exits for good or the service dies. The launcher's readiness

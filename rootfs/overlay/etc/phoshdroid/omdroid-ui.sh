@@ -277,6 +277,14 @@ hl.window_rule({
   max_size = { "(monitor_w)", "(monitor_h)" },
 })
 LUA
+      if [ "${OMDROID_ANIMATIONS:-0}" != "1" ]; then
+        cat <<'LUA'
+-- No animations in the mobile UI: each transition is one frame instead of a
+-- dozen full-damage frames on a CPU-rendered shell. Put OMDROID_ANIMATIONS=1
+-- in ~/.config/omdroid/session.env to keep the Omarchy animations.
+hl.config({ animations = { enabled = false } })
+LUA
+      fi
       printf '%s\n' "$look_end"
     } >> "$tmp"
     mv -f "$tmp" "$looknfeel"
@@ -443,6 +451,20 @@ screensaver_off() {
 # --------------------------------------------------------------------- main --
 
 mkdir -p "$state" "$config/omdroid" 2>/dev/null
+
+# The session environment block in start.sh sits just before the watcher, after
+# this script has run, so the animation switch read here (OMDROID_ANIMATIONS)
+# comes from the same optional user file, read the same way. The
+# marker stops a second read when the caller already sourced it: the watcher
+# restarts the shell by running this file, and it inherited the values.
+session_env="$home/.config/omdroid/session.env"
+if [ -z "${OMDROID_SESSION_ENV_READ:-}" ] && [ -f "$session_env" ]; then
+  set -a
+  . "$session_env"
+  set +a
+  export OMDROID_SESSION_ENV_READ=1
+  log "session.env: read $session_env"
+fi
 
 mode="mobile"
 if [ -f "$mode_file" ]; then

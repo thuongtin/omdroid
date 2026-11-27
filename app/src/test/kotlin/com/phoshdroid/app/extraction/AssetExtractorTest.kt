@@ -1,25 +1,41 @@
 package com.phoshdroid.app.extraction
 
+import com.github.luben.zstd.ZstdOutputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarConstants
+import java.io.IOException
 import java.util.zip.GZIPOutputStream
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 
 class AssetExtractorTest {
 
     @TempDir
     lateinit var tempDir: File
 
-    private fun createTar(files: Map<String, ByteArray>): ByteArray {
+    /** The two container formats the extractor has to accept. */
+    private enum class Codec { GZIP, ZSTD }
+
+    private fun wrap(baos: ByteArrayOutputStream, codec: Codec): OutputStream = when (codec) {
+        Codec.GZIP -> GZIPOutputStream(baos)
+        Codec.ZSTD -> ZstdOutputStream(baos)
+    }
+
+    private fun createTar(files: Map<String, ByteArray>, codec: Codec = Codec.GZIP): ByteArray {
         val baos = ByteArrayOutputStream()
-        GZIPOutputStream(baos).use { gz ->
+        wrap(baos, codec).use { gz ->
             TarArchiveOutputStream(gz).use { tar ->
                 for ((name, content) in files) {
                     val entry = tar.createArchiveEntry(File(name), name)
@@ -36,10 +52,11 @@ class AssetExtractorTest {
     private fun createTarWithLinks(
         files: Map<String, ByteArray>,
         links: List<Pair<String, String>>,
-        modes: Map<String, Int> = emptyMap()
+        modes: Map<String, Int> = emptyMap(),
+        codec: Codec = Codec.GZIP
     ): ByteArray {
         val baos = ByteArrayOutputStream()
-        GZIPOutputStream(baos).use { gz ->
+        wrap(baos, codec).use { gz ->
             TarArchiveOutputStream(gz).use { tar ->
                 for ((name, content) in files) {
                     val entry = TarArchiveEntry(name)
@@ -58,6 +75,47 @@ class AssetExtractorTest {
             }
         }
         return baos.toByteArray()
+    }
+
+    /** An archive holding every entry type the real image uses. */
+    private fun createMixedTar(codec: Codec): ByteArray {
+        val baos = ByteArrayOutputStream()
+        wrap(baos, codec).use { gz ->
+            TarArchiveOutputStream(gz).use { tar ->
+                val exe = TarArchiveEntry("./usr/bin/tool")
+                exe.mode = 0b111_101_101
+                exe.size = "#!/bin/sh\n".toByteArray().size.toLong()
+                tar.putArchiveEntry(exe)
+                tar.write("#!/bin/sh\n".toByteArray())
+                tar.closeArchiveEntry()
+
+                val data = TarArchiveEntry("./usr/share/data.txt")
+                data.mode = 0b110_100_100
+                data.size = 6
+                tar.putArchiveEntry(data)
+                tar.write("hello\n".toByteArray())
+                tar.closeArchiveEntry()
+
+                val symlink = TarArchiveEntry("./usr/bin/tool-link", TarConstants.LF_SYMLINK)
+                symlink.linkName = "./usr/bin/tool"
+                tar.putArchiveEntry(symlink)
+                tar.closeArchiveEntry()
+
+                val hardlink = TarArchiveEntry("./usr/bin/tool-copy", TarConstants.LF_LINK)
+                hardlink.linkName = "./usr/share/data.txt"
+                tar.putArchiveEntry(hardlink)
+                tar.closeArchiveEntry()
+            }
+        }
+        return baos.toByteArray()
+    }
+
+    private fun extract(bytes: ByteArray, target: File = tempDir) {
+        AssetExtractor().extract(
+            input = ByteArrayInputStream(bytes),
+            totalBytes = bytes.size.toLong(),
+            targetDir = target
+        )
     }
 
     @Test
@@ -228,5 +286,78 @@ class AssetExtractorTest {
         )
 
         assertEquals(0, extractor.skippedLinks)
+    }
+
+    // The two container formats, each with the full set of entry types.
+
+    @Test
+    fun `extracts a gzip image with modes symlinks and hard links`() = assertMixedArchive(Codec.GZIP)
+
+    @Test
+    fun `extracts a zstd image with modes symlinks and hard links`() = assertMixedArchive(Codec.ZSTD)
+
+    private fun assertMixedArchive(codec: Codec) {
+        extract(createMixedTar(codec))
+
+        assertTrue(File(tempDir, "usr/bin/tool").canExecute(), "$codec: executable bit")
+        assertEquals("hello\n", File(tempDir, "usr/share/data.txt").readText())
+        val link = File(tempDir, "usr/bin/tool-link")
+        assertTrue(Files.isSymbolicLink(link.toPath()), "$codec: symlink not created")
+        assertEquals("./usr/bin/tool", Files.readSymbolicLink(link.toPath()).toString())
+        val copy = File(tempDir, "usr/bin/tool-copy")
+        assertTrue(Files.isRegularFile(copy.toPath()), "$codec: hard link member missing")
+        assertEquals("hello\n", copy.readText())
+        assertTrue(File(tempDir, ".extraction_complete").exists(), "$codec: no completion marker")
+    }
+
+    @Test
+    fun `rejects a stream that is neither gzip nor zstd`() {
+        val bogus = byteArrayOf(0x00, 0x01, 0x02, 0x03, 0x04, 0x05)
+        val thrown = assertThrows(IOException::class.java) {
+            AssetExtractor().extract(ByteArrayInputStream(bogus), bogus.size.toLong(), tempDir)
+        }
+        assertTrue(thrown.message!!.contains("unknown image compression"), thrown.message)
+        assertFalse(File(tempDir, ".extraction_complete").exists())
+    }
+
+    /**
+     * Real-image extraction, off by default: set OMDROID_IMAGE to the packed asset
+     * (rootfs.bin) and optionally OMDROID_IMAGE_TARGET to a directory with ~4 GB
+     * free (defaults to the JUnit temp dir), and OMDROID_IMAGE_ENTRIES to the
+     * expected number of non-directory members to check the count.
+     */
+    @Test
+    fun `extracts the real image when OMDROID_IMAGE names it`() {
+        val imagePath = System.getenv("OMDROID_IMAGE")
+        assumeTrue(imagePath != null && File(imagePath).isFile, "OMDROID_IMAGE not set")
+        val target = File(System.getenv("OMDROID_IMAGE_TARGET") ?: tempDir.path)
+        val image = File(imagePath)
+
+        val extractor = AssetExtractor()
+        image.inputStream().use { input ->
+            extractor.extract(input, image.length(), target)
+        }
+
+        // A second run over the same target (the release variant of this task)
+        // finds the marker and returns false on purpose, so assert the tree.
+        // Delete OMDROID_IMAGE_TARGET to force a fresh extraction.
+        assertTrue(File(target, ".extraction_complete").exists(), "extraction did not complete")
+        assertEquals(0, extractor.skippedLinks, "hard-link members missing from their targets")
+        assertTrue(File(target, "etc/phoshdroid/start.sh").isFile, "guest session script missing")
+        assertTrue(File(target, "usr/bin/cage").isFile, "parent compositor missing")
+
+        System.getenv("OMDROID_IMAGE_ENTRIES")?.toIntOrNull()?.let { expected ->
+            // walkFileTree does not follow symlinks (the guest has directory
+            // symlinks that would loop otherwise); every non-directory entry is
+            // materialised, hard-link members as copies, plus the marker.
+            var count = 0
+            Files.walkFileTree(target.toPath(), object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (!attrs.isDirectory) count++
+                    return FileVisitResult.CONTINUE
+                }
+            })
+            assertEquals(expected + 1, count, "extracted non-directory members plus the marker")
+        }
     }
 }

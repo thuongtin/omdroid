@@ -28,12 +28,20 @@ point the switch at a scratch copy, OMDROID_ROOT is honoured by omdroid-ui.sh
 itself, and OMARCHY_WATCH_LOG moves the log out of /tmp. `switch_ui(mode)` is the
 entry point the dry run calls; with no Hyprland it applies the files and reports
 the shell restart as deferred.
+
+Hyprland is queried over its own request socket (`hypr/<signature>/.socket.sock`,
+`j/monitors` / `j/layers`), so a poll forks nothing; `hyprctl` stays only for the
+state-changing calls and as the fallback when the socket does not answer. The
+query runs every tick until the marker is written and for 10 s after a size, mode
+or shell change, then once per OMDROID_WATCH_HEARTBEAT (default 2 s).
+OMDROID_WATCH_LEGACY=1 restores the old hyprctl-every-tick behaviour.
 """
 import ctypes
 import glob
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 
@@ -42,6 +50,21 @@ MARKER = os.path.join(RUNTIME, "omarchy-ready")
 LOG_PATH = os.environ.get("OMARCHY_WATCH_LOG", "/tmp/omarchy-watch.log")
 POLL = 0.25          # seconds between evaluations
 STABLE_S = 1.5       # a new monitor size must hold this long before we act
+
+
+def _env_positive(name, default):
+    """A positive float from the environment, or `default`."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+HEARTBEAT = _env_positive("OMDROID_WATCH_HEARTBEAT", 2.0)  # steady-state query interval
+HOT_S = 10.0         # query every tick this long after a size, mode or shell change
+LEGACY = os.environ.get("OMDROID_WATCH_LEGACY") == "1"  # old hyprctl-every-tick path
+
 RETRY_CAP = 3        # actions per monitor size, then give up loudly
 OMARCHY = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
 ACT = os.environ.get("OMARCHY_WATCH_ACT", "1") == "1"
@@ -120,6 +143,50 @@ def ctl(what, sig, timeout=5):
         return None
 
 
+def socket_request(what, sig, timeout=2.0):
+    """`j/<what>` on Hyprland's request socket: parsed JSON, or None.
+
+    Hyprland answers and closes the connection, so read to EOF. A missing
+    socket, a refused connect, a read timeout or a malformed answer returns
+    None, and the caller falls back to `hyprctl` for that call.
+    """
+    path = os.path.join(RUNTIME, "hypr", sig, ".socket.sock")
+    if not os.path.exists(path):
+        return None
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(path)
+        sock.sendall(("j/" + what).encode())
+        data = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    try:
+        return json.loads(data.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+
+
+def hypr(what, sig, timeout=2.0):
+    """`j/<what>` from Hyprland: the socket first, `hyprctl -j` as the fallback.
+
+    The fallback keeps a protocol surprise at the old behaviour (one hyprctl
+    fork for that query); OMDROID_WATCH_LEGACY=1 forces it for the device A/B.
+    """
+    if not LEGACY:
+        value = socket_request(what, sig, timeout)
+        if value is not None:
+            return value
+    return ctl(what, sig)
+
+
 def surface(it):
     """`WxH` of a layer surface dict, or `none`."""
     if not it:
@@ -127,9 +194,16 @@ def surface(it):
     return f"{it.get('w')}x{it.get('h')}"
 
 
-def evaluate():
-    """One snapshot. Returns a dict; `missing` names what is not there yet."""
-    root = xroot()
+def evaluate(root=None, hypr_data=None):
+    """One snapshot. Returns a dict; `missing` names what is not there yet.
+
+    `root` and `hypr_data` let the main loop reuse the X reading it already has
+    and skip the Hyprland query on ticks where nothing can have changed; the
+    defaults read the root and query Hyprland now, which is what the settle and
+    switch paths want.
+    """
+    if root is None:
+        root = xroot()
     if not root:
         return {"missing": "no X display"}
     rw, rh = root
@@ -137,15 +211,16 @@ def evaluate():
     sig = signature()
     if not sig:
         return {"missing": "no Hyprland instance dir"}
-    mons = ctl("monitors", sig)
+    if hypr_data is None:
+        hypr_data = (hypr("monitors", sig), hypr("layers", sig))
+    mons, layers = hypr_data
     if not isinstance(mons, list):
         return {"missing": "Hyprland IPC does not answer"}
     enabled = [m for m in mons if not m.get("disabled")]
     if len(enabled) != 1:
         return {"missing": f"{len(enabled)} enabled monitors"}
     m = enabled[0]
-    layers = ctl("layers", sig) or {}
-    levels = (layers.get(m.get("name"), {}) or {}).get("levels", {}) or {}
+    levels = ((layers or {}).get(m.get("name"), {}) or {}).get("levels", {}) or {}
     surf = {}
     for items in levels.values():
         for it in items or []:
@@ -367,7 +442,9 @@ def settle(timeout=8.0):
 
 def main():
     last_ui = ui_mode()
-    log(f"start pid={os.getpid()} runtime={RUNTIME} act={'on' if ACT else 'off'} ui={last_ui}")
+    log("start pid=%d runtime=%s act=%s ui=%s heartbeat=%.1fs legacy=%s" %
+        (os.getpid(), RUNTIME, "on" if ACT else "off", last_ui, HEARTBEAT,
+         "on" if LEGACY else "off"))
     ready = False
     last_missing = None
     last_key = None
@@ -375,7 +452,35 @@ def main():
     attempts = 0
     fits = 0
     limited = False
+    last_root = None
+    last_sig = None
+    last_query = 0.0
+    hot_until = 0.0
+    hypr_data = None
     while True:
+        now = time.monotonic()
+        root = xroot()
+        if root != last_root:
+            # A rotation, a fold or a dock: ask Hyprland at once and keep asking
+            # every tick while the size settles. The first reading is not a
+            # change; the pre-ready path already queries every tick.
+            if last_root is not None:
+                hot_until = now + HOT_S
+            last_root = root
+        sig = signature()
+        if sig != last_sig:
+            if last_sig is not None:
+                hot_until = now + HOT_S
+            last_sig = sig
+        # Ask Hyprland while the session is not ready yet, for HOT_S after any
+        # change that can move the monitor or the layers, on the steady
+        # heartbeat, or until a first answer arrived. Other ticks read only the
+        # X root, which forks nothing.
+        if (LEGACY or not ready or hypr_data is None or now < hot_until
+                or now - last_query >= HEARTBEAT):
+            hypr_data = (hypr("monitors", sig) if sig else None,
+                         hypr("layers", sig) if sig else None)
+            last_query = now
         # The host writes the mode file (and the user may pin one); the switch
         # itself stays in here, where omdroid-ui.sh, the plugin index and the
         # shell live (contract section 8). Checked before the readiness gate so a
@@ -386,7 +491,9 @@ def main():
             log("ui mode %s -> %s, switching in place" % (last_ui, mode))
             log("ui switch: " + switch_ui(mode))
             last_ui = mode
-        st = evaluate()
+            hot_until = time.monotonic() + HOT_S
+            hypr_data = None
+        st = evaluate(root, hypr_data)
         if st.get("missing"):
             if st["missing"] != last_missing:
                 log("waiting: " + st["missing"])
@@ -402,6 +509,8 @@ def main():
             log("ui switch to %s: %s" % (queued, "layers still do not fit 8 s after the restart"
                                           if took is None else
                                           "layers fit again %.1f s after the restart" % took))
+            hot_until = time.monotonic() + HOT_S
+            hypr_data = None
             continue
         key = st["mon"]
         if key != last_key:
@@ -432,6 +541,8 @@ def main():
                     (key[0], key[1], st["target"][0], st["target"][1], fit_monitor(st),
                      fits, RETRY_CAP))
                 size_since = time.monotonic()
+                hot_until = size_since + HOT_S
+                hypr_data = None
         elif not st["layers_ok"]:
             if stable >= STABLE_S:
                 if attempts < RETRY_CAP:
@@ -458,6 +569,8 @@ def main():
                             else:
                                 log("act: layers fit again %.1f s after the restart" % took)
                                 attempts = 0
+                            hot_until = time.monotonic() + HOT_S
+                            hypr_data = None
                     size_since = time.monotonic()
                 elif attempts == RETRY_CAP:
                     attempts += 1

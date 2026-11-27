@@ -44,22 +44,58 @@ export LD_LIBRARY_PATH=/etc/phoshdroid/lib:/opt/omarchy-android/mesa/root/usr/li
 # shim and the root broker refuse upgrades for that reason; there is no library
 # alias here, because the dependency closure cannot be reproduced by hand.
 
-# GPU path: the patched Mesa/Hyprland/aquamarine builds talk KGSL directly.
-# ProotCommandBuilder already passes this block from the host; it is repeated
-# here so the script is self-contained for a manual launch from a shell, where
-# Mesa would otherwise pick its X11 DRI3/Zink path (no DRM node inside proot).
-export OMARCHY_GPU_MODE=kgsl
-export MESA_LOADER_DRIVER_OVERRIDE=kgsl
+# GPU path (launch-contract section 9). The host resolves the mode and passes
+# OMDROID_GPU=kgsl|software; a manual launch from a shell has no host, so the
+# same probe runs here: a readable and writable /dev/kgsl-3d0 means KGSL, anything
+# else means software (the patched Mesa llvmpipe, slow but it needs no GPU node).
+# OMDROID_GPU_SOURCE says who chose: auto lets session-child.sh retry once in
+# software mode when Hyprland dies at once; setting never changes the mode.
+gpu_from=host
+case "${OMDROID_GPU:-}" in
+    kgsl|software) ;;
+    *)
+        if [ -r /dev/kgsl-3d0 ] && [ -w /dev/kgsl-3d0 ]; then
+            OMDROID_GPU=kgsl
+        else
+            OMDROID_GPU=software
+        fi
+        OMDROID_GPU_SOURCE=auto
+        gpu_from=probe
+        ;;
+esac
+: "${OMDROID_GPU_SOURCE:=setting}"
+# An earlier attempt of this same launch already fell back (the host retries a
+# session that dies in its first 30 s): do not pay for the failed KGSL start again.
+# The marker lives in the runtime dir, which the host wipes before every launch.
+if [ "$OMDROID_GPU" = kgsl ] && [ "$OMDROID_GPU_SOURCE" = auto ] \
+        && [ -e "$XDG_RUNTIME_DIR/omdroid-gpu-fallback" ]; then
+    OMDROID_GPU=software
+    gpu_from=marker
+fi
+export OMDROID_GPU OMDROID_GPU_SOURCE
+# Every variable below is the same in both modes: the nested Wayland path does not
+# depend on the GPU vendor. The Android patched Mesa wins over the stock one.
 export LIBGL_DRIVERS_PATH=/opt/omarchy-android/mesa/root/usr/lib/dri
-export VK_ICD_FILENAMES=/opt/omarchy-android/mesa/freedreno_icd.json
-export FD_KGSL_ENABLE_DMABUF=1
 export AQ_NO_KMS_REQUIREMENT=1 AQ_NO_MODIFIERS=1
 export AQ_WAYLAND_REFRESH_MHZ="$OMARCHY_REFRESH_MHZ"
-export HYPRLAND_ANDROID_DMABUF=1 HYPRLAND_SHM_DAMAGE=1
+export HYPRLAND_SHM_DAMAGE=1
 export HYPRLAND_EGL_NO_MODIFIERS=1 HYPRLAND_EGL_SURFACELESS=1
 export HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 HYPRLAND_NO_RT=1
 export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland SDL_VIDEODRIVER=wayland
 export XWAYLAND_NO_GLAMOR=1 NO_AT_BRIDGE=1 QT_ACCESSIBILITY=0 GTK_A11Y=none
+if [ "$OMDROID_GPU" = software ]; then
+    export OMARCHY_GPU_MODE=software
+    export MESA_LOADER_DRIVER_OVERRIDE=swrast LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
+    unset VK_ICD_FILENAMES FD_KGSL_ENABLE_DMABUF HYPRLAND_ANDROID_DMABUF
+else
+    export OMARCHY_GPU_MODE=kgsl
+    export MESA_LOADER_DRIVER_OVERRIDE=kgsl
+    export VK_ICD_FILENAMES=/opt/omarchy-android/mesa/freedreno_icd.json
+    export FD_KGSL_ENABLE_DMABUF=1
+    export HYPRLAND_ANDROID_DMABUF=1
+    unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER
+fi
+echo "gpu: mode=$OMDROID_GPU source=$OMDROID_GPU_SOURCE from=$gpu_from"
 
 # Fake root: the sudo client ships in the overlay and the broker is the second
 # proot the host app starts. chmod because the APK overlay sync only marks .sh
@@ -117,6 +153,26 @@ python3 /etc/phoshdroid/fit-x11.py "$DISPLAY" 0.25 > /tmp/fit-x11.log 2>&1 &
 
 # A marker left behind by the previous session would hand the host over early.
 rm -f "$XDG_RUNTIME_DIR/omarchy-ready"
+
+# Session environment for everything started below. Two defaults that bound
+# memory and disk on small devices: MALLOC_ARENA_MAX caps the glibc per-thread
+# arena count (the guest is multi-threaded: Hyprland, Quickshell, Xwayland), and
+# MESA_SHADER_CACHE_MAX_SIZE caps the shader cache, which the default lets grow
+# to 1 GB inside the guest home. Do not add the malloc trim or mmap thresholds:
+# each changes the glibc syscall pattern and every syscall is costlier under
+# proot. The optional user file holds plain key=value lines, is sourced with
+# set -a so every assignment is exported, and overrides either default above
+# (for example MALLOC_ARENA_MAX= to drop the cap, OMDROID_ANIMATIONS=1,
+# OMDROID_WATCH_LEGACY=1, OMDROID_WATCH_HEARTBEAT=1.0).
+session_env="$HOME/.config/omdroid/session.env"
+export MALLOC_ARENA_MAX=2
+export MESA_SHADER_CACHE_MAX_SIZE=128M
+if [ -f "$session_env" ]; then
+    set -a
+    . "$session_env"
+    set +a
+    echo "session.env: read $session_env"
+fi
 
 # Ready marker + layer-fit watcher: writes the marker once the desktop is really
 # drawn, then keeps the shell layers in step with the monitor after a live root
