@@ -98,8 +98,10 @@ a cold-cache effect.
   and background still appear at 2.4-2.8 s exactly as on desktop. What then takes 3-5 s is
   quickshell loading/compiling the four `keepLoaded` panels and painting their first frames
   (QuickSettings.qml 2139 lines + WifiPanel 900 + BluetoothPanel 1098, Launcher.qml 1348,
-  Back.qml 220, Switcher.qml 725). The image ships no `qmlcachegen` and the shell has no disk
-  bytecode cache, so every start compiles from source.
+  Back.qml 220, Switcher.qml 725). The image ships no `qmlcachegen` (census of `/usr/lib/qt6/bin`),
+  so the shell compiles QML from source at each start; whether Qt's own disk cache is additionally
+  in play is not established — the first start after the install was 4-5 s slower than the next two
+  on identical files.
 - **Target not met.** Mobile desktop-PASS 6.3 and 6.6 s against desktop 3.0, 3.6, 2.5 s: a ~3 s
   gap where the brief allows 1.5 s, down from ~7 s on the R10 build. Arm 2 (11.3 s) is the first
   mobile start after the install and is out of family with arms 3 and 6 on the same files; it is
