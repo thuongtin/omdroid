@@ -26,7 +26,23 @@ New tools only, under `docs/omarchy/tools/verify-*` (see "Tools"). No source fil
 
 ## Tools
 
-(filled in as they are written)
+All in `docs/omarchy/tools/`, all new, none needs a source change. Every phase script runs under the
+round's tablet lock and sources `verify-common.sh`, which pulls in the round's phase library (owner state
+saved and put back on any exit, R10 build reinstalled and cold-started at the end). They need
+`TABLET_SERIAL`, `R11` (the round scratch dir holding `device/phase-lib.sh`), `PHASE_OUT` and `TOOLS`
+exported; no path or serial is hard-coded.
+
+| File | What it is |
+| --- | --- |
+| `verify-common.sh` | shared helpers: installed-sha check and R10 reinstall, `arm_check` (what a session really runs: env switches + the mapped aquamarine library), `repaint_diff` (forced full repaint + exact diff + crop), uiautomator dump and tap, device/monitor/client one-liners |
+| `verify-scrdiff.py` | exact screenshot diff (numpy): changed pixels, bbox, pixels outside the bar clock box, verdict ZERO / CLOCK_ONLY / CHANGED, and a before / after / diff crop to look at |
+| `verify-ts.py`, `verify-trace.py` | timestamp a trace log inside the guest; summarise `commit damage N rect(s)` lines: counts of 0-rect / N-rect / whole-surface, commit-to-commit gap mean, median, p95, max, histogram, gaps over 100 ms |
+| `verify-p1-trace-trim.sh` | V3 then V1 (two arms: shipped damage patch, and `AQ_WAYLAND_FULL_DAMAGE=1` as the positive control) |
+| `verify-p2-repaint.sh`, `verify-scroll.sh` | V2: three runs each of toast, open/close, scrolling terminal stopped, rotation and back, plus two controls (a real change; `vfr=true` toast, the known stale case) |
+| `verify-p3-session-end.sh` | V6: clean exit from inside, Hyprland killed after 30 s, a session that dies at launch (`session.env` with `exit 7`); each screen dumped, screenshotted, then Start again |
+| `verify-p4-fresh-sudo.sh`, `verify-v5-*.sh` | V4 on a freshly extracted guest, then V5 on it (prompt with a typed answer, Ctrl+C during `sudo sleep 30` with a plain `sleep` as the injection control, `omarchy-pkg-add` and removal); the test guest is deleted at the end |
+| `verify-p5-multitouch.sh`, `verify-mkuinput.py`, `verify-touchlog.py` | V7: N-finger `uinput` gestures (pinch, three-finger swipe), the touchlog overlay summary (ids, positions, simultaneous fingers, cancels), the workspace-swipe config and effect |
+
 
 ## Results
 
