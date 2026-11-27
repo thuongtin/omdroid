@@ -21,7 +21,7 @@ tile-state pass off the boot path, cached its result, and closed three idle rest
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
 | 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | PASS on the marker, FAIL on `coldstart.sh`'s hand-over | phase 7, ten alternating cold starts on APK `5fdc257b…` (five per arm, one build, one hour): mobile ready marker **3.10 / 3.13 / 3.13 / 3.18 / 3.13 s** with the drawer unmapped against **6.67 / 6.73 / 11.41 / 11.70 / 12.39 s** with it mapped, and 1.82-2.88 s for the desktop UI. Mobile is 0.25-1.3 s from desktop on the marker (target met). `coldstart.sh`'s hand-over reads 6.1-6.2 s for mobile against 3.0-3.7 s for desktop, but it polls `dumpsys activity` at ~2 s resolution; gestures: bar tap, sheet close, dock swipe-up, app open PASS, three items blocked by the switcher not closing (re-run in phase 8) |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
-| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PENDING | commit `9f407c8`, APK `5fdc257b…` installed with the sha proven. Phase 6 lost its memory and latency numbers to two script bugs (a shell function run under `timeout`; a bad tuple unpack) and its gesture rows to a sheet the latency control left open, but its one same-build A/B is the first direct evidence for the start-up limiter: ready marker **13.7 s with `OMDROID_DRAWER_MAPPED=1`, 3.7 s with the drawer unmapped**. Phase 7 re-runs it 5×2 alternating with both measurements fixed |
+| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PASS | commit `9f407c8`, APK `5fdc257b…`: three 23528K (22.97 MiB) `wayland-shm` mappings with the drawer mapped and **none** with it unmapped (four cold starts, two pairs); session PSS Quickshell 208/207 → 138 MB, Hyprland 269 → 178 MB; open latency 137-213 ms (one 1036 ms outlier) against a 192 ms sheet control; gestures: bar tap, sheet close, drawer open and close, dock swipe-up, app open PASS |
 
 ## What changed
 
@@ -148,6 +148,55 @@ Each arm's setting was read back from the live layer list after the start (`draw
   arms spread 6.3-11.7 s; those numbers are the A arm of phase 7 seen through a noisier instrument
   (no per-arm setting read back). They are kept as the history, not as the verdict.
 
+### Phase 8 — the drawer's memory, latency and gestures (APK `5fdc257b…`)
+
+Memory: `mem-attrib-smaps.sh` from the memory stream (read-only), one snapshot 20 s after each
+cold start. `A` = `OMDROID_DRAWER_MAPPED=1`, `B` = unmapped while closed. Order A B A B.
+
+| arm | drawer | Quickshell PSS | Hyprland PSS | 23528K `wayland-shm` mappings |
+| --- | --- | --- | --- | --- |
+| 1 A | mapped | 208141 kB | 268838 kB | 3 |
+| 3 A | mapped | 206753 kB | 268858 kB | 3 |
+| 2 B | unmapped | 137901 kB | 177600 kB | 0 |
+| 4 B | unmapped | 137625 kB | 177608 kB | 0 |
+
+- The 23528K rows (22.97 MiB) are the drawer's two buffers the memory stream measured; one of them
+  is mapped twice in Quickshell. They are present in every mapped arm and absent in every unmapped
+  one — the mapped arm is the instrument's control.
+- Session PSS drops by ~68 MiB (Quickshell) and ~89 MiB (Hyprland) with the drawer unmapped. Not all
+  of that is the 23528K mappings: opening the drawer in a B session adds 32.5 MB to Hyprland with no
+  new ≥20 MB row (its shadow buffers), and a close leaves ~20 MB of built drawer state in Quickshell.
+  The 52.2 MB anonymous block in Hyprland is present in **both** arms, so it is not the drawer (it is
+  the memory stream's open item).
+- Three states in one B session: closed 137625 / 177608 (no 23528K rows) → drawer opened 138085 /
+  210116 → closed again 158877 / 175888. Unmapping frees the compositor's side at close; Quickshell
+  keeps the drawer's built scene graph until the next session.
+
+Open latency (device clock: `date +%s%3N` immediately before the injected tap, against the evlog's
+`openlayer` epoch): dock tap → drawer layer mapped **1036 / 213 / 137 ms** (the first tap after a
+close is an outlier), bar tap → sheet layer **192 ms** (positive control: same instrument, also a
+lazily loaded panel). The layer maps during the `omarchy-shell` summon IPC that the always-mapped
+build pays as well; the only added cost is the 24 ms pre-map frame.
+
+Gestures, each from a verified clean layer list:
+
+| item | signal | verdict |
+| --- | --- | --- |
+| bar tap | `omamobile-quicksettings` layer appears | PASS |
+| sheet swipe up | sheet layer gone | PASS |
+| dock tap | `omamobile-launcher` layer appears | PASS |
+| drawer swipe down | drawer layer gone (unmapped again) | PASS |
+| dock swipe-up | `omamobile-switcher` layer appears | PASS |
+| switcher swipe up | switcher still listed | not a documented gesture — R5 closes it by tapping a card or the Home button; recorded, not a regression |
+| app open (`foot`) | client `foot` + `omamobile-home-strip` | PASS |
+| pill short swipe | recents opened instead of home | the documented injected-swipe hazard (R5: injected moves arrive ~0.4 s apart, so a slow swipe reads as a pause and opens recents) |
+| back edge from x = 20 | no change | needs the R5 byte-logger window to prove Escape; untested here (a second `foot` of my own opened, ws 1, 2 windows) |
+
+Screenshots for the parent's eyes, all PENDING-VISION under `<scratch>/p8/shots/`:
+`r11s2-p8-drawer-open.png` (the grid-flash check — the one thing a layer timeline cannot see),
+`bar-tap`, `qs-close`, `drawer-closed`, `dock-swipe-up`, `switcher-close`, `foot-open`,
+`pill-short-swipe`, `back-edge`, `final`.
+
 ### Phase 6 — partial (two instrument bugs, recorded so they are not repeated)
 
 - `timeout 120 adb_ shell …` cannot work: `adb_` is a shell function, so `timeout` answers
@@ -231,16 +280,14 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
 
 ## Not done
 
-- **The memory saving and the open latency are phase 8's** (PSS A/B between `OMDROID_DRAWER_MAPPED=1`
-  and the lazy default, and the drawer's open latency with the real swipe-down close between taps).
-  Until that lands, the 46 MiB is the memory stream's measurement of the always-mapped window and the
-  saving is inferred from the layer disappearing, not from a PSS delta in this stream.
 - **The visual check that unmapping does not flash the grid** — the defect that made upstream keep the
-  window mapped — is PENDING-VISION: `r11s2-p8-drawer-open.png`, plus the drawer opens in phase 7's
-  arms. A one-frame 3×-scale flash leaves no trace in the layer timeline, so only eyes settle it.
+  window mapped — is PENDING-VISION. A one-frame 3×-scale flash leaves no trace in the layer timeline,
+  so `r11s2-p8-drawer-open.png` and a drawer opened by finger are the settling evidence.
 - **`coldstart.sh`'s hand-over metric is quantised at ~2 s** (one `dumpsys activity activities` per
-  poll). A true user-visible hand-over number needs the display activity's first frame; the guest's
-  marker is the precise signal this round used.
-- Three gesture items still need a clean run or a finger (switcher close, pill short swipe, back
-  edge): in phase 3 they ran with the switcher's overlay still up. Phase 8 re-runs them from a
-  verified clean state.
+  poll); the guest's ready marker is the precise signal this round used. A true hand-over number needs
+  the display activity's first frame.
+- **Two gesture items are unresolved as measurements, not as defects**: the switcher has no close
+  swipe in the R5 recipe (tap a card or the Home button), and the injected pill swipe reads as a pause
+  and opens recents. Both need the R5 recipes or a finger.
+- **Still open from the memory stream, untouched here**: the 52.2 MB anonymous block in Hyprland,
+  present in both arms of this stream's A/B too.
