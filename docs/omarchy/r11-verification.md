@@ -11,9 +11,9 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 
 | # | Item | Status | Proof |
 |---|---|---|---|
-| V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PENDING | |
+| V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
 | V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | PENDING | |
-| V3 | `onTrimMemory` levels and survival | PENDING | |
+| V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PENDING | |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PENDING | |
 | V6 | Session end and the error screen (H10-H15) | PENDING | |
@@ -46,7 +46,71 @@ exported; no path or serial is hard-coded.
 
 ## Results
 
-(one section per item, written the moment its proof exists)
+Build under test for every row: APK sha256 `bef783d7a7aa1806bd72e118ff0f68b50ad670a22d42f980fe67e86977dfa52e`
+(the R10 integration build, `f2584e7`), read from the device at the start of each phase. The tablet
+was Android 16, 4 KB pages, display mode 60.00 Hz (SurfaceFlinger `activeMode` vsyncRate 60.00 Hz
+while Hyprland itself advertises 120 Hz through `AQ_WAYLAND_REFRESH_MHZ=120000`).
+
+### V1, the AQ_TRACE commit rhythm (phase 1, 01:17-01:20 UTC; **measured**)
+
+Instrument: `/etc/phoshdroid/trace` present, so `HYPRLAND_TRACE=1 AQ_TRACE=1`; `tail -F hyprland.log`
+piped through `verify-ts.py` for 12 s windows; `verify-trace.py` summarises. Arm B = the shipped build;
+arm A = `AQ_WAYLAND_FULL_DAMAGE=1` in `session.env` (the control that must turn every commit into the
+whole-surface form). Both arms checked from the process: `/proc/<Hyprland>/environ` carries `AQ_TRACE=1`
+(and the A switch only in arm A) and `/proc/<Hyprland>/maps` names `/etc/phoshdroid/lib/libaquamarine.so.13`;
+`j/devices` lists `touch: ["wl_touch"]`.
+
+| Window | commits | zero-rect | N-rect | whole surface | rate | per-block interval (min / median / max) |
+| --- | --- | --- | --- | --- | --- | --- |
+| B idle, no window | 732 | **732** | 0 | 0 | 62.6/s | 16.53 / 16.67 / 16.80 ms |
+| B idle, foot open | 701 | **701** | 0 | 0 | 62.7/s | 16.58 / 16.66 / 16.76 ms |
+| B typing into foot (26 keys over 12 s) | 641 | 563 | **78** (1 rect each) | 0 | 57.4/s | 16.56 / 16.69 / 21.97 ms |
+| A idle (control) | 716 | 0 | 0 | **716** | 61.5/s | 16.01 / 16.67 / 17.31 ms |
+| A typing (control) | 662 | 0 | 0 | **662** | 56.8/s | 16.04 / 17.25 / 22.10 ms |
+
+- **Idle carries no damage: PASS.** Every idle commit of arm B reads `commit damage 0 rect(s)`; the same
+  windows of arm A read `commit damage 1 rect(s) (whole surface)` for every commit, so the instrument
+  does see the difference. The whole log of arm B holds 3 whole-surface lines (start-up), arm A 3,615.
+- **A keypress carries rectangles: PASS.** 78 commits with one rectangle each during typing, 563 empty ones between.
+- **Rhythm: PASS at the panel's rate.** 30-31 commits per flush block, 59.5-60.5 per second per block
+  (16.67 ms), equal in both arms. The brief's "16.7 ms or 8.3 ms by the panel rate" resolves to 16.7 ms here:
+  the panel was in its 60 Hz mode (`dumpsys SurfaceFlinger`, `activeMode ... vsyncRate=60.00 Hz`), and 120 Hz
+  is what Hyprland advertises, not what the loop runs at.
+- **Instrument limit found: the trace log is block-buffered.** Hyprland flushes `hyprland.log` in about 8 KB
+  blocks (31 commits, 512 ms at idle), so the read time of a line is its flush time and the per-commit gap
+  (the first version of `verify-trace.py` printed a median of 0.0 ms and 23 gaps of 516 ms) says nothing
+  about stalls. The script now works per flush block: the mean interval and the time the loop lost in
+  that block (`excess_ms`).
+- **Stalls over 100 ms: no stall at idle; UNDECIDED while typing.** With a window open and nothing typed,
+  the largest excess is 3-4 ms in 22 blocks (B). While typing, 6 of 20 blocks of arm B and 2 of 23 blocks of
+  arm A lose 100-137 ms each, and at the block resolution that is eight missed 16.7 ms frames spread
+  over a block as readily as one stall. It is not a regression of the damage patch by itself (the control
+  arm shows the same shape), but "no stall over 100 ms" cannot be called PASS from this data. Phase 6 repeats
+  it with a real-time instrument (a foot client's `wl_callback.done` events with `WAYLAND_DEBUG=1`), a
+  continuous flood instead of typing, two injected stalls (SIGSTOP on Hyprland for 200 and 400 ms) as the
+  positive control, and the arm order B A A B.
+
+### V3, `onTrimMemory` (phase 1, 01:17 UTC; **measured**, plus **read** for the refusals)
+
+`am send-trim-memory com.phoshdroid.app <LEVEL>` in ascending order on a fresh cold start (app pid 12238,
+Hyprland pid 12533):
+
+| Level | App log (`ProotService.onTrimMemory`) | Session afterwards |
+| --- | --- | --- |
+| RUNNING_MODERATE | `memory: onTrimMemory TRIM_MEMORY_RUNNING_MODERATE (5)` | same app pid, same Hyprland pid, X display on top |
+| RUNNING_LOW | `... TRIM_MEMORY_RUNNING_LOW (10)` | unchanged |
+| RUNNING_CRITICAL | `... TRIM_MEMORY_RUNNING_CRITICAL (15)` | unchanged; after all three `probe.sh` PASS, app pid 12238, Hyprland pid 12533 |
+| HIDDEN, BACKGROUND, MODERATE, COMPLETE | no log line: `am` answers `Exception occurred while executing 'send-trim-memory'` (the phase kept two lines of the stack) | unchanged |
+
+The refusal is Android's, not the app's. `ActivityManagerService.setProcessMemoryTrimLevel`
+(`services/core/java/com/android/server/am/ActivityManagerService.java@android-16.0.0_r1:3156-3177`, **read**)
+throws `Unable to set a higher trim level than current level` when the process already holds a level at or above
+the requested one, and `Unable to set a background trim level on a foreground process` for any level from
+UI_HIDDEN up while the process state is at or above IMPORTANT_FOREGROUND. The app is `TOP` with a
+foreground service (`curProcState=2`, `mHasForegroundServices=true`, read from `dumpsys activity processes`).
+An odd value like 7 is not an `am` level name at all. Phase 6 re-runs every level keeping the whole answer,
+tries the background levels with the app on the home screen, and records the one level Android sends by
+itself there (UI_HIDDEN, 20).
 
 ## V8, the owner-only checklist (do NOT attempt from an agent)
 
