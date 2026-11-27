@@ -27,18 +27,44 @@ interface Stoppable {
     fun waitFor(ms: Long): Boolean
 }
 
+/**
+ * A real process. Signals go to its descendants too ([ProcTree]): a proot that ignores SIGTERM and
+ * SIGKILL while its tracee lives has been seen on the device, and it ends once the tracee is gone.
+ */
 class JavaProcessStoppable(
     private val process: Process,
+    private val signalDescendants: (Int, Int) -> Unit = ::signalTree,
 ) : Stoppable {
+    private val pid = ProcTree.pidOf(process)
+
     override val isAlive: Boolean get() = process.isAlive
 
-    override fun destroy() = process.destroy()
+    override fun destroy() {
+        if (pid > 0) signalDescendants(pid, SIGTERM)
+        process.destroy()
+    }
 
     override fun destroyForcibly() {
+        if (pid > 0) signalDescendants(pid, SIGKILL)
         process.destroyForcibly()
     }
 
     override fun waitFor(ms: Long): Boolean = process.waitFor(ms, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+    /** Facts for the log when the process outlives SIGKILL. */
+    fun survivorStatus(): String = if (pid > 0) "pid $pid ${ProcTree.status(pid)} children=${ProcTree.descendants(pid)}" else "pid unknown"
+
+    companion object {
+        const val SIGTERM = 15
+        const val SIGKILL = 9
+
+        private fun signalTree(
+            pid: Int,
+            signal: Int,
+        ) {
+            ProcTree.descendants(pid).forEach { android.os.Process.sendSignal(it, signal) }
+        }
+    }
 }
 
 /**
