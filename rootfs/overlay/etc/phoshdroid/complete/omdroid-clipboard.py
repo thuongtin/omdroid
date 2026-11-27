@@ -108,8 +108,6 @@ XFIXES_SELECTION_NOTIFY_MASK = (XFIXES_SET_SELECTION_OWNER_NOTIFY
 
 SelectionRequest = 30
 SelectionNotify = 31
-PropertyNotify = 28
-PropertyChangeMask = 1 << 22
 CurrentTime = 0
 NoEventMask = 0
 

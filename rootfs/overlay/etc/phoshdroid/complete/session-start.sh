@@ -141,7 +141,12 @@ cb_pid=$STATE/clipboard.pid
 cb_cmd=${OMDROID_COMPLETE_CLIPBOARD_CMD:-$D/omdroid-clipboard.py}
 stop_bridge() {
     if [ -f "$cb_pid" ]; then
-        kill "$(cat "$cb_pid" 2> /dev/null)" 2> /dev/null
+        old=$(cat "$cb_pid" 2> /dev/null)
+        # The pid could have been reused since the file was written, so the command
+        # line must still name this bridge before anything is signalled.
+        if [ -n "$old" ] && tr '\0' ' ' < "/proc/$old/cmdline" 2> /dev/null | grep -qF "$cb_cmd"; then
+            kill "$old" 2> /dev/null
+        fi
         rm -f "$cb_pid"
     fi
     # Backstop for an instance left without a pid file. Only a python interpreter
