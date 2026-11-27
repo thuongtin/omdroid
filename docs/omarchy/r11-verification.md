@@ -300,7 +300,8 @@ Build under test: `complete/apk/omdroid-complete-60d0b95.apk`, sha256 `9dae471b3
   ended when it is 0, followed by the last lines of the guest session log; `Start again` is a real node in the UI dump in all four cases, which
   is why the tap hit it at (1600,1794) rather than falling back to the icon path.
 - **The segfault S4 reported, as this run saw it.** Every one of the three clean-exit frames carries
-  `session-child.sh line 49: <pid> Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` in the log tail on screen (pids 10888,
+  `child line 49: <pid> Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` as the last line of the log tail on screen (the script
+  name before "child" is cut off by the screen's line wrapping) (pids 10888,
   11875, 12900: the session's own Hyprland each time), so Hyprland died by SIGSEGV on **3 of 3** clean exits here, while the exit code the app
   received read 0, 139, 0. So the segfault is the normal shape of a session exit on this build, the ended screen is correct regardless of it, and
   **the exit code is not a reliable detector of the segfault** (1 of 3 read 139). S4's "4 of 9" was counted from exit codes, so it undercounts
@@ -308,6 +309,31 @@ Build under test: `complete/apk/omdroid-complete-60d0b95.apk`, sha256 `9dae471b3
 - **Against the R10 build (phase 3):** that build logged `launch: ended-screen exit=7 665ms` and then showed "Starting desktop…", a blank
   launcher afterwards, an ANR 5.0 s after the end and no Start button, with the main thread futex-blocked at +3 s and +7 s (phase 7). None of
   that reproduces here: the same three scenarios and the exit-7 launch all show their screen within 0.03 s and recover.
+
+### Finding: Hyprland dies by SIGSEGV at every clean exit on `9dae471b`, and the exit code the app gets does not see it
+
+Measured in phase 11 (three clean exits from inside, then the exit-7 launch), on S4's build `9dae471b`:
+
+| run | the session's Hyprland pid | last line of the log tail on the ended screen | exit code ProotService got | ended-screen headline |
+| --- | --- | --- | --- | --- |
+| 1 | 10888 | `child line 49: 10888 Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` | 0 | "The desktop session ended." |
+| 2 | 11875 | `child line 49: 11875 Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` | 139 | "The desktop session stopped unexpectedly (exit 139)." |
+| 3 | 12900 | `child line 49: 12900 Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` | 0 | "The desktop session ended." |
+
+- **The segfault is the normal shape of an exit on this build: 3 of 3 clean exits.** The session's own Hyprland was killed by SIGSEGV every
+  time (the shell reports it at `child line 49` of the session script, and the error page shows that tail on screen, viewed in all three frames).
+  It is not an occasional failure and it does not affect what the user sees: the ended screen, the reason, the absence of an ANR and Start again
+  are all correct in the same runs (V6 PASS above stands).
+- **The app's exit code is not a detector for it.** Two of the three segfaulting exits reported `0`; only run 2 reported `139`. The exit code is
+  the session supervisor's, not Hyprland's, so a segfault can surface as a clean exit. Any count of segfaults taken from exit codes undercounts:
+  S4's "4 of 9" is a floor, not the rate.
+- **Therefore the earlier "banners off: 0 of 6" reading cannot be used as evidence that the completion banners cause the segfault.** That reading
+  (S4's phase 8: `OMDROID_COMPLETE_BANNERS=0` 3 cycles, `OMDROID_COMPLETE=0` 3 cycles, all `proot exit=0`, against `mine-default` 4 cycles with one
+  `139`) counts non-zero exit codes, and on this build a segfaulting exit reads `0` most of the time (2 of 3 here). Those six cycles may all have
+  segfaulted. Testing the banners needs the segfault read from the guest's own session log (the `Segmentation fault` line above), not from the exit
+  code; until then the banners are neither implicated nor cleared.
+- **Not investigated:** which part of Hyprland's shutdown path faults. Nothing in this round's gates depends on it; a coredump or `catchsegv` read is
+  the next step if the rate matters later.
 
 ### V6, session end and the error screen (phase 3, 02:25-02:32 UTC; **measured**, screenshots **viewed**)
 
