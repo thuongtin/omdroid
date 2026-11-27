@@ -63,4 +63,16 @@ class AndroidControlRequestsTest {
         assertFalse(intruder.exists())
         assertTrue(File(outside, "keep").isFile)
     }
+
+    @Test fun `a directory at the head of the listing does not wedge the mailbox`() {
+        // delete(2) cannot remove a non-empty directory on its own, so one left at the head of the
+        // sort was re-listed for ever while every real request behind it was discarded as surplus.
+        val blocker = File(directory, "0.request").also { it.mkdirs() }
+        File(blocker, "keep").writeText("data")
+        File(directory, "1.request").writeText("bluetooth")
+        assertEquals(listOf("bluetooth"), AndroidControlRequests(directory).take())
+        // Walked past, pruned, and the request behind it served and consumed.
+        assertFalse(blocker.exists())
+        assertFalse(File(directory, "1.request").exists())
+    }
 }

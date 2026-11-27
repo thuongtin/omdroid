@@ -10,37 +10,53 @@ class AndroidControlRequests(private val directory: File) {
     /**
      * Serves at most one request and deletes the rest, so a looping guest cannot open a page per
      * file it writes: the listing is guest-sized, and the one page it gets is the only one the
-     * host acts on per call.
+     * host acts on per call. A name that is not a readable request (a directory the guest made, a
+     * link, a stale or oversized file) is discarded and the walk goes on to the next one, because
+     * `delete(2)` fails on a non-empty directory and leaving it at the head of the sort would
+     * wedge the mailbox for the rest of the session.
      */
     fun take(now: Long = System.currentTimeMillis()): List<String> {
         val listing = directory.listFiles() ?: return emptyList()
         val candidates = listing.filter { it.name.endsWith(SUFFIX) }.sortedBy { it.name }
-        // Bounded per call: the surplus goes, and a mailbox filled faster than it is pruned
-        // still costs the host a fixed number of unlinks here.
-        candidates.drop(1).take(MAX_DISCARD).forEach { discard(it) }
-        val file = candidates.firstOrNull() ?: return emptyList()
-        return try {
-            // The reader's side of the same hazard the writer has: the guest can leave a link at
-            // this name. Read the attributes and the bytes without following one.
-            val attributes =
-                Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        var index = 0
+        // Bounded per call: the guest cannot make the walk or the prune open-ended.
+        while (index < candidates.size && index < MAX_WALK) {
+            val file = candidates[index++]
+            val attributes = attributes(file)
+            if (attributes == null || !attributes.isRegularFile) {
+                discard(file)
+                continue
+            }
             val age = now - file.lastModified()
-            if (!attributes.isRegularFile || attributes.size() > MAX_BYTES || age !in 0..MAX_AGE_MS) {
-                emptyList()
-            } else {
+            if (attributes.size() > MAX_BYTES || age !in 0..MAX_AGE_MS) {
+                discard(file)
+                continue
+            }
+            // Everything queued behind the served request is surplus: one page per call.
+            candidates.drop(index).take(MAX_DISCARD).forEach { discard(it) }
+            return try {
                 // No-follow at open time: the file cannot become a link between the check and the read.
                 val text =
                     Files.newInputStream(file.toPath(), LinkOption.NOFOLLOW_LINKS)
                         .use { it.readBytes().toString(Charsets.UTF_8) }
                 listOfNotNull(parse(text))
+            } catch (error: Exception) {
+                emptyList()
+            } finally {
+                // A link goes, its target stays: delete(2) removes the link itself.
+                file.delete()
             }
-        } catch (error: Exception) {
-            emptyList()
-        } finally {
-            // A link goes, its target stays: delete(2) removes the link itself.
-            file.delete()
         }
+        return emptyList()
     }
+
+    /** The file's own attributes, without following a link. Null when it cannot be read. */
+    private fun attributes(file: File): BasicFileAttributes? =
+        try {
+            Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        } catch (_: Exception) {
+            null
+        }
 
     /** Deletes [file] without following a link: the link goes, whatever it points at stays. */
     private fun discard(file: File) {
@@ -67,6 +83,9 @@ class AndroidControlRequests(private val directory: File) {
 
         /** Requests discarded per call, so a flood costs a fixed amount of work each time. */
         private const val MAX_DISCARD = 64
+
+        /** Candidates inspected per call: a directory at the head cannot make the walk unbounded. */
+        private const val MAX_WALK = 16
 
         fun parse(text: String): String? = text.trim().takeIf { text.length <= 32 && it in actions }
     }
