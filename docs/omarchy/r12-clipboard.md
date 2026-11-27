@@ -68,7 +68,7 @@ itself (`complete: clipboard: bridge started (pid 26893)`):
 | Xlorie collects it | bridge log | `x: answered TARGETS for 0x511`, `x: answered 12 chars for 0x511` — 0x511 is Xlorie's window, so the Android half fired unasked |
 | X to guest | `clipboard-x.py write android-text-B 8` (stands in for Xlorie), then `wl-paste --no-newline` | `android-text-B`; log shows `x: CLIPBOARD owner=0xa00001`, `x -> wayland: 14 chars` |
 | no echo | same run | `x -> wayland: 19 chars` with no following `wayland -> x` |
-| cold start | APK built from this branch (1,124,828,862 B, `sha256 f189a008...`), installed 13:57:57, then one force-stop and start | the hook started the bridge by itself: `complete: clipboard: bridge started (pid 29111)`, and the bridge log shows `wayland: watching wayland-1` without anyone passing `WAYLAND_DISPLAY` |
+| cold start | final build of this branch (1,124,829,394 B, `sha256 6c0f06f7...`), installed 14:04:09, then one force-stop and start | the hook started the bridge by itself: `complete: clipboard: bridge started (pid 3503)`; the log shows `wayland: watching wayland-1` with no `WAYLAND_DISPLAY` in the environment; guest to X gave `owner=0x600001 text='cold3-A'` and X to guest gave `wl-paste: cold3-B`, both logged inside the same session |
 | speed | probe takes CLIPBOARD, `wl-paste` polled every 0.5 s | conversion inside the first poll: `x -> wayland: 8 chars` logged within 0.5 s of the ownership change |
 
 `clipboard-x.py` is the probe in `docs/omarchy/tools/`: `read` prints the owner and the text,
