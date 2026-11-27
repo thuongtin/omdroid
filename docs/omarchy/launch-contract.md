@@ -1,40 +1,5 @@
 # Launch and geometry contract (host app <-> guest session)
 
-## Android settings bridge
-
-Android owns Wi-Fi, Bluetooth, the display, and the battery. A proot guest has no
-NetworkManager, BlueZ adapter, UPower battery, or physical backlight to control.
-While a session runs, `ProotService` starts `AndroidControls`, which atomically
-publishes `<prefix>/tmp/omdroid-android/state.json` every two seconds. The guest
-sees the same file at `/tmp/omdroid-android/state.json` through its existing tmp
-bind. Version 1 contains a millisecond Unix `timestamp`, boolean radio/power
-states, and a numeric battery percentage. Failed
-reads are null. No network names, addresses, or paired-device lists are exported.
-
-The shared `omdroid.android/AndroidState.qml` validates the schema and field
-types and expires snapshots after ten seconds. The mobile bar and quick settings
-use it only with `OMARCHY_PROOT=1`; other environments keep their Linux backends.
-`omdroid-ui.sh` links this shared module alongside the five mobile plugins.
-
-Taps run `android-control.py`, which atomically renames a unique request into
-`/tmp/omdroid-android/requests/*.request`. The host accepts only `wifi`,
-`bluetooth`, `display`, `rotation`, `volume`, `airplane`, `battery`, and `settings`.
-It opens the corresponding Android Settings activity so Android handles device
-selection, pairing, and changes. This interface accepts no arbitrary intent,
-command, argument, or URL. Requests are limited to 32 bytes, expire after 30
-seconds, are consumed once, and are cleared at session start. Symlinks are ignored.
-
-Only the normal `ACCESS_NETWORK_STATE` and `ACCESS_WIFI_STATE` permissions are
-added. The bridge needs no secure-settings grant, location permission, nearby
-device permission, root, or accessibility service. Android/OEM restrictions on a
-read leave that field unknown; a missing settings activity reports an error.
-Stopping the session stops the worker and removes its status file.
-
-Two agents work against this file in round 2: one owns the host (`app/**`, Kotlin), one owns the
-guest (`rootfs/overlay/etc/phoshdroid/**`). Neither edits this file. If something here is
-wrong or cannot be met, say so at the top of your report with the evidence and work to the
-nearest thing that can.
-
 ## 1. Who knows the screen size
 
 **The X root is the truth.** Xlorie sizes its root to the Android surface it is shown on, so the
@@ -422,3 +387,61 @@ shell (`act: shell restart FAILED (...): not retrying`), which writes
 the retry budget (3 actions per size, then `giving up`). Log lines: guest `ui-scale <a> -> <b>`,
 `monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
 display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.
+
+## 13. Android settings bridge (host -> guest, guest -> host)
+
+Android owns Wi-Fi, Bluetooth, the display and the battery. A proot guest has no NetworkManager,
+BlueZ adapter, UPower battery or physical backlight to control, so while a session runs
+`ProotService` starts `AndroidControls`, which publishes Android's readings to
+`<prefix>/tmp/omdroid-android/state.json`; the guest sees the same file at
+`/tmp/omdroid-android/state.json` through its tmp bind. The mobile bar and quick settings read it
+through the shared `omdroid.android/AndroidState.qml` and use it only with `OMARCHY_PROOT=1`;
+every other environment keeps its Linux backends. `omdroid-ui.sh` links that module beside the
+five vendored plugins.
+
+**The snapshot.** One JSON object, written by temp name plus rename, and the temp file is opened
+exclusively (`CREATE_NEW` after a delete), so a link planted in the guest's `/tmp` cannot point
+the write at another file. Schema version 2:
+
+| Field | Type | Unit | Meaning |
+|---|---|---|---|
+| `schema` | integer | - | `2`. The guest drops any other value |
+| `timestamp` | integer | milliseconds since the Unix epoch | when the host wrote this file |
+| `observed` | object: field name -> integer | milliseconds since the Unix epoch | when the host last observed that field |
+| `wifiEnabled` | boolean | - | the Wi-Fi radio is on (`WifiManager.isWifiEnabled`) |
+| `wifiConnected` | boolean | - | a Wi-Fi network is up (a `NetworkCallback`, not a scan) |
+| `bluetoothEnabled` | boolean | - | `Settings.Global.BLUETOOTH_ON`: the OS radio state, not the paired-device list |
+| `airplaneMode` | boolean | - | `Settings.Global.AIRPLANE_MODE_ON` |
+| `rotationLocked` | boolean | - | `Settings.System.ACCELEROMETER_ROTATION` is 0 |
+| `powerSave` | boolean | - | `PowerManager.isPowerSaveMode` |
+| `batteryPercent` | integer | percent, 0-100 | `level / scale` of the battery broadcast |
+| `charging` | boolean | - | the battery is plugged in |
+| `full` | boolean | - | the battery reports `BATTERY_STATUS_FULL` |
+
+A field whose read failed is `null`, and a field missing from `observed` is never trusted. No
+network name, address or paired-device name is exported.
+
+**Liveness.** A field is known only while `now - observed[field] < 10 000 ms`, where `now` is the
+guest's own clock (`Date.now()`); a snapshot stamped in the future is dropped. The host
+re-confirms every reading at 8 s, so a value that has not changed stays known, and it writes the
+file only when a value changes or a reading is re-confirmed. An idle desktop therefore costs one
+write every 8 s instead of one every 2 s, and a host that stops publishing expires field by field
+inside 10 s without the file being touched again. The guest's 3 s timer only advances `now`; the
+file's own watch does the reloading.
+
+**Requests.** A tap runs `android-control.py`, which renames a unique request into
+`/tmp/omdroid-android/requests/<uuid>.request`. The host watches that directory (`FileObserver`,
+no polling) and accepts only `wifi`, `bluetooth`, `display`, `rotation`, `volume`, `airplane`,
+`battery` and `settings`: at most one per event, never the same page twice inside 500 ms, and any
+other file in the directory is deleted unread. Requests are limited to 32 bytes, expire after 30
+s, are consumed once, are cleared at session start, and are opened without following a link. The
+page is started on the display the desktop is on (`DisplayLaunch`, contract section 8), so a
+docked desktop raises it on the monitor rather than out of sight on the built-in screen. The
+interface accepts no arbitrary intent, command, argument or URL.
+
+**Permissions.** Only `ACCESS_NETWORK_STATE` and `ACCESS_WIFI_STATE` are added. The bridge needs
+no secure-settings grant, location permission, nearby-device permission, root or accessibility
+service. An Android/OEM restriction on a read leaves that field unknown; a missing settings
+activity reports an error. Stopping the session unregisters the listeners and removes the
+snapshot.
+

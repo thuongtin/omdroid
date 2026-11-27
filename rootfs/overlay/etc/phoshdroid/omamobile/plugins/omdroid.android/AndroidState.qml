@@ -9,7 +9,7 @@ Item {
   readonly property bool hosted: Quickshell.env("OMARCHY_PROOT") === "1"
   property var snapshot: ({})
   property double now: Date.now()
-  readonly property bool available: hosted && Model.fresh(snapshot, now)
+  readonly property bool available: hosted && snapshot.schema === 2
   // The bundled shell predates Commons.Translations; keep labels Qt-translatable.
   function t(key) {
     switch (key) {
@@ -21,7 +21,10 @@ Item {
       default: return qsTr("Android settings")
     }
   }
-  function value(key) { return available ? snapshot[key] : undefined }
+  // A field is known only while the host's observation of it is inside the guest's window
+  // (contract section 13); a field that has aged out is unknown, not false.
+  function value(key) { return hosted && Model.fresh(snapshot, key, now) ? snapshot[key] : undefined }
+  function known(key) { return value(key) !== undefined }
   function status(key) { return value(key) === true ? t("on") : value(key) === false ? t("off") : t("settings") }
   function open(page) {
     if (!hosted) return
@@ -39,6 +42,9 @@ Item {
     interval: 3000
     repeat: true
     running: root.hosted
-    onTriggered: { root.now = Date.now(); data.reload() }
+    // The file's own watch reloads it. The timer only ages the readings, which is what makes a
+    // field expire when the host has stopped publishing (contract section 13) - one timer, no
+    // re-parse per tick.
+    onTriggered: root.now = Date.now()
   }
 }
