@@ -98,6 +98,14 @@ class LauncherActivity : AppCompatActivity() {
 
         if (checkForDisplayShift("onCreate")) return
 
+        // The guest asked for a restart (Reboot in the Omarchy menu): the service has
+        // already ended the old session, so this is the START path (launch contract, section 10).
+        if (consumeSessionRestart(intent)) {
+            logLaunch("restart requested by the guest")
+            if (!bootstrapInProgress) startBootstrap()
+            return
+        }
+
         // The service brought us here because the guest exited on its own.
         // Show it; a session must never start from this screen.
         val endedExitCode = consumeSessionEnded(intent)
@@ -139,6 +147,11 @@ class LauncherActivity : AppCompatActivity() {
         // bootstrap is running, start otherwise (the previous session ended).
         setIntent(intent)
         if (restartInFlight) return
+        if (consumeSessionRestart(intent)) {
+            logLaunch("restart requested by the guest")
+            if (!bootstrapInProgress) startBootstrap()
+            return
+        }
         val endedExitCode = consumeSessionEnded(intent)
         if (endedExitCode != null) {
             showSessionEnded(endedExitCode)
@@ -922,6 +935,13 @@ class LauncherActivity : AppCompatActivity() {
         return exitCode
     }
 
+    /** Reads and clears the `session_restart` extra, one shot like [consumeSessionEnded]. */
+    private fun consumeSessionRestart(intent: Intent?): Boolean {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_SESSION_RESTART, false)) return false
+        intent.removeExtra(EXTRA_SESSION_RESTART)
+        return true
+    }
+
     /**
      * The guest exited on its own: show why, with the session log's tail, and
      * wait for Start again. Never starts a session — the launcher decides that,
@@ -1014,6 +1034,9 @@ class LauncherActivity : AppCompatActivity() {
         /** Extras the service sets when the guest exited on its own. */
         const val EXTRA_SESSION_ENDED = "session_ended"
         const val EXTRA_SESSION_EXIT_CODE = "session_exit_code"
+
+        /** Set by the service after a guest `restart` request: start a fresh session. */
+        const val EXTRA_SESSION_RESTART = "session_restart"
 
         /** Lines of `<prefix>/tmp/omarchy-session.log` shown under an error. */
         private const val SESSION_LOG_TAIL_LINES = 20

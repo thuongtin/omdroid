@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
+import android.os.FileObserver
 import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
@@ -17,6 +18,8 @@ import com.phoshdroid.app.launch.GpuMode
 import com.phoshdroid.app.launch.GpuModeRule
 import com.phoshdroid.app.launch.MemorySignals
 import com.phoshdroid.app.launch.ProcessLimits
+import com.phoshdroid.app.launch.SessionAction
+import com.phoshdroid.app.launch.SessionRequest
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import java.io.File
@@ -33,6 +36,13 @@ class ProotService : Service() {
     private var manager: ProotDistroManager? = null
 
     private var stopping = false
+
+    // The guest's own request to end, restart or leave the session (launch contract,
+    // section 10). Set before the guest process is destroyed so the monitor thread
+    // reports what the user asked for instead of a crash.
+    @Volatile
+    private var userRequest: SessionAction? = null
+    private var requestObserver: FileObserver? = null
     private var width = 0
     private var height = 0
     private var scale = 2
@@ -151,6 +161,7 @@ class ProotService : Service() {
     private fun startSession() {
         if (prootProcess != null) return
         stopping = false
+        userRequest = null
         // The launcher wipes <prefix>/tmp/omarchy-runtime and the stale sockets
         // before it starts the X server and this service (SessionPrep). Wiping
         // again here would run after the guest may already have started writing
@@ -158,8 +169,87 @@ class ProotService : Service() {
         File(prefixDir, "tmp").mkdirs()
         writeResolvConf()
 
+        startRequestWatcher()
         startBroker()
         startProot()
+    }
+
+    /**
+     * Watches `<prefix>/tmp/omdroid-host` for the guest's `request` file (inotify, so an
+     * idle session costs nothing). A leftover file from a session that died is removed
+     * first; [SessionRequest.parse] also drops a stamp older than 30 s.
+     */
+    private fun startRequestWatcher() {
+        val dir = File(prefixDir, SessionRequest.DIR)
+        dir.mkdirs()
+        File(dir, SessionRequest.FILE).delete()
+        requestObserver?.stopWatching()
+        val observer =
+            object : FileObserver(dir, MOVED_TO or CLOSE_WRITE) {
+                override fun onEvent(
+                    event: Int,
+                    path: String?,
+                ) {
+                    if (path == SessionRequest.FILE) {
+                        Handler(Looper.getMainLooper()).post { takeRequest(dir) }
+                    }
+                }
+            }
+        observer.startWatching()
+        requestObserver = observer
+    }
+
+    private fun stopRequestWatcher() {
+        requestObserver?.stopWatching()
+        requestObserver = null
+    }
+
+    /** Reads, acknowledges (deletes) and acts on one guest request. Main thread. */
+    private fun takeRequest(dir: File) {
+        val file = File(dir, SessionRequest.FILE)
+        val text =
+            try {
+                if (file.isFile) file.readText() else return
+            } catch (e: Exception) {
+                return
+            }
+        // The guest waits for the file to go away: that is its acknowledgement.
+        file.delete()
+        val action = SessionRequest.parse(text, System.currentTimeMillis() / 1000)
+        if (action == null) {
+            android.util.Log.w("Phoshdroid", "session: request ignored: ${text.trim().take(60)}")
+            return
+        }
+        if (!active || stopping) {
+            android.util.Log.i("Phoshdroid", "session: request $action ignored, no session is running")
+            return
+        }
+        android.util.Log.i("Phoshdroid", "session: request $action")
+        when (action) {
+            SessionAction.HOME -> handBackToAndroid()
+            else -> {
+                userRequest = action
+                stopBroker()
+                // Not stopSession(): the monitor thread must see this exit and report the
+                // request instead of retrying a cold-start collapse.
+                prootProcess?.destroy()
+            }
+        }
+    }
+
+    /** Suspend and Lock: the Android home screen comes up, the session keeps running. */
+    private fun handBackToAndroid() {
+        try {
+            startActivity(
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+            android.util.Log.i("Phoshdroid", "session: handed back to Android (home)")
+        } catch (e: Exception) {
+            android.util.Log.w("Phoshdroid", "session: could not open the Android home screen: ${e.message}")
+        }
     }
 
     /**
@@ -257,6 +347,12 @@ class ProotService : Service() {
             // lifecycle alone: the service is going away on purpose.
             if (stopping) return@Thread
 
+            // The guest asked for this end (Logout, Restart, Shutdown): no retry.
+            userRequest?.let { requested ->
+                finishRequested(requested)
+                return@Thread
+            }
+
             val ranForMs = SystemClock.elapsedRealtime() - startedAtMs
             val finalCode =
                 if (SessionExit.shouldRetry(firstCode, ranForMs) && prootProcess != null) {
@@ -307,6 +403,60 @@ class ProotService : Service() {
     }
 
     /**
+     * The guest asked to end (Logout), restart (Reboot) or close the app (Shutdown).
+     * Same ordering as [finishSession]: the flag, the notification and the service
+     * teardown happen on the main thread, in that order.
+     */
+    private fun finishRequested(action: SessionAction) {
+        Handler(Looper.getMainLooper()).post {
+            if (stopping) return@post
+            active = false
+            lastExitCode = 0
+            lastExitAtMs = System.currentTimeMillis()
+            stopRequestWatcher()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            when (action) {
+                SessionAction.RESTART -> showLauncher(restart = true)
+                SessionAction.SHUTDOWN -> closeApp()
+                else -> showLauncher(restart = false)
+            }
+            android.util.Log.i("Phoshdroid", "launch: session ended by request $action")
+            stopSelf()
+        }
+    }
+
+    private fun showLauncher(restart: Boolean) {
+        try {
+            startActivity(
+                Intent(this, LauncherActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (restart) {
+                        putExtra(LauncherActivity.EXTRA_SESSION_RESTART, true)
+                    } else {
+                        putExtra(LauncherActivity.EXTRA_SESSION_ENDED, true)
+                        putExtra(LauncherActivity.EXTRA_SESSION_EXIT_CODE, 0)
+                    }
+                },
+            )
+        } catch (e: Exception) {
+            // Android 14+ may refuse a background activity start; the next icon tap takes START.
+            android.util.Log.w("Phoshdroid", "could not show the launcher after a request", e)
+        }
+    }
+
+    /** Shutdown: remove the app's tasks, then end the process (the X server lives in it). */
+    private fun closeApp() {
+        try {
+            getSystemService(android.app.ActivityManager::class.java)
+                .appTasks
+                .forEach { it.finishAndRemoveTask() }
+        } catch (e: Exception) {
+            android.util.Log.w("Phoshdroid", "could not remove the app tasks: ${e.message}")
+        }
+        Handler(Looper.getMainLooper()).postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 400)
+    }
+
+    /**
      * The session ended on its own. Runs on the main thread so the flag, the
      * notification and the service teardown are ordered: a launcher that reads
      * [isRunning] right after this sees the truth, and the "running"
@@ -349,6 +499,7 @@ class ProotService : Service() {
     private fun stopSession() {
         stopping = true
         active = false
+        stopRequestWatcher()
         prootProcess?.let { proc ->
             proc.destroy()
             proc.waitFor()

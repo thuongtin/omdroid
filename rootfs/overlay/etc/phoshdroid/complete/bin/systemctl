@@ -1,0 +1,19 @@
+#!/bin/bash
+# systemctl wrapper. The guest has no systemd, so the power verbs would only print
+# "System has not been booted with systemd" and change nothing. They are mapped onto the
+# Omdroid session requests (launch contract, section 10); every other verb goes to the
+# real binary unchanged. Linked over /usr/local/bin/systemctl by complete/session-start.sh.
+here=$(dirname "$(readlink -f "$0")")
+verb=
+for a in "$@"; do
+    case "$a" in
+        -*) ;;
+        *) verb=$a; break ;;
+    esac
+done
+case "$verb" in
+    suspend | hibernate | hybrid-sleep | suspend-then-hibernate) exec "$here/omdroid-session" home ;;
+    poweroff | halt) exec "$here/omdroid-session" shutdown ;;
+    reboot | kexec) exec "$here/omdroid-session" restart ;;
+esac
+exec "${OMDROID_REAL_SYSTEMCTL:-/usr/bin/systemctl}" "$@"
