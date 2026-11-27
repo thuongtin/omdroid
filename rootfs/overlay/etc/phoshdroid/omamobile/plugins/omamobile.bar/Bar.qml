@@ -95,10 +95,24 @@ Item {
   // The mobile network, from ModemManager's API through
   // bin/omamobile-cell-watch (omamobile-mmd serves it on the Pixel 7 Pro).
   // No modem, no icon. With the icon hidden (bar.statusIcons.cell false)
-  // the watcher is not run.
+  // the watcher is not run, and neither is it run while the modem plugin it
+  // streams for (omamobile.mobilenetwork) is not vendored: the Omdroid stub
+  // exits at once, and upstream's restart-on-exit then forked it every 5 s
+  // for the life of the session (R11 S2 steady-state count).
   property var cell: null
   readonly property string cellGlyph: StatusModel.cellGlyph(cell)
   readonly property string cellText: StatusModel.cellText(cell)
+  readonly property bool cellPlugin: {
+    // registryRevision in the binding: installedPlugins is a plain object, so
+    // reading its key does not re-fire when the registry finishes loading.
+    var revision = pluginRegistry ? pluginRegistry.registryRevision : 0
+    return root.pluginPresent("omamobile.mobilenetwork")
+  }
+
+  function pluginPresent(id) {
+    var plugins = pluginRegistry ? pluginRegistry.installedPlugins : null
+    return !!(plugins && plugins[String(id)])
+  }
 
   Process {
     id: cellWatch
@@ -111,27 +125,31 @@ Item {
         if (c) root.cell = c
       }
     }
-    onExited: { root.cell = null; if (root.showCell) cellRestart.restart() }
+    onExited: { root.cell = null; if (root.showCell && root.cellPlugin) cellRestart.restart() }
   }
-  Timer { id: cellRestart; interval: 5000; onTriggered: if (root.showCell) cellWatch.running = true }
-  onShowCellChanged: { if (!showCell) cellRestart.stop(); cellWatch.running = showCell }
-  Component.onCompleted: cellWatch.running = showCell
+  Timer { id: cellRestart; interval: 5000; onTriggered: if (root.showCell && root.cellPlugin) cellWatch.running = true }
+  onShowCellChanged: { if (!showCell) cellRestart.stop(); cellWatch.running = showCell && cellPlugin }
+  Component.onCompleted: cellWatch.running = showCell && cellPlugin
 
   // A call in progress: a chip with its time beside the clock. omatel's
   // agent through bin/omamobile-call-watch --observe (the call card runs
-  // the waking, name-holding copy).
+  // the waking, name-holding copy). Gated the same way on omamobile.call.
   property string callLine: ""
   property double nowMs: Date.now()
   readonly property string callChip: StatusModel.callChip(callLine, nowMs) || ""
+  readonly property bool callPlugin: {
+    var revision = pluginRegistry ? pluginRegistry.registryRevision : 0
+    return root.pluginPresent("omamobile.call")
+  }
 
   Process {
     id: callWatch
     command: ["omamobile-call-watch", "--observe"]
-    running: true
+    running: root.callPlugin
     stdout: SplitParser { onRead: function(line) { root.callLine = String(line) } }
-    onExited: { root.callLine = ""; callRestart.restart() }
+    onExited: { root.callLine = ""; if (root.callPlugin) callRestart.restart() }
   }
-  Timer { id: callRestart; interval: 5000; onTriggered: callWatch.running = true }
+  Timer { id: callRestart; interval: 5000; onTriggered: if (root.callPlugin) callWatch.running = true }
   Timer {
     interval: 1000
     repeat: true

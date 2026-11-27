@@ -1,0 +1,74 @@
+From 9a4af6e5b5fb163959ca3af4dbcec1edd7627a32 Mon Sep 17 00:00:00 2001
+From: Omdroid <dev@omdroid.invalid>
+Date: Fri, 27 Nov 2026 01:00:00 +0000
+Subject: [PATCH] wayland: cap the nested swapchain at two buffers
+
+Hyprland asks the Wayland backend for a three-buffer ring. On Android each
+buffer is a 25 MB frame (3200x1970x4) that stays mapped in Hyprland, in the
+app process and in the X server's present path, so the third buffer costs
+about 25 MB of PSS in the session and buys nothing a two-buffer ring with
+the release-aware next() does not: next() already skips a buffer the parent
+still owns, and the damage sent to the parent is the buffer-age damage.
+
+CSwapchain::reconfigure() now caps the length of a swapchain whose backend is
+the Wayland one at AQ_WAYLAND_SWAPCHAIN buffers (default 2; 3 restores the
+old ring; a value outside 2..8 means the default). The cap never raises a
+length and leaves every other backend alone. next() reports an age equal to
+the capped length, so the consumer's damage ring stays consistent.
+---
+ src/allocator/Swapchain.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/allocator/Swapchain.cpp b/src/allocator/Swapchain.cpp
+index aeefb28..b72b441 100644
+--- a/src/allocator/Swapchain.cpp
++++ b/src/allocator/Swapchain.cpp
+@@ -1,4 +1,5 @@
+ #include <algorithm>
++#include <cstdlib>
+ #include <aquamarine/allocator/Swapchain.hpp>
+ #include <aquamarine/backend/Backend.hpp>
+ #include "FormatUtils.hpp"
+@@ -19,10 +20,38 @@ Aquamarine::CSwapchain::CSwapchain(SP<IAllocator> allocator_, SP<IBackendImpleme
+         return;
+ }
+ 
+-bool Aquamarine::CSwapchain::reconfigure(const SSwapchainOptions& options_) {
++// A nested Wayland output keeps every ring buffer mapped in this process, in the
++// parent and in the X server, so each extra buffer costs a full frame of RAM in
++// three places. The consumer asks for three; AQ_WAYLAND_SWAPCHAIN=<n> caps a
++// Wayland swapchain at n buffers (default 2, 3 restores the old ring, values
++// outside 2..8 mean the default). A cap never raises the consumer's length.
++static size_t waylandRingCap() {
++    static const size_t cap = []() -> size_t {
++        const char* value = std::getenv("AQ_WAYLAND_SWAPCHAIN");
++        if (!value || !*value)
++            return 2;
++        char* end = nullptr;
++        const long parsed = std::strtol(value, &end, 10);
++        if (end == value || *end != '\0' || parsed < 2 || parsed > 8)
++            return 2;
++        return static_cast<size_t>(parsed);
++    }();
++    return cap;
++}
++
++bool Aquamarine::CSwapchain::reconfigure(const SSwapchainOptions& requested_) {
+     if (!allocator)
+         return false;
+ 
++    SSwapchainOptions options_ = requested_;
++    if (options_.length > waylandRingCap()) {
++        const auto impl = backendImpl.lock();
++        if (impl && impl->type() == AQ_BACKEND_WAYLAND) {
++            allocator->getBackend()->log(AQ_LOG_DEBUG, std::format("Swapchain: capping a Wayland swapchain from {} to {} buffers", options_.length, waylandRingCap()));
++            options_.length = waylandRingCap();
++        }
++    }
++
+     if (options_.size == Vector2D{} || options_.length == 0) {
+         // clear the swapchain
+         allocator->getBackend()->log(AQ_LOG_DEBUG, "Swapchain: Clearing");
+-- 
+2.56.0
+

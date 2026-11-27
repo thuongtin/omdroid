@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the patched aquamarine (0.14.0 + this project's three-patch series) for
+# Builds the patched aquamarine (0.14.0 + this project's four-patch series) for
 # aarch64 and prints the ABI comparison against the library the guest image
 # already ships.
 #
@@ -15,6 +15,11 @@
 # damage Hyprland committed, so cage and the X server copy only that region.
 # AQ_WAYLAND_FULL_DAMAGE=1 in the guest restores the old behaviour.
 # Analysis: docs/omarchy/r10-damage.md.
+#
+# 0004 caps a Wayland swapchain at two buffers instead of Hyprland's three: one
+# 25 MB frame buffer less in Hyprland, the app process and the X server's present
+# path. AQ_WAYLAND_SWAPCHAIN=3 in the guest restores the three-buffer ring.
+# Analysis: docs/omarchy/r11-memory.md.
 #
 # Usage: ./rootfs/build-aquamarine.sh [--no-build] [--keep] [--jobs N]
 #   --no-build   prepare the reference and the source tree only
@@ -47,6 +52,8 @@ PATCH_0002="0002-wayland-add-wl_touch-input.patch"
 PATCH_0002_SHA256="48448110cf8e15ba43abdd9650f5c7093d8ee2f6dd8724dc7613528404d9d787"
 PATCH_0003="0003-wayland-send-committed-damage.patch"
 PATCH_0003_SHA256="61dc6fc6176ef9013a05b6c19694e77fecdac9a678dc6c0f84b1d80741687daf"
+PATCH_0004="0004-wayland-cap-the-nested-swapchain-at-two-buffers.patch"
+PATCH_0004_SHA256="a09c8d84aea80aa018c93872ebfc549d79df94992ca0e6b93fb2379df7dff545"
 
 ROOTFS="$PROJECT_DIR/app/src/main/assets/rootfs.bin"
 PREFIX="/opt/omarchy-android/aquamarine"
@@ -109,19 +116,21 @@ git -C "$SRC" reset --quiet --hard "$AQUAMARINE_REV"
 # that is not a reason to fail, they are regenerated.
 git -C "$SRC" clean -qfdx || true
 
-for patch in "$PATCH_0001" "$PATCH_0002" "$PATCH_0003"; do
+for patch in "$PATCH_0001" "$PATCH_0002" "$PATCH_0003" "$PATCH_0004"; do
     [ -f "$PATCH_DIR/$patch" ] || fail "missing $PATCH_DIR/$patch"
 done
 actual_0001="$(sha256sum "$PATCH_DIR/$PATCH_0001" | awk '{print $1}')"
 actual_0002="$(sha256sum "$PATCH_DIR/$PATCH_0002" | awk '{print $1}')"
 actual_0003="$(sha256sum "$PATCH_DIR/$PATCH_0003" | awk '{print $1}')"
+actual_0004="$(sha256sum "$PATCH_DIR/$PATCH_0004" | awk '{print $1}')"
 [ "$actual_0001" = "$PATCH_0001_SHA256" ] || fail "$PATCH_0001 checksum mismatch: $actual_0001"
 [ "$actual_0002" = "$PATCH_0002_SHA256" ] || fail "$PATCH_0002 checksum mismatch: $actual_0002"
 [ "$actual_0003" = "$PATCH_0003_SHA256" ] || fail "$PATCH_0003 checksum mismatch: $actual_0003"
+[ "$actual_0004" = "$PATCH_0004_SHA256" ] || fail "$PATCH_0004 checksum mismatch: $actual_0004"
 echo "patch series checksums verified"
 
 git -C "$SRC" -c user.name=omdroid -c user.email=dev@omdroid.invalid \
-    am --quiet "$PATCH_DIR/$PATCH_0001" "$PATCH_DIR/$PATCH_0002" "$PATCH_DIR/$PATCH_0003"
+    am --quiet "$PATCH_DIR/$PATCH_0001" "$PATCH_DIR/$PATCH_0002" "$PATCH_DIR/$PATCH_0003" "$PATCH_DIR/$PATCH_0004"
 echo "applied: $(git -C "$SRC" log --oneline "$AQUAMARINE_REV..HEAD" | tr '\n' ' ')"
 
 if [ "$BUILD" = "0" ]; then

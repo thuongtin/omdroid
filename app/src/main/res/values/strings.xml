@@ -53,4 +53,23 @@
         <item>90000</item>
         <item>120000</item>
     </string-array>
+
+    <!-- r11 share -->
+    <string-array name="share_mode_entries">
+        <item>Automatic</item>
+        <item>Always</item>
+        <item>Off</item>
+    </string-array>
+    <string-array name="share_mode_values">
+        <item>auto</item>
+        <item>on</item>
+        <item>off</item>
+    </string-array>
+    <string name="share_summary_on_granted">On: ~/Phone is the phone\'s storage, and the Omdroid root is in the Files app</string>
+    <string name="share_summary_on_no_grant">On, but the app has no all-files access: ~/Phone shows only part of the phone</string>
+    <string name="share_summary_off">Off: Omarchy and Android do not see each other\'s files</string>
+    <string name="share_summary_auto_no_grant">Off until this app is allowed all-files access, which turns it on</string>
+    <string name="share_root_title">Omdroid</string>
+    <string name="share_root_summary">The Omarchy home inside Omdroid</string>
+    <string name="share_new_document">New document</string>
 </resources>

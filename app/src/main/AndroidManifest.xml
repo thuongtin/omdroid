@@ -54,6 +54,22 @@
             android:foregroundServiceType="specialUse"
             android:exported="false" />
 
+        <!-- The guest's home in the system file picker (contract section 10). Declared the way
+             the platform documents a custom documents provider: exported so the picker can see
+             it, grantUriPermissions so the system can hand a document to another app, and
+             MANAGE_DOCUMENTS so only the system can talk to it.
+             https://developer.android.com/guide/topics/providers/create-document-provider -->
+        <provider
+            android:name=".storage.OmdroidDocumentsProvider"
+            android:authorities="com.phoshdroid.app.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
         <!-- Termux:X11 Wayland compositor activity (merged from termux-x11-app library).
              Override exported=false so it is not accessible outside this APK. -->
         <activity

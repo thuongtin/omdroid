@@ -6,10 +6,11 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import androidx.appcompat.app.AlertDialog
+import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.SwitchPreferenceCompat
 import com.phoshdroid.app.proot.ProotService
+import com.phoshdroid.app.storage.ShareRule
 import java.io.File
 
 class SettingsFragment : PreferenceFragmentCompat() {
@@ -23,13 +24,30 @@ class SettingsFragment : PreferenceFragmentCompat() {
             true
         }
 
-        // MANAGE_EXTERNAL_STORAGE is only needed by "Mount /sdcard", so the
-        // system page is opened from that switch and never from the launch
-        // path: a Settings activity started during bootstrap pauses the
+        // Storage sharing is a tri-state (contract section 10): auto follows the all-files grant.
+        // MANAGE_EXTERNAL_STORAGE is only needed for it, so the system page is opened from here and
+        // never from the launch path: a Settings activity started during bootstrap pauses the
         // launcher and the Android 14 BAL guard then skips the hand-over.
-        findPreference<SwitchPreferenceCompat>("bind_sdcard")?.setOnPreferenceChangeListener { _, newValue ->
-            if (newValue == true) requestAllFilesAccessIfNeeded()
-            true
+        findPreference<ListPreference>(ShareRule.KEY)?.let { pref ->
+            pref.onPreferenceChangeListener =
+                Preference.OnPreferenceChangeListener { changed, newValue ->
+                    (changed as ListPreference).summary = storageSummary(newValue as String)
+                    if (newValue != ShareRule.OFF) requestAllFilesAccessIfNeeded()
+                    true
+                }
+            pref.summary = storageSummary(pref.value)
+        }
+    }
+
+    /** What the mode means right now, including the grant that decides `auto`. */
+    private fun storageSummary(mode: String?): String {
+        val granted = Environment.isExternalStorageManager()
+        val effective = ShareRule.resolve(mode, granted)
+        return when {
+            effective && granted -> getString(R.string.share_summary_on_granted)
+            effective -> getString(R.string.share_summary_on_no_grant)
+            ShareRule.normalise(mode) == ShareRule.OFF -> getString(R.string.share_summary_off)
+            else -> getString(R.string.share_summary_auto_no_grant)
         }
     }
 
