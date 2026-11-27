@@ -188,6 +188,14 @@ whole phase holds only `queryDocument root`, `queryDocument doc:Downloads` and
 **Parent-viewed:** `p7-after-tap.png` shows precisely this - the picker inside Omdroid > Downloads with
 the file row and the system chooser on top.
 
+**Phase 8** (same APK; `<scratch>/share/phase8/step5g.txt`) failed for a plain reason: `am start`
+answered *"Activity not started, intent has been delivered to currently running top-most instance"* -
+the picker instance phase 7 left open on the resolver screen stayed alive, so the seeded intent went to
+*it* and the screen stayed on the device's own Downloads (`Files in downloads`, the owner's files). No
+provider call at all. Phase 9 force-stops `com.google.android.documentsui` and
+`com.android.intentresolver` before the seeded intent, then taps the row's preview and answers the
+chooser with "Once" (never "Always").
+
 ## Screenshots (viewed by the parent; this stream cannot see images)
 
 All under `<scratch>/share/<phase>/shots/`. They show the owner's account names and recent files, so
