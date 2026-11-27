@@ -12,7 +12,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | # | Item | Status | Proof |
 |---|---|---|---|
 | V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
-| V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | **FAIL (method)**; redo queued as phase 9 | phase 2's forcing step (`debug.vfr = false` re-assert) damages nothing: S1 measured 0 damaged commits of 233 (kgsl) and 256 (software) with the trace on, so each of my 24 comparisons set the after-event frame against itself, and the real-change control only proves the diff sees change, not that the step repainted; the old PASS is withdrawn |
+| V2 | Correctness vs a forced full repaint, 3 runs of toast / open-close / scroll / rotation | **FAIL by the rule** (7 of 24 forced comparisons differ by 24 px of one level); no visible defect; counter-check phase 10 queued | redo `verify/p9-repaint2.log`: forcing step `damage_tracking` 0 then 2 proved (erases a painted 400x250 remnant, 54 damaged commits, bare `vfr=false` re-assert 0 damaged commits and the remnant stays); 17 of 24 comparisons exact (15 ZERO, 2 clock only); the other 7 all show the same 24 px, 1 level, in row y=88 x 3057-3082 after a window close or a rotation back; see "V2, redo" |
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
@@ -89,6 +89,55 @@ whole-surface form). Both arms checked from the process: `/proc/<Hyprland>/envir
   it with a real-time instrument (a foot client's `wl_callback.done` events with `WAYLAND_DEBUG=1`), a
   continuous flood instead of typing, two injected stalls (SIGSTOP on Hyprland for 200 and 400 ms) as the
   positive control, and the arm order B A A B.
+
+### V2, redo with a proven forcing step (phase 9, 09:10-09:22 UTC; **measured**, crops and shots **viewed**)
+
+APK `bef783d7…`. Script `verify-p9-repaint2.sh`, log `<scratch>/verify/p9-repaint2.log`. A first run of the same phase
+(08:25-08:34, kept as `old-r2/`) proved the step but threw it away, because its pass test did not allow the clock to turn over between two
+shots, so its scenarios ran unforced; the fix (a clock-only difference counts as nothing but the clock) is in `f9b89c6` and the run below is the
+second one. The clock box is x 110-175, y 20-70 of the mobile bar.
+
+**Part 1, the forcing step (session with `AQ_TRACE=1`).** A remnant is painted straight into cage's X window with core X drawing
+(`verify-xcorrupt.py`, 400x250 magenta at 1400,900; nothing in Hyprland or cage knows), so it behaves like a stale pixel.
+
+| Step | Screen | Commit trace (`commit damage` lines in the window) |
+| --- | --- | --- |
+| control 1: clean frame vs painted frame | **CHANGED**, 100,000 px = exactly the rectangle (viewed: the magenta box on the wallpaper, the diff panel marks the same box) | |
+| control 2: bare `hl.config({ debug = { vfr = false } })`, 2.5 s | painted frame vs after: **ZERO**, the remnant stays | 183 zero-rect, **0 with rects**, 0 whole-surface |
+| candidate A: `damage_tracking = 0` for 1.5 s, then `= 2` | after vs the clean frame: **ZERO** (or the clock only), the remnant is **gone** | 190 zero-rect, **54 with rects**, `debug:damage_tracking` read back `int: 2` |
+
+Cycle 1 and a repeat ran in session 1 (repeat: 160 zero-rect, 54 with rects, clean frame ZERO), and the whole control cycle ran a third time at the start of
+session 2 without the trace (remnant stays under the bare step, gone after A, `int: 2`). Candidates B (`vfr` true then false) and D (monitor re-apply)
+were not needed. So the step the R10 method used repaints nothing, and A repaints the screen.
+
+**Part 2, the scenarios (no trace, A as the forcing step), per event: the after-event frame, the forced frame, and the frame taken before the event.**
+After-vs-forced, the primary check, 24 comparisons:
+
+| Scenario (runs 1-3) | after vs forced | before vs forced (where the screen returns to the earlier state) |
+| --- | --- | --- |
+| toast fade | ZERO, ZERO, ZERO | n/a: the unread badge goes 1 -> 2 -> 3 and the pointer moved (viewed), so it is not the earlier state |
+| window open (foot) | ZERO, ZERO, CLOCK_ONLY | n/a |
+| window close | **CHANGED**, **CHANGED**, **CHANGED** (24 px each, below) | CLOCK_ONLY, ZERO, CLOCK_ONLY |
+| scrolling terminal stopped | ZERO, ZERO, CLOCK_ONLY | n/a |
+| the scrolling window closed | **CHANGED** x3 (same 24 px) | ZERO, ZERO, CLOCK_ONLY |
+| rotation to portrait, foot open | ZERO, ZERO, ZERO | n/a |
+| foot closed, portrait | ZERO, ZERO, ZERO | n/a |
+| rotation back to landscape | ZERO, ZERO, **CHANGED** (same 24 px) | CLOCK_ONLY x3 |
+
+- **Totals: 24 comparisons: 15 ZERO, 2 CLOCK_ONLY, 7 CHANGED.** In every one of the 7: `changed=24 max_diff=1 bbox=3057,88,3083,89 outside_clock=24`
+  (close-1 shows 390 changed = the clock's 366 plus the same 24). The forced frame equals the frame before the event in 9 of 9 returning cases (clock aside):
+  a full repaint reproduces the earlier picture exactly. Nothing else is stale: no window remnant after a close or a rotation, no toast remnant (toast area clean in all 3 runs).
+- **What the 24 pixels are.** Row y=88 is the first wallpaper row under the 88 px bar (bar colour `(26,27,37)` on rows 86-87). At x 3057-3082 the after-close frame has
+  R=132 where the full repaint and the frame before the window opened have R=131 (`close-2`: A `(132,55,143)`, F and P `(131,55,143)`), one level of one channel,
+  24 pixels. Viewed at 6x: the before and after panels are indistinguishable, the diff panel is one short magenta line on the bar's lower edge. It is not
+  an old picture left on screen (the older frame equals the repaint); it is a freshly drawn pixel that differs by a rounding step from the repaint's.
+- **Verdict.** The stated rule is "0 changed pixels outside the clock in every comparison": **FAIL, 7 of 24**, by 24 pixels at one level. In every
+  other respect the result is clean, and there is no visible defect. I did not weaken the rule. One counter-check (phase 10, queued): arms B A A B with `AQ_WAYLAND_FULL_DAMAGE=1`
+  as the control (it makes aquamarine send the whole surface every commit), three open/close cycles per arm. The same sliver in both arms means Hyprland's own damage-limited
+  render, not the damage patch; a sliver in the shipped arm only means the patch.
+- **Side facts from the same run.** After each rotation the desktop probe passed 7 to 14 s later (samples 14, 6, 7, 7, 14, 14 s, counting a fixed 6 s first); in the first run, 3 of 6 probes at a fixed 10 s read `no omarchy-bar layer (shell not up)`,
+  so the shell takes up to ~14 s to be whole after a rotation here (R10 run 1 says no shell restart on rotation; this run does not agree, not investigated).
+  Viewed: the toast at the top right ("R11 V2 redo toast 1 / this toast fades out"), the portrait desktop with the terminal prompt and the key bar intact. The two sticky notifications of phase 2 are gone from these screenshots (the session was restarted).
 
 ### V2, correctness against a forced full repaint (phase 2, 01:51-02:01 UTC): WITHDRAWN, the forcing step repainted nothing
 
