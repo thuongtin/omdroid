@@ -1,7 +1,7 @@
 #!/bin/bash
 # systemctl wrapper. The guest has no systemd, so the power verbs would only print
 # "System has not been booted with systemd" and change nothing. They are mapped onto the
-# Omdroid session requests (launch contract, section 10); every other verb goes to the
+# Omdroid session requests (launch contract, section 11); every other verb goes to the
 # real binary unchanged. Linked over /usr/local/bin/systemctl by complete/session-start.sh.
 here=$(dirname "$(readlink -f "$0")")
 verb=

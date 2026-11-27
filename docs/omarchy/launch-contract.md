@@ -56,21 +56,7 @@ still open. The host does not kill or restart the session because the display si
 user chose one. Fractional scales are out of scope until the guest round reports which values
 this Hyprland build accepts.
 
-**The live scale (R11).** `OMARCHY_SCALE` is the scale at session start only. The scale for the
-display the desktop is on now is the host-owned file `~/.config/omdroid/ui-scale` in the guest
-(`<rootfs>/home/omarchy/.config/omdroid/ui-scale`): one line, `1` or `2`, written atomically next to
-the `ui` mode file. The host resolves it the same way as the start-time value, for the TARGET display
-(`UiScale.forDisplay`: the user's `ui_scale` setting wins, else `auto` from that display's own density
-and shorter edge) and writes it before every session start and on every dock change, before the mode
-file. `omarchy-watch.py` reads it every poll; while the monitor's scale differs it applies the file's
-value with the runtime `hl.monitor` rule it already uses for the size (plus `GDK_SCALE`), and the
-layer remedy restarts only the shell. Every size fit carries the wanted scale: a config reload puts
-the start-time scale back (`monitors.lua`), and a fit that kept the reverted scale would leave the
-docked desktop at scale 2 until the next poll. A missing file, or any value other than `1` or `2`,
-changes nothing (an older host keeps the start-time scale). `OMDROID_SCALE_FOLLOW=0` in
-`~/.config/omdroid/session.env` turns the guest side off. Log lines: guest `ui-scale <a> -> <b>`,
-`monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
-display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.
+**The live scale (R11)** is a separate host-owned file; see section 12.
 
 ## 5. Session start, in order
 
@@ -303,7 +289,7 @@ source=auto`. Guest: the `gpu:` lines above in `/tmp/omarchy-session.log`.
 ANGLE on the host are not options, and neither is a Mali, Xclipse or PowerVR hardware path: those
 drivers need a DRM render node the app sandbox does not expose.
 
-## 10. Session requests (guest -> host)
+## 11. Session requests (guest -> host)
 
 The guest cannot end, restart or leave its own session in a way the host understands, and it cannot
 reach Android at all, so Omarchy's Logout, Reboot, Shutdown, Suspend and Lock (all of which need
@@ -325,7 +311,7 @@ systemd or `uwsm`, absent here) are mapped onto one request channel.
   server lives in it). `home` (Suspend, Lock): the Android home screen comes up, the session keeps
   running; Android owns locking and sleeping. None of them retries (`SessionExit.shouldRetry` is not
   consulted for a requested end). The guest ends itself once the host has acknowledged: `omdroid-session` calls Hyprland's exit dispatcher (`hyprctl dispatch 'hl.dsp.exit()'`; SIGTERM only when that fails, because the patched Hyprland segfaults on SIGTERM and the crash would show in the session-ended screen's log tail) and tells the fake-root broker's python program to end, and proot exits by itself. The host waits 10 s for the guest process to die, and only then signals it (SIGTERM, then SIGKILL, 3 s each): on the device a signal to the session proot did not end the guest, and the broker proot outlived SIGKILL. A request is finished exactly once, by the monitor thread or by the request thread, whichever sees the exit first. `OMDROID_SESSION_END=term` (session.env) skips the dispatcher. Log lines (tag `Phoshdroid`): `session: request <ACTION>`,
-  `session: request <ACTION>: guest process ended (forced=<bool>)`, `launch: session ended by request
+  `session: request <ACTION>: guest process ended by itself|after SIGTERM|after SIGKILL`, `session: root-broker stopped (<outcome>)` or `session: root-broker still alive after SIGKILL`, `launch: session ended by request
   <ACTION>`, `launch: restart requested by the guest`; guest `/tmp/omdroid-session.log`: time, action,
   acknowledgement delay, taken yes/no.
 - **Wrappers.** `/usr/local/bin/omarchy-system-{lock,logout,reboot,shutdown}` and `systemctl`
@@ -339,3 +325,20 @@ systemd or `uwsm`, absent here) are mapped onto one request channel.
 - **Switches** (`~/.config/omdroid/session.env`): `OMDROID_COMPLETE=0` (everything off), `_POWER=0`,
   `_IDLE=guest`, `_MENU=0`, `_TERMINAL=0`, `_EDITOR=0`, `_BANNERS=0`.
 
+## 12. The live UI scale (host -> guest)
+
+`OMARCHY_SCALE` is the scale at session start only. The scale for the
+display the desktop is on now is the host-owned file `~/.config/omdroid/ui-scale` in the guest
+(`<rootfs>/home/omarchy/.config/omdroid/ui-scale`): one line, `1` or `2`, written atomically next to
+the `ui` mode file. The host resolves it the same way as the start-time value, for the TARGET display
+(`UiScale.forDisplay`: the user's `ui_scale` setting wins, else `auto` from that display's own density
+and shorter edge) and writes it before every session start and on every dock change, before the mode
+file. `omarchy-watch.py` reads it every poll; while the monitor's scale differs it applies the file's
+value with the runtime `hl.monitor` rule it already uses for the size (plus `GDK_SCALE`), and the
+layer remedy restarts only the shell. Every size fit carries the wanted scale: a config reload puts
+the start-time scale back (`monitors.lua`), and a fit that kept the reverted scale would leave the
+docked desktop at scale 2 until the next poll. A missing file, or any value other than `1` or `2`,
+changes nothing (an older host keeps the start-time scale). `OMDROID_SCALE_FOLLOW=0` in
+`~/.config/omdroid/session.env` turns the guest side off. Log lines: guest `ui-scale <a> -> <b>`,
+`monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
+display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.

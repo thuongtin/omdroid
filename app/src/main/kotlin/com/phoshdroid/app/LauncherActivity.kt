@@ -99,7 +99,7 @@ class LauncherActivity : AppCompatActivity() {
         if (checkForDisplayShift("onCreate")) return
 
         // The guest asked for a restart (Reboot in the Omarchy menu): the service has
-        // already ended the old session, so this is the START path (launch contract, section 10).
+        // already ended the old session, so this is the START path (launch contract, section 11).
         if (consumeSessionRestart(intent)) {
             logLaunch("restart requested by the guest")
             if (!bootstrapInProgress) startBootstrap()

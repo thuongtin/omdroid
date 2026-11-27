@@ -1,7 +1,7 @@
 #!/bin/bash
 # omdroid-session <stop|restart|shutdown|home|lock>
 #
-# Asks the Omdroid host app to act on the desktop session (launch contract, section 10).
+# Asks the Omdroid host app to act on the desktop session (launch contract, section 11).
 # The guest cannot end or restart itself in a way the host understands, and it cannot
 # reach Android at all, so it leaves a one-line request in <prefix>/tmp/omdroid-host/request
 # (guest: /tmp/omdroid-host/request) and waits for the host to take it.

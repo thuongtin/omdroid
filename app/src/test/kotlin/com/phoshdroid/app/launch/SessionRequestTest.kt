@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
-/** The guest-to-host session request (launch contract, section 10). */
+/** The guest-to-host session request (launch contract, section 11). */
 class SessionRequestTest {
     private val now = 1_800_000_000L
 

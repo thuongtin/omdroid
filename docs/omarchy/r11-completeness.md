@@ -69,7 +69,7 @@ Code `1e9b6ed`, `c0a9e92`.
 
 ## 3. Power and session entries
 
-Contract: `launch-contract.md` section 10. Guest `omdroid-session stop|restart|shutdown|home` writes `<prefix>/tmp/omdroid-host/request`; `ProotService` watches it with a `FileObserver`, deletes it (the acknowledgement) and acts. `systemctl suspend|poweroff|reboot` and the four `omarchy-system-*` scripts are mapped onto it by wrappers linked into `/usr/local/bin`. Switches: `OMDROID_COMPLETE_POWER=0` (wrappers off), `OMDROID_COMPLETE_MENU=0` (menu block off), `OMDROID_COMPLETE=0` (everything).
+Contract: `launch-contract.md` section 11. Guest `omdroid-session stop|restart|shutdown|home` writes `<prefix>/tmp/omdroid-host/request`; `ProotService` watches it with a `FileObserver`, deletes it (the acknowledgement) and acts. `systemctl suspend|poweroff|reboot` and the four `omarchy-system-*` scripts are mapped onto it by wrappers linked into `/usr/local/bin`. Switches: `OMDROID_COMPLETE_POWER=0` (wrappers off), `OMDROID_COMPLETE_MENU=0` (menu block off), `OMDROID_COMPLETE=0` (everything).
 
 ## 4. Idle lock: the decision
 

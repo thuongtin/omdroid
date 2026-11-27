@@ -1,6 +1,6 @@
 package com.phoshdroid.app.launch
 
-/** What the guest may ask the host to do with the session (launch contract, section 10). */
+/** What the guest may ask the host to do with the session (launch contract, section 11). */
 enum class SessionAction {
     /** Logout: end the session and show the session-ended screen. */
     STOP,
