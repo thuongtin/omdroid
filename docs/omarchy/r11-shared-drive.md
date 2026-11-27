@@ -13,7 +13,7 @@ Evidence labels: **measured** (command given), **read** (file:line or URL), **es
 | 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). Device, three arms on the new build: `mode=auto all-files=true -> bind=true`; `mode=on all-files=false -> bind=true` and the guest then sees only **10** of the 35 top-level entries (the media dirs; the app's own files are missing); `mode=auto all-files=false -> bind=false`. The deny needs `appops set --uid` - the package mode alone does not change `Environment.isExternalStorageManager()` |
 | 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device: `file:///home/omarchy/Phone Omdroid Phone` added beside the owner's four bookmarks, and `omdroid-share: bookmark removed` with sharing off, the owner's lines untouched |
 | 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page; device: registered and queried by DocumentsUI |
-| 5. Device proof of the provider (read, write, Files app) | PASS | root listed in the picker (parent-viewed), the guest home listed with 11 children and their real sizes/dates, a subdirectory opened, `createDocument` created a real file in the guest home (host-side `run-as` read back), and `openDocument … mode=r` served a guest file to the system's document viewer (provider log, phase 9). Contents screenshot is PENDING-VISION; see "Screenshots" |
+| 5. Device proof of the provider (read, write, Files app) | PASS | root listed in the picker (parent-viewed), the guest home listed with 11 children and their real sizes/dates, a subdirectory opened, `createDocument` created a real file in the guest home (host-side `run-as` read back), and `openDocument … mode=r` served a guest file to the system's document viewer (provider log, phase 9); the viewer's screen, viewed by the parent, shows the file's own text `hello from the guest side`, named `omdroid-read-test`, at 100.0 % |
 | 6. `launch-contract.md` storage section | PASS | `docs/omarchy/launch-contract.md` section 10 |
 
 ## What changed
@@ -209,9 +209,9 @@ documents: openDocument doc:Downloads/omdroid-read-test.txt mode=r ->
 
 and the viewer that took the file became the top activity (`topResumedActivity=<the device's bundled
 document viewer, PdfActivity>`). So `openDocument` was called by the viewer, not by the picker - exactly
-the split phase 7 exposed. The viewer's screen is `phase9/shots/p9-viewer.png`, **PENDING-VISION**: the
-file is `text/plain` and the system offered a document/PDF viewer, so the parent should check whether it
-renders the text or shows an unsupported type; the read itself is the log line above, not the picture.
+the split phase 7 exposed. The viewer's screen is `phase9/shots/p9-viewer.png`, **viewed by the
+parent**: a text viewer showing the file's content `hello from the guest side`, named
+`omdroid-read-test`, at 100.0 % - so the read renders the guest's bytes, not just an empty frame.
 
 ## Screenshots (viewed by the parent; this stream cannot see images)
 
@@ -224,7 +224,7 @@ they stay in scratch and are never committed (nothing image-shaped is in any com
 | `phase7/shots/p7-after-tap.png` | Inside **Omdroid > Downloads** ("Files from Omdroid/The Omarchy home inside Omdroid"), one file `omdroid-read-t…`, with the system "Open with" chooser on top. Browsing a guest folder from Android works and tapping a guest file reaches the app chooser; the file's contents are not shown yet - that is phase 8's job. |
 | `p4-picker-1`, `p4-picker-downloads`, `p4-picker-omdroid`, `p4-picker-read` | Byte-identical: the screen did not change between those steps, so they prove no navigation. |
 | `p5-picker-downloads` = `p5-picker-read`; `p6-picker-after-tap` = `p6-picker-preview` | Same, per phase. |
-| `phase9/shots/p9-viewer.png` | **PENDING-VISION** - the viewer that opened the guest's `text/plain` file. Check whether it renders the two words of content or reports an unsupported type; the read is already proven by the `openDocument` log line. |
+| `phase9/shots/p9-viewer.png` | **Viewed by the parent:** a text viewer showing the guest file's content `hello from the guest side`, named `omdroid-read-test`, at 100.0 % - the read path renders, not just opens. |
 
 So every listing, create and read claim in this report rests on the provider's own `documents:` logcat
 lines and on host-side `run-as` reads; a screenshot is corroboration only, and these particular ones
@@ -258,8 +258,6 @@ corroborate just the two rows above.
 - Reading and writing a document through `adb shell content` (blocked by the platform permission
   model, not by this code); the device proof went through the system picker, which holds that
   permission, plus the provider's own log lines.
-- `phase9/shots/p9-viewer.png` is PENDING-VISION (does the bundled viewer render a `text/plain` guest
-  file?). Everything else in step 5 is measured.
 - A thumbnail/`queryRecentDocuments`/`querySearchDocuments` surface.
 - The guest-side file manager is Nautilus 50.3 + gvfs (read: image member list); if a future image
   ships a different file manager, the bookmark path is the thing to re-check.
