@@ -56,6 +56,22 @@ still open. The host does not kill or restart the session because the display si
 user chose one. Fractional scales are out of scope until the guest round reports which values
 this Hyprland build accepts.
 
+**The live scale (R11).** `OMARCHY_SCALE` is the scale at session start only. The scale for the
+display the desktop is on now is the host-owned file `~/.config/omdroid/ui-scale` in the guest
+(`<rootfs>/home/omarchy/.config/omdroid/ui-scale`): one line, `1` or `2`, written atomically next to
+the `ui` mode file. The host resolves it the same way as the start-time value, for the TARGET display
+(`UiScale.forDisplay`: the user's `ui_scale` setting wins, else `auto` from that display's own density
+and shorter edge) and writes it before every session start and on every dock change, before the mode
+file. `omarchy-watch.py` reads it every poll; while the monitor's scale differs it applies the file's
+value with the runtime `hl.monitor` rule it already uses for the size (plus `GDK_SCALE`), and the
+layer remedy restarts only the shell. Every size fit carries the wanted scale: a config reload puts
+the start-time scale back (`monitors.lua`), and a fit that kept the reverted scale would leave the
+docked desktop at scale 2 until the next poll. A missing file, or any value other than `1` or `2`,
+changes nothing (an older host keeps the start-time scale). `OMDROID_SCALE_FOLLOW=0` in
+`~/.config/omdroid/session.env` turns the guest side off. Log lines: guest `ui-scale <a> -> <b>`,
+`monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
+display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.
+
 ## 5. Session start, in order
 
 1. Host: wipe `<prefix>/tmp/omarchy-runtime/` (it is `XDG_RUNTIME_DIR`: nothing in it is meant to
@@ -286,3 +302,41 @@ source=auto`. Guest: the `gpu:` lines above in `/tmp/omarchy-session.log`.
 **Not shipped.** virgl (the image has no `virpipe` driver and there is no host-side virgl server) and
 ANGLE on the host are not options, and neither is a Mali, Xclipse or PowerVR hardware path: those
 drivers need a DRM render node the app sandbox does not expose.
+
+## 10. Session requests (guest -> host)
+
+The guest cannot end, restart or leave its own session in a way the host understands, and it cannot
+reach Android at all, so Omarchy's Logout, Reboot, Shutdown, Suspend and Lock (all of which need
+systemd or `uwsm`, absent here) are mapped onto one request channel.
+
+- **Request.** `omdroid-session <stop|restart|shutdown|home>` (guest `/etc/phoshdroid/complete/bin`,
+  linked as `/usr/local/bin/omdroid-session`) writes one line, `<action> <unix-seconds>`, to
+  `/tmp/omdroid-host/request` (host `<prefix>/tmp/omdroid-host/request`) by temp name plus rename. For
+  `stop`, `restart` and `shutdown` it first closes the windows (`omarchy-hyprland-window-close-all`, as
+  Omarchy does) and shows an OSD.
+- **Host.** `ProotService` watches the directory (`FileObserver`, no polling), reads the file, deletes it
+  (the guest waits up to 4 s for that: the acknowledgement; when it stays, the guest posts a critical
+  notification and exits 1, so nothing fails silently) and acts. `SessionRequest.parse` drops an unknown
+  action and any stamp more than 30 s from the host clock, so a leftover file cannot end a new session.
+  A request is ignored when no session is running.
+- **Actions.** `stop` (Logout): end the guest, show the session-ended screen (exit 0). `restart`
+  (Reboot): end the guest, then the launcher starts a fresh session (`session_restart` extra, the START
+  path of `LaunchDecision`). `shutdown`: end the guest and remove the app's tasks and process (the X
+  server lives in it). `home` (Suspend, Lock): the Android home screen comes up, the session keeps
+  running; Android owns locking and sleeping. None of them retries (`SessionExit.shouldRetry` is not
+  consulted for a requested end). The guest process and the broker are given 3 s to die before they
+  are killed, off the main thread. Log lines (tag `Phoshdroid`): `session: request <ACTION>`,
+  `session: request <ACTION>: guest process ended (forced=<bool>)`, `launch: session ended by request
+  <ACTION>`, `launch: restart requested by the guest`; guest `/tmp/omdroid-session.log`: time, action,
+  acknowledgement delay, taken yes/no.
+- **Wrappers.** `/usr/local/bin/omarchy-system-{lock,logout,reboot,shutdown}` and `systemctl`
+  (`suspend|hibernate` -> home, `poweroff|halt` -> shutdown, `reboot` -> restart; every other verb goes to
+  `/usr/bin/systemctl`) are linked by `complete/session-start.sh` every session start.
+- **Menu.** The hook writes a marked block into `~/.config/omarchy/extensions/omarchy-menu.jsonc`: System
+  shows Back to Android, Logout, Restart, Shutdown; Lock, Screensaver and Hibernate are hidden (the menu
+  skips `when:` guards under proot, so a row can only be removed by giving it no action).
+- **Idle.** Android owns locking and the screen timeout: the hook creates Omarchy's own stay-awake flag
+  once (`~/.local/state/omarchy/indicators/stay-awake`, recorded in `~/.local/state/omdroid/complete`).
+- **Switches** (`~/.config/omdroid/session.env`): `OMDROID_COMPLETE=0` (everything off), `_POWER=0`,
+  `_IDLE=guest`, `_MENU=0`, `_TERMINAL=0`, `_EDITOR=0`, `_BANNERS=0`.
+
