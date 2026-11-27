@@ -60,9 +60,27 @@ class PhoshdroidPreferences(context: Context) {
         get() = prefs.getString("refresh_mhz", "120000")?.toIntOrNull() ?: 120_000
         set(value) = prefs.edit().putString("refresh_mhz", value.toString()).apply()
 
-    var bindSdcard: Boolean
-        get() = prefs.getBoolean("bind_sdcard", false)
-        set(value) = prefs.edit().putBoolean("bind_sdcard", value).apply()
+    /**
+     * How Android storage reaches the guest (`~/Phone`, contract section 10): `auto` (share when
+     * the app holds all-files access), `on` or `off`. The decision itself is
+     * [com.phoshdroid.app.storage.ShareRule.resolve], called from the session start.
+     */
+    var bindSdcardMode: String
+        get() =
+            com.phoshdroid.app.storage.ShareRule.modeFor(
+                prefs.getString(com.phoshdroid.app.storage.ShareRule.KEY, null),
+                if (prefs.contains(com.phoshdroid.app.storage.ShareRule.LEGACY_KEY)) {
+                    prefs.getBoolean(com.phoshdroid.app.storage.ShareRule.LEGACY_KEY, false)
+                } else {
+                    null
+                },
+            )
+        set(value) =
+            prefs
+                .edit()
+                .putString(com.phoshdroid.app.storage.ShareRule.KEY, com.phoshdroid.app.storage.ShareRule.normalise(value))
+                .remove(com.phoshdroid.app.storage.ShareRule.LEGACY_KEY)
+                .apply()
 
     var customStartupScript: String?
         get() = prefs.getString("custom_startup", null)
