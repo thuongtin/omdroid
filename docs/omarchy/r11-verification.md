@@ -12,7 +12,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | # | Item | Status | Proof |
 |---|---|---|---|
 | V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
-| V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | PASS | 24 forced-repaint comparisons: 21 identical, 3 differ only in the bar clock (viewed), 0 changed elsewhere; real-change control read CHANGED (5,388,233 px); the `vfr=true` control stayed clean (not a reproduction of the R10 remnant, see "V2"); scratch `verify/p2-repaint.log`, APK `bef783d7…` |
+| V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | **FAIL (method)**; redo queued as phase 9 | phase 2's forcing step (`debug.vfr = false` re-assert) damages nothing: S1 measured 0 damaged commits of 233 (kgsl) and 256 (software) with the trace on, so each of my 24 comparisons set the after-event frame against itself, and the real-change control only proves the diff sees change, not that the step repainted; the old PASS is withdrawn |
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
@@ -90,7 +90,11 @@ whole-surface form). Both arms checked from the process: `/proc/<Hyprland>/envir
   continuous flood instead of typing, two injected stalls (SIGSTOP on Hyprland for 200 and 400 ms) as the
   positive control, and the arm order B A A B.
 
-### V2, correctness against a forced full repaint (phase 2, 01:51-02:01 UTC; **measured**, crops and shots **viewed**)
+### V2, correctness against a forced full repaint (phase 2, 01:51-02:01 UTC): WITHDRAWN, the forcing step repainted nothing
+
+**Parent's finding (S1, `r11-memory.md` "Correctness: what the diffs above do and do not prove"), accepted:** `hl.config({ debug = { vfr = false } })` with `vfr` already false changes no value, so Hyprland damages nothing; with the trace on, eight such re-asserts produced 0 damaged commits out of 233 (kgsl) and 256 (software). Everything below compared two frames that were both taken after the event, so a stale remnant would sit in both and read as 0. What the data in this section still shows: the three CLOCK_ONLY diffs are real clock turnovers between the two shots (the bar clock repaints by itself), and the real-change control proves the diff sees change. It does not show that the damage path leaves no remnant. The redo is phase 9 (below, once it has run). The same flaw is in R10 run 5 (13 checks) and in the `damage-and-frame-pacing.md` method text.
+
+Original write-up, kept for the record:
 
 Per scenario: settle 3 s, screenshot, `hc.sh '/eval hl.config({ debug = { vfr = false } })'` (re-asserts the
 value and repaints everything), settle 3 s, screenshot, exact pixel diff (`verify-scrdiff.py`; verdict ZERO,

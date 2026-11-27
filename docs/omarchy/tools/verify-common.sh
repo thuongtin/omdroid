@@ -77,7 +77,9 @@ ui_tap() { # $1 regex: tap the first Android node whose text matches; prints wha
     if [ -n "$xy" ]; then phase_log "tap '$1' at $xy"; adb_ shell input tap $xy; else phase_log "no node matches '$1'"; return 1; fi
 }
 gpush_to() { "$TOOLS/gpush.sh" "$1" "$2" > /dev/null 2>&1; }
-# force a full repaint and compare: settle, shot, vfr re-assert (repaints everything), settle, shot, exact diff
+# NOT A VALID REPAINT CHECK (kept for the record, used by phase 2 only): the `debug.vfr = false` re-assert changes
+# nothing when vfr is already false, so Hyprland damages nothing and the two shots are both after-event frames
+# (S1 measured 0 damaged commits of 233 and 256). Use verify-p9-repaint2.sh, which proves its forcing step first.
 repaint_diff() { # $1 name
     sleep 3; "$TOOLS/shot.sh" "$1-before" > /dev/null 2>&1
     hcq '/eval hl.config({ debug = { vfr = false } })' > /dev/null
