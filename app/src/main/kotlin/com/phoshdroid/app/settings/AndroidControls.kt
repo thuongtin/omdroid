@@ -1,9 +1,12 @@
 package com.phoshdroid.app.settings
 
+import android.app.Activity
+import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.Network
@@ -12,6 +15,7 @@ import android.net.NetworkRequest
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Bundle
 import android.os.FileObserver
 import android.os.Handler
 import android.os.Looper
@@ -23,6 +27,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.phoshdroid.app.R
 import com.phoshdroid.app.launch.DisplayLaunch
+import com.termux.x11.MainActivity
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
@@ -33,7 +38,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Nothing here polls. Android pushes every field: a broadcast receiver covers the battery and
  * power saver, a [ConnectivityManager.NetworkCallback] the network transports, and settings
- * observers the radio and rotation switches the platform only publishes through `Settings`. A
+ * observers the radio switches the platform only publishes through `Settings`. Rotation follows
+ * the embedded activity's saved preference, with lifecycle and preference listeners. A
  * [FileObserver] covers the guest's request mailbox. Everything runs on the main looper, where
  * the callbacks already arrive: each pass is a handful of local system-service reads, and a pass
  * happens when something changed.
@@ -66,6 +72,26 @@ class AndroidControls(
     private var lastWarningAt = 0L
     private var lastAction: String? = null
     private var lastActionAt = 0L
+    private val application = context.applicationContext as Application
+    private var rotationPreferences: SharedPreferences? = null
+    private val rotationPreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == null || key == "forceOrientation") schedule()
+    }
+    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(activity: Activity) {
+            // The first snapshot can precede MainActivity; a resumed/docked activity may use
+            // another preference store. Read and rebind on the next main-loop turn.
+            if (activity is MainActivity) schedule()
+        }
+        override fun onActivityDestroyed(activity: Activity) {
+            if (activity is MainActivity) schedule()
+        }
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) { }
+        override fun onActivityStarted(activity: Activity) { }
+        override fun onActivityPaused(activity: Activity) { }
+        override fun onActivityStopped(activity: Activity) { }
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) { }
+    }
 
     /** Battery is a sticky broadcast: the last intent delivered is the current reading. */
     private var battery: Intent? = null
@@ -183,13 +209,13 @@ class AndroidControls(
                 addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
             }
         try {
+            application.registerActivityLifecycleCallbacks(lifecycle)
             // System broadcasts still reach a receiver that is not exported; another app's may not.
             ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
             val resolver = context.contentResolver
             for (uri in listOf(
                 Settings.Global.getUriFor(Settings.Global.AIRPLANE_MODE_ON),
                 Settings.Global.getUriFor(Settings.Global.BLUETOOTH_ON),
-                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
             )) {
                 resolver.registerContentObserver(uri, false, settingsObserver)
             }
@@ -203,6 +229,9 @@ class AndroidControls(
     private fun unregister() {
         if (!registered) return
         registered = false
+        application.unregisterActivityLifecycleCallbacks(lifecycle)
+        rotationPreferences?.unregisterOnSharedPreferenceChangeListener(rotationPreferenceListener)
+        rotationPreferences = null
         runCatching { context.unregisterReceiver(receiver) }
         runCatching { context.contentResolver.unregisterContentObserver(settingsObserver) }
         runCatching {
@@ -292,8 +321,7 @@ class AndroidControls(
                     }
                 },
             "airplaneMode" to field { Settings.Global.getInt(resolver, Settings.Global.AIRPLANE_MODE_ON) == 1 },
-            "rotationLocked" to
-                field { Settings.System.getInt(resolver, Settings.System.ACCELEROMETER_ROTATION) == 0 },
+            "rotationLocked" to field { rotationLocked() },
             "powerSave" to field { power?.isPowerSaveMode },
             "batteryPercent" to
                 field {
@@ -311,6 +339,10 @@ class AndroidControls(
     }
 
     private fun open(action: String) {
+        if (action == "rotation-lock" || action == "rotation-auto") {
+            setRotationLock(action == "rotation-lock")
+            return
+        }
         val intentAction = when (action) {
             "wifi" -> Settings.ACTION_WIFI_SETTINGS
             "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
@@ -330,6 +362,46 @@ class AndroidControls(
         } catch (error: Exception) {
             warn("Android settings page unavailable: $action", error)
             Toast.makeText(context, R.string.android_settings_unavailable, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** The activity preference owns the lock; Android's global rotation setting is untouched. */
+    private fun rotationLocked(): Boolean? {
+        val activity = MainActivity.getInstance()?.takeUnless { it.isFinishing || it.isDestroyed }
+        val prefs = activity?.let { MainActivity.getPrefs() }
+        val current = prefs?.get()
+        if (current !== rotationPreferences) {
+            rotationPreferences?.unregisterOnSharedPreferenceChangeListener(rotationPreferenceListener)
+            rotationPreferences = current
+            current?.registerOnSharedPreferenceChangeListener(rotationPreferenceListener)
+        }
+        return AndroidRotationLock.locked(prefs?.forceOrientation?.get())
+    }
+
+    private fun setRotationLock(locked: Boolean) {
+        try {
+            val activity = checkNotNull(MainActivity.getInstance())
+            check(!activity.isFinishing && !activity.isDestroyed)
+            val prefs = checkNotNull(MainActivity.getPrefs())
+            val preference = if (locked) {
+                // A repeated lock request keeps the first chosen orientation.
+                if (AndroidRotationLock.locked(prefs.forceOrientation.get()) == true) return
+                val resources = activity.resources
+                val reverseId = resources.getIdentifier("config_reverseDefaultRotation", "bool", "android")
+                checkNotNull(AndroidRotationLock.currentPreference(
+                    resources.configuration.orientation,
+                    checkNotNull(activity.display).rotation,
+                    reverseId != 0 && resources.getBoolean(reverseId),
+                ))
+            } else "auto"
+            activity.requestedOrientation = AndroidRotationLock.requestedOrientation(preference)
+            // MainActivity reapplies this on focus and after a cold start.
+            prefs.forceOrientation.put(preference)
+        } catch (error: Exception) {
+            warn("Could not change Omdroid rotation", error)
+            Toast.makeText(context, R.string.android_rotation_unavailable, Toast.LENGTH_SHORT).show()
+        } finally {
+            schedule()
         }
     }
 
