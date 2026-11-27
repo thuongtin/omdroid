@@ -9,7 +9,7 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
 | 2 | Quickshell fixes (through `mem/`) | PASS (memory), fidelity noted | `47e1aee`: wallpaper `sourceSize`: Quickshell wallpaper block 77.7 -> 26.3 MiB, Quickshell heap 143.2 -> 91.3 / 92.3 MB in both candidate arms (phase 2, below); picture unchanged to my eye, fine-detail energy 36 % lower (measured, below); `OMDROID_MEM_QML=0` restores the file |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS (cap log positive control in phase 4) | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted; forced-repaint diffs 0 on idle, window open, window close, toast fade, rotation, restore; cold start +0.3 s (inside the spread) |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS on memory, CPU and commit rhythm; CORRECTNESS PARTIAL | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted (the trace line is live: 1,859 cap lines); cold start +0.3 s. Correctness: the forced-repaint step did NOT repaint (0 damaged commits of 256 and 233), so the "0 changed" table proves nothing about remnants; compared with the frame before the event instead: window open+close 0 px, toast area clean (bar shows clock and an unread badge), rotation round trip leaves edge-level wallpaper differences (9,503 px above 8 levels, unexplained, phase 6 retests) |
 | 4 | Hyprland extras (logo, cursor, render options) | NOTHING TO CUT, 52 MiB block unattributed | read: logo, splash and blur and shadows are off in the image config (`default/hypr/looknfeel.lua`), `XCURSOR_SIZE` 24; read-back in a live session: `damage_tracking` 2, `direct_scanout` 0, border 0, rounding 0. The 52 MiB Hyprland anonymous block is not the ring and I have no lever for it (a guess, not tested: two monitor-size render targets of 24 MiB each) |
 | 5 | Software-GPU diet (`OMDROID_GPU=software`) | FAIL as written, REVERTED `41e272f`; typing lead in phase 5 | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without, idle Hyprland PSS 441.4 in both second arms. Typing costs 8 llvmpipe workers at 60-69 % each. Phase 4 levers: `LP_NUM_THREADS=2` 196 % but 199 % idle (open), `vfr` -25..-30 % (risk), the rest nothing |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | NO EFFECT EXPECTED (read), not run | `termux-x11/app/src/main/cpp/lorie/InitOutput.c:799-803`: `loriePresentFlip` returns FALSE for a pixmap with `priv->mem` (cage's MIT-SHM frames, the only kind this chain presents) before the `TERMUX_X11_FORCE_FLIP` test is reached, and the flag is read by the in-process X server through `getenv`, so only the host app could set it; the check at 799 also compares `root.width` with `drawable.height` |
@@ -294,6 +294,53 @@ changes, not done).
 idle Hyprland PSS was 426.5 against 437.1 MB. Two pegged cores at idle would make it worse overall, but
 this is one window and the cause is unknown, so phase 5 repeats it (idle twice, typing twice, idle after
 typing, with 8, 2, 4 and 2 threads) and counts commits per second to see whether the low CPU is dropped frames.
+
+### Correctness: what the diffs above do and do not prove (added after phase 5; this supersedes the table's reading)
+
+**The forced-repaint step did not repaint.** In phase 5 (trace on) eight `hl.config({ debug = { vfr = false } })`
+re-asserts produced **0 damaged commits out of 256 (software) and out of 233 (kgsl)**: the value is unchanged,
+so Hyprland damages nothing. The table above therefore compares two frames taken after the event; a stale
+remnant would sit in both and read as 0. The `damage-and-frame-pacing.md` method (and R10's 13 checks)
+need a different forcing step; this stream did not find one that works.
+
+What the same shots do show, comparing each event with the frame taken **before** it (measured,
+`scrdiff.py`; the clock turning over is x 141-161, y 29-58):
+
+| event | frame before -> frame after | changed pixels | reading |
+| --- | --- | --- | --- |
+| `foot` opened and closed | `idle-after` -> `foot-closed-after` | **0** | no remnant of the window (a full-screen window, so the whole picture was redrawn) |
+| toast shown and faded | `foot-closed-after` -> `toast-faded-after` | 2,131, all in the bar (y 24-88) | the toast area (y 88-253) is clean. I looked at both bars: the clock went 01:10 -> 01:11 and an unread badge "1" appeared beside it, which accounts for the x 141-220 part; a cluster at x 3000-3100 (right end of the bar) I did not identify |
+| rotation and back | `toast-faded-after` -> `restored-after` | 2,230,231 (9,503 above 8 levels, 620 above 24) | all on edges (mean gradient 27 at the large differences against 1.4 overall), spread over the lower wallpaper, best integer shift 0,0: consistent with the wallpaper being re-decoded at a size one pixel off, not with a remnant; not proven, phase 6 restarts the shell twice on both builds |
+
+Positive controls on the same shots: toast visible against the frame before it 166,706 px; foot open
+against idle 5,809,341 px.
+
+### Where software mode puts its CPU (phase 5, measured)
+
+| arm | idle before typing | typing | idle after foot closed | threads |
+| --- | --- | --- | --- | --- |
+| LP8 (default) | 1.9 % | 518 / 492 % | **742 %** | 8 llvmpipe workers at 91-98 % |
+| LP2 | **197 %** | 196 / 197 % | 197 % | 2 workers at 97 % |
+| LP4 | **384 %** | 387 / 382 % | 383 % | 4 workers at 95 % |
+| LP2b (repeat of LP2) | 2.0 % | 197 / 198 % | **197 %** | 2 workers at 98 % |
+
+Hyprland in software mode has a **persistent busy state**: once it is entered (in the 8-thread run it was
+entered by opening `foot` and typing; in two of the thread-capped runs it was already on during the idle
+windows after the start) it does not end when `foot` is closed. In it every llvmpipe worker sits at 91-98 %
+whatever the thread count, so the CPU is set by the thread count, not by what the user does. R10's
+"496 % while typing" matches this state, not the cost of typing. I measured it on the candidate (ring of 2) only;
+the R10 build's after-close behaviour was not re-measured, but nothing in this stream's changes touches the
+render path of Hyprland (the ring cap changes how many buffers exist, the wallpaper change is in Quickshell), and the
+busy state appeared in arms of every thread count, so I do not read it as caused by them (not proven: an R10-behaviour
+software arm with the same sequence is in phase 6 only for the half-resolution comparison, not as a control).
+Trace of the busy state, 2-thread run: **1.7 commits/s at idle, every one carrying damage**; typing 3.0
+commits/s, every one with damage; against 60 commits/s of empty damage at calm idle (8 threads) and 23
+commits/s with 52 damaged in 6 s while typing. Each damaged frame therefore costs about 0.6 to 1.2 core-seconds in
+software, against about 0.03 on kgsl (typing 49 damaged commits in 6 s on both): a software frame costs about the
+whole screen even when the damage is small (estimated from CPU divided by damaged commits; phase 6 tests
+whether the cost follows the pixel count).
+`LP_NUM_THREADS=2` is **not a fix**: it caps the CPU at two cores by cutting the frame rate to
+1.7-3 commits/s, which is a desktop that updates about three times a second.
 
 ## What changed
 
