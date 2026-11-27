@@ -10,7 +10,7 @@ Evidence labels: **measured** (command given), **read** (file:line or URL), **es
 | Step | State | Proof |
 | --- | --- | --- |
 | 1. Today's path on the device (`bind_sdcard`, `~/Phone`, both directions, time, media store) | PASS | Phase 1, both arms in the same minute. Bind off: `/home/omarchy/Phone` does **not exist** (the brief said "empty directory" - it is absent). Bind on: 35 top-level entries, guest writes land as uid 10298/group 1023 mode 0660 (dirs 2770), both directions work, cold start 10.3 s off vs 10.6-11.2 s on, a guest-written picture is **not** in the media store until `MEDIA_SCANNER_SCAN_FILE`. `<scratch>/share/phase1/step1.txt` |
-| 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). `auto` follows the `MANAGE_EXTERNAL_STORAGE` grant; `on`/`off` override; the old boolean folds in. Device arms 1-3 in phase 2 |
+| 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). `auto` follows the `MANAGE_EXTERNAL_STORAGE` grant; `on`/`off` override; the old boolean folds in. Device: with the grant, no prefs file -> `share: mode=auto all-files=true -> bind=true` and `~/Phone` present (phase 2); the no-grant arms are in phase 3 (phase 2's `appops set` without `--uid` left the uid mode `allow`, so those arms measured nothing) |
 | 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device proof in phase 2 |
 | 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page |
 | 5. Device proof of the provider (`content query`, read, write, Files app) | PENDING | phase 2 |
@@ -90,7 +90,35 @@ Two things the round found that the brief did not know:
   proot bind, so this is the FUSE/MediaStore permission model, not file modes. It is a second reason
   the provider serves the app-private guest home instead of `/sdcard`.
 
-**Steps 2-5:** see the phase 2 section below (appended when it ran).
+**Steps 2-5:** see the phase 2 and phase 3 sections below.
+
+**Phase 2** (my APK, sha256 `398d47bfb53c6217…`, commit `a602e12`;
+`<scratch>/share/phase2/step5.txt`):
+
+- Install PASS: the installed `base.apk` sha256 equals the local APK's.
+- Default arm: cold start 11.2 s handover / 10.7 s to desktop, `probe.sh` PASS, logcat
+  `share: mode=auto all-files=true -> bind=true`, `~/Phone` present with 35 entries, and the guest
+  bookmark is there: `file:///home/omarchy/Phone Omdroid Phone` in `~/.config/gtk-3.0/bookmarks`
+  (the owner's four existing bookmarks untouched), with `omdroid-share: bookmark added` in the
+  session log. **Step 3 proven on the device.**
+- Provider: registered (`dumpsys activity providers`:
+  `com.phoshdroid.app.documents: …/com.phoshdroid.app/.storage.OmdroidDocumentsProvider`, uid 10323)
+  and DocumentsUI queried it (`documents: queryRoots: root=…/installed-rootfs/omarchy/home/omarchy`).
+- The brief's CLI route answers exactly as the platform intends:
+  `Permission Denial: opening provider … from (null) (uid=2000) requires that you obtain access
+  using ACTION_OPEN_DOCUMENT or related APIs`.
+- **Two instrument failures that phase 3 corrects:**
+  - `appops set <pkg> MANAGE_EXTERNAL_STORAGE ignore` sets the *package* mode only; the *uid* mode
+    stays `allow`, so `Environment.isExternalStorageManager()` still answered `true` and both
+    no-grant arms measured the grant-on path (`mode=on all-files=true`, `mode=auto all-files=true`).
+    The deny needs `appops set --uid`.
+  - This ROM has no activity for `android.provider.action.BROWSE` (`unable to resolve Intent`) and
+    its picker ignores `EXTRA_INITIAL_URI`, so the two provider screenshots from phase 2 show the
+    wrong screen and are not cited. The provider is instead driven by tapping the "Omdroid" root in
+    the picker's drawer (phase 3).
+
+**Phase 3:** appended when it has run (no-grant arms with `--uid`, and the provider read/create
+through the ROM's picker).
 
 ## Switches
 
