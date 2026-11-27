@@ -15,6 +15,9 @@ check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 
 export OMDROID_SESSION_LOG=$T/session.log HOME=$T/home OMDROID_COMPLETE_DIR=$D OMDROID_COMPLETE_BIN=$T/bin OMDROID_COMPLETE_OMARCHY_BIN=$T/omarchy-bin
 export OMDROID_COMPLETE_REAL_XTE=$T/no-such-xte OMDROID_COMPLETE_NVIM=no-such-nvim OMDROID_COMPLETE_NANO=bash
+# The clipboard bridge is a long-running process with its own start/stop section below;
+# off here so its pkill does not shift the counters the session tests assert on.
+export OMDROID_COMPLETE_CLIPBOARD=0
 export OMDROID_COMPLETE_LOG=$T/hook.log OMDROID_HOST_DIR=$T/host OMDROID_SESSION_WAIT_DS=8
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/extensions"
 printf -- '-- user looknfeel\nhl.config({ general = { gaps_in = 3 } })\n' > "$HOME/.config/hypr/looknfeel.lua"
@@ -137,6 +140,19 @@ pk_before=$(grep -c . "$T/pkill.calls"); hc_before=$(grep -c . "$T/hyprctl.calls
 bash "$D/bin/omdroid-session" stop > /dev/null 2>&1; rc=$?
 check "no host: exit 1, a normal-urgency notification that names the cause, and the request file is cleaned up" "[ $rc = 1 ] && grep -q -- '-u normal.*does not answer' $T/notified && [ ! -e $OMDROID_HOST_DIR/request ]"
 check "no host: the session is not ended (no extra pkill, no dispatcher call)" "[ \$(grep -c . $T/pkill.calls) = $pk_before ] && [ \$(grep -c . $T/hyprctl.calls) = $hc_before ]"
+
+# --- clipboard bridge: started with the switch on, stopped with it off
+printf '#!/bin/bash\nsleep 60\n' > "$T/bridge-stub"; chmod 755 "$T/bridge-stub"
+OMDROID_COMPLETE_CLIPBOARD=1 OMDROID_COMPLETE_CLIPBOARD_CMD=$T/bridge-stub \
+    bash "$D/session-start.sh" > /dev/null 2>&1
+cbpid=$(cat "$HOME/.local/state/omdroid/complete/clipboard.pid" 2> /dev/null)
+check "clipboard: the switch on starts the bridge" "grep -q 'clipboard: bridge started' $T/hook.log && [ -n '$cbpid' ]"
+check "clipboard: the started process is alive" "kill -0 $cbpid 2> /dev/null"
+OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_CLIPBOARD_CMD=$T/bridge-stub \
+    bash "$D/session-start.sh" > /dev/null 2>&1
+check "clipboard: the switch off stops it" "grep -q 'clipboard: bridge off' $T/hook.log && [ ! -e $HOME/.local/state/omdroid/complete/clipboard.pid ]"
+tries=0; while kill -0 "$cbpid" 2> /dev/null && [ $tries -lt 20 ]; do sleep 0.1; tries=$((tries+1)); done
+check "clipboard: the process is gone after the switch off" "! kill -0 $cbpid 2> /dev/null"
 
 rm -rf "$T"
 [ $fail = 0 ] && echo "all passed" || echo FAILED
