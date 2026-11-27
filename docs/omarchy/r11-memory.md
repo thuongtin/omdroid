@@ -165,7 +165,7 @@ screenshot, `scrdiff.py`.
 | rotated (`screen.sh rot 0`) | 0 | 0 |
 | rotation reset | 0 | 0 |
 
-Positive controls (host-side, on the same shots): the toast really drew (my own look at
+Positive controls (host-side, on the same shots): the toast really drew (I looked at
 `toast-up.png`: a framed popup "r11-toast / toast fade check" at the top right, and 168,813 px differ
 from the faded frame); `scrdiff` reads 5,809,341 changed pixels between the idle shot and the
 `foot`-open shot, so the instrument sees a window; two sessions of the same build differ by 343 px,
@@ -174,8 +174,10 @@ too, and none showed it changing.
 
 ### Wallpaper fidelity (measured and looked at)
 
-My own look at 800 px thumbnails (`p2-C2.png`, `p2-B2.png`): the same wallpaper, bar and key row, no
-black band; at 1:1 on the deer and ridge crop I cannot tell the two apart. Measured, on the
+My own look at 800 px thumbnails (`p2-C2.png`, `p2-B2.png`; the first pass of these image checks
+returned no image and the lines below are from the second, with the images in front of me): the same
+wallpaper, bar and key row, a search bar at the bottom, no black band, no popup in either. At 1:1 on the
+deer and ridge crop (`[300,1150,1100,1450]`) I cannot tell the two apart by eye. Measured, on the
 wallpaper area of the same screenshots: the candidate differs from the original decode by a mean of
 0.52 levels (99th percentile 5), 0.44 % of pixels differ by more than 8 levels. The fine-detail
 energy is lower: Laplacian variance 74.4 against 117.1 (mean horizontal gradient 0.747 against
@@ -254,6 +256,44 @@ workers at 60-69 % each (484-532 % in all) and the main thread out of the top si
 rasterising, not blur or animation: a full-screen `foot` (3200 px wide, I looked at `p3-N1-foot.png`)
 is redrawn through llvmpipe. Software mode idle is 889-915 MB PSS, Hyprland 435-452 MB, against 190-200
 MB on kgsl.
+
+## Phase 4: where the software-GPU CPU goes (measured, tablet, 02:16-02:25, candidate APK, one clean software session Q plus two single-purpose arms)
+
+Typing windows: 20 x `input text abcde` into a full-screen `foot`, Hyprland CPU over 8.1-8.5 s, timed
+start to start. Q baseline: **473 / 511 / 476 %** of one core (three windows in the same session).
+
+| lever (live, `hyprctl eval`, then reverted) | read-back after applying | typing Hyprland CPU % on / off | verdict |
+| --- | --- | --- | --- |
+| border size 0 | `general:border_size` 0 | 455.7 / 536.0 | **void**: the session already had border 0 (read-back at baseline: 0, set by the mobile UI); my revert wrote 2, so the windows after this one ran with border 2 |
+| colour management off | `render:cm_enabled` false | 479.4 / 480.8 | no effect |
+| cursor invisible | `cursor:invisible` true | 444.2 / 498.6 | -11 %, inside the baseline spread (455-536): not a result |
+| `debug.vfr = true` | `debug:vfr` true | **355.9** / 508.8 | **-25 to -30 %**; but VFR has the known lost-last-frame risk (`damage-and-frame-pacing.md`), not shipped |
+| `LP_NUM_THREADS=2` (a new session, `session.env`) | 12 threads in Hyprland | **196.1 / 196.3** | **-60 %**, but see the idle row |
+
+Read-back of the options in the clean session (blur, shadow, animations all `false`, `debug:damage_tracking`
+2, `render:direct_scanout` 0, `cursor:no_hardware_cursors` 1): nothing left to switch off in the config.
+
+**What did not work as an instrument**, so nothing is concluded from it:
+- Eight forced repaints (`debug.vfr = false` re-asserted) cost **1.7 %** of one core in total, while typing
+  costs 480 %. Either a full frame is cheap and the typing cost is elsewhere, or the re-assert does not
+  repaint in software mode. That is also the open question behind the phase 2 correctness diffs (a diff of
+  0 means something only if the repaint happened): phase 5 counts the commits that carry damage after the
+  re-asserts, on software and on kgsl.
+- `debug.damage_blink = true` (read-back `true`): two screenshots while typing show no overlay at all (0 red-tinted
+  pixels, and I looked at both). No positive control, so inconclusive.
+
+**What the trace says** (software, `AQ_TRACE`, 400 log lines of a typing window): 88 commits, 53 with 0 rectangles
+and 35 with 1, none a whole-surface commit, ring never exhausted. The commit stream is damage-limited, so
+the typing cost is not a stream of whole-surface commits. The trace also holds
+`Swapchain: capping a Wayland swapchain from 3 to 2 buffers` **1,859 times**: the positive control that
+the ring change is live and that the log level shows it, and a wart (the line is logged on every
+commit, formatted every time; negligible CPU, noisy at trace level; fix by logging only when the length
+changes, not done).
+
+**`LP_NUM_THREADS=2` idle**: in its first run Hyprland read **199.1 % of one core while idle** (Q idle: 3.9 %), and
+idle Hyprland PSS was 426.5 against 437.1 MB. Two pegged cores at idle would make it worse overall, but
+this is one window and the cause is unknown, so phase 5 repeats it (idle twice, typing twice, idle after
+typing, with 8, 2, 4 and 2 threads) and counts commits per second to see whether the low CPU is dropped frames.
 
 ## What changed
 
