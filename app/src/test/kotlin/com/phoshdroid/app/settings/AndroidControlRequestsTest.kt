@@ -25,6 +25,18 @@ class AndroidControlRequestsTest {
         assertTrue(File(directory, "b.new").exists())
     }
 
+    @Test fun `rotation requests specify a direction and are consumed once`() {
+        val mailbox = AndroidControlRequests(directory)
+        for (action in listOf("rotation-lock", "rotation-auto")) {
+            File(directory, "rotation.request").writeText(action)
+            assertEquals(listOf(action), mailbox.take())
+            assertTrue(mailbox.take().isEmpty())
+        }
+        assertNull(AndroidControlRequests.parse("rotation-toggle"))
+        // Keep the previous native settings-page request compatible with older callers.
+        assertEquals("rotation", AndroidControlRequests.parse("rotation"))
+    }
+
     @Test fun `stale requests are not replayed`() {
         val file = File(directory, "old.request").also { it.writeText("wifi") }
         file.setLastModified(System.currentTimeMillis() - 60_000)

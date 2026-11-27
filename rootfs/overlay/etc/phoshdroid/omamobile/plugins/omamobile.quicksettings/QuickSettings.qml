@@ -1113,7 +1113,8 @@ Item {
     }
   }
 
-  // Rotation lock over omamobile-autorotate (omamobile-sensors): it rotates
+  // Android locks the embedded activity through its persisted orientation preference.
+  // Elsewhere rotation lock uses omamobile-autorotate (omamobile-sensors): it rotates
   // the screen while the sensor proxy has an accelerometer, unless
   // ~/.local/state/omamobile/rotation-lock exists. Turning the lock off also
   // enables the service, so auto-rotate stays on after a reboot.
@@ -1121,11 +1122,13 @@ Item {
     id: rotationLock
 
     property bool linuxAvailable: false
-    readonly property bool available: android.hosted || linuxAvailable
+    readonly property bool available: android.hosted ? android.known("rotationLocked") : linuxAvailable
     property bool linuxEnabled: false
     readonly property var enabled: android.hosted ? android.value("rotationLocked") : linuxEnabled
-    readonly property string icon: "󰑵"
-    readonly property string status: android.hosted && android.value("rotationLocked") === undefined ? android.t("settings") : !available ? "No sensor" : enabled ? "Locked" : "Auto-rotate"
+    readonly property string icon: android.hosted && !available ? "" : "󰑵"
+    property var pendingValue: null
+    readonly property bool busy: pendingValue !== null
+    readonly property string status: busy ? qsTr("Changing…") : android.hosted && !available ? qsTr("Unavailable") : !available ? "No sensor" : enabled ? "Locked" : "Auto-rotate"
 
     function refresh() {
       if (android.hosted) return
@@ -1133,13 +1136,34 @@ Item {
     }
 
     function toggle() {
-      if (android.hosted) { root.openAndroid("rotation"); return }
+      if (android.hosted) {
+        if (!available || busy) return
+        pendingValue = !enabled
+        android.open(pendingValue ? "rotation-lock" : "rotation-auto")
+        rotationPendingTimeout.restart()
+        return
+      }
       if (!available || rotationWrite.running) return
       rotationWrite.command = enabled
         ? ["sh", "-c", "rm -f \"$HOME/.local/state/omamobile/rotation-lock\"; systemctl --user enable --now omamobile-autorotate.service"]
         : ["sh", "-c", "mkdir -p \"$HOME/.local/state/omamobile\" && touch \"$HOME/.local/state/omamobile/rotation-lock\""]
       rotationWrite.running = true
     }
+  }
+
+  Connections {
+    target: android
+    function onSnapshotChanged() {
+      if (rotationLock.busy && android.value("rotationLocked") === rotationLock.pendingValue) {
+        rotationLock.pendingValue = null
+        rotationPendingTimeout.stop()
+      }
+    }
+  }
+  Timer {
+    id: rotationPendingTimeout
+    interval: 5000
+    onTriggered: rotationLock.pendingValue = null
   }
 
   Process {

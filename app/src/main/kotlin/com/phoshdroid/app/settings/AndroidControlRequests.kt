@@ -79,7 +79,7 @@ class AndroidControlRequests(private val directory: File) {
     }
 
     companion object {
-        val actions = setOf("wifi", "bluetooth", "display", "rotation", "volume", "airplane", "battery", "settings")
+        val actions = setOf("wifi", "bluetooth", "display", "rotation", "rotation-lock", "rotation-auto", "volume", "airplane", "battery", "settings")
 
         const val SUFFIX = ".request"
 

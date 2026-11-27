@@ -417,7 +417,7 @@ the write at another file. Schema version 2:
 | `wifiConnected` | boolean | - | a Wi-Fi network is up (a `NetworkCallback`, not a scan) |
 | `bluetoothEnabled` | boolean | - | `Settings.Global.BLUETOOTH_ON`: the OS radio state, not the paired-device list |
 | `airplaneMode` | boolean | - | `Settings.Global.AIRPLANE_MODE_ON` |
-| `rotationLocked` | boolean | - | `Settings.System.ACCELEROMETER_ROTATION` is 0 |
+| `rotationLocked` | boolean | - | Omdroid's embedded activity has a fixed `forceOrientation` preference; `auto` is false, an unavailable activity or unknown preference is null |
 | `powerSave` | boolean | - | `PowerManager.isPowerSaveMode` |
 | `batteryPercent` | integer | percent, 0-100 | `level / scale` of the battery broadcast |
 | `charging` | boolean | - | the battery is plugged in |
@@ -436,13 +436,32 @@ file's own watch does the reloading.
 
 **Requests.** A tap runs `android-control.py`, which renames a unique request into
 `/tmp/omdroid-android/requests/<uuid>.request`. The host watches that directory (`FileObserver`,
-no polling) and accepts only `wifi`, `bluetooth`, `display`, `rotation`, `volume`, `airplane`,
-`battery` and `settings`: at most one per event, never the same page twice inside 500 ms, and any
+no polling) and accepts only `wifi`, `bluetooth`, `display`, `rotation`, `rotation-lock`,
+`rotation-auto`, `volume`, `airplane`, `battery` and `settings`: at most one per event,
+never the same action twice inside 500 ms, and any
 other file in the directory is deleted unread. Requests are limited to 32 bytes, expire after 30
 s, are consumed once, are cleared at session start, and are opened without following a link. The
 page is started on the display the desktop is on (`DisplayLaunch`, contract section 8), so a
 docked desktop raises it on the monitor rather than out of sight on the built-in screen. The
 interface accepts no arbitrary intent, command, argument or URL.
+
+**Omdroid rotation lock.** The rotation tile sends `rotation-lock` to keep the activity's
+current portrait/landscape orientation, including reverse orientations, or `rotation-auto`
+to follow Android's rotation policy again. It keeps the sheet open, ignores additional taps
+while a request is pending, and waits for the published state to acknowledge the change.
+After five seconds without that acknowledgement it allows another tap; unknown or expired
+state stays unavailable. The requests are explicit directions: repeating a lock does not
+unlock or recapture another orientation.
+
+The host applies the activity orientation and saves Termux:X11's `forceOrientation`
+preference, which its activity reapplies on focus and after restart. Preference changes and
+activity resume/destruction refresh the snapshot; the existing eight-second refresh and
+ten-second expiry rule still apply. The preference listener follows the active display's
+preference store and is removed when the bridge stops. Android's global rotation setting
+is not changed. Android/OEM multi-window and external-display policies can override an
+activity's requested orientation; the snapshot describes the saved app preference.
+The older `rotation` request remains available for native Android rotation-settings navigation,
+but the tile uses the two app-specific requests.
 
 **Permissions.** Only `ACCESS_NETWORK_STATE` and `ACCESS_WIFI_STATE` are added. The bridge needs
 no secure-settings grant, location permission, nearby-device permission, root or accessibility
