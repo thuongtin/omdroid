@@ -303,11 +303,12 @@ class LauncherActivity : AppCompatActivity() {
      * back to wlroots' default 1024x768.
      *
      * Docked (a3), every input comes from the TARGET display instead: the X
-     * activity runs full screen on the monitor at the monitor's density, and the
-     * extra-key bar is hidden (a7), so there is no bottom gap.
+     * activity runs full screen on the monitor at the monitor's density.
+     *
+     * r12: the Termux:X11 extra-key bar is an overlay that starts hidden, so no
+     * display reserves space for it and no preference is read here any more.
      */
     private fun computeGeometry(): XGeometry {
-        val rows = extraKeyRows()
         val dock = dockStatus()
         val dockedDisplay = dock.display
         if (dock.docked && dockedDisplay != null && dockedDisplay.width > 0 && dockedDisplay.height > 0) {
@@ -316,28 +317,16 @@ class LauncherActivity : AppCompatActivity() {
             return DisplayGeometry.forDisplay(
                 displayWidth = dockedDisplay.width,
                 displayHeight = dockedDisplay.height,
-                densityDpi = dockedDisplay.densityDpi,
-                extraKeyRows = rows,
-                extraKeysShown = false,
             )
         }
-        val preferences = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-        val extraKeysShown =
-            preferences.getBoolean("showAdditionalKbd", false) &&
-                preferences.getBoolean("additionalKbdVisible", false)
-        return builtinGeometry(rows, extraKeysShown, recordWindow = true)
+        return builtinGeometry(recordWindow = true)
     }
 
     /**
      * The undocked prediction: the launcher's own window on the built-in display.
-     * [recordWindow] false leaves [winWidth]/[winHeight] alone, for the docked
-     * launch that only needs the built-in bottom gap (r7, see [builtinBottomGap]).
+     * [recordWindow] false leaves [winWidth]/[winHeight] alone.
      */
-    private fun builtinGeometry(
-        rows: Int,
-        extraKeysShown: Boolean,
-        recordWindow: Boolean,
-    ): XGeometry {
+    private fun builtinGeometry(recordWindow: Boolean): XGeometry {
         val metrics = windowManager.currentWindowMetrics
         val bounds = metrics.bounds
         var width = bounds.width()
@@ -371,9 +360,6 @@ class LauncherActivity : AppCompatActivity() {
         return DisplayGeometry.compute(
             windowWidth = width,
             windowHeight = height,
-            density = resources.displayMetrics.density,
-            extraKeyRows = rows,
-            extraKeysShown = extraKeysShown,
             insetLeft = insetLeft,
             insetTop = insetTop,
             insetRight = insetRight,
@@ -392,7 +378,8 @@ class LauncherActivity : AppCompatActivity() {
                 Intent(this, Class.forName("com.termux.x11.MainActivity"))
                     .putExtra("phoshdroid_top_padding_px", 0)
                     .putExtra("phoshdroid_bottom_padding_px", geometry.bottomGap)
-                    .putExtra("phoshdroid_builtin_bottom_padding_px", builtinBottomGap(dock))
+                    // r12: the key bar overlays the desktop, so no display keeps a gap.
+                    .putExtra("phoshdroid_builtin_bottom_padding_px", 0)
                     .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
             // a4: docked, the X activity belongs on the monitor. A refusal (a
             // private display, or a device without secondary-display activities)
@@ -408,34 +395,8 @@ class LauncherActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * r7: the bottom gap the X view needs once it is on the built-in display.
-     * Undocked it is the launch's own gap. Docked the launch's gap is the
-     * monitor's (none), so this predicts the built-in one with the extra-key bar
-     * shown, as the dock monitor shows it again on unplug.
-     */
-    private fun builtinBottomGap(dock: DockStatus): Int =
-        if (!dock.docked) {
-            geometry.bottomGap
-        } else {
-            runCatching {
-                builtinGeometry(extraKeyRows(), extraKeysShown = true, recordWindow = false).bottomGap
-            }.getOrDefault(0)
-        }
-
     /** The dock state right now (a1), from the Android edge. */
     private fun dockStatus(): DockStatus = DockStatusReader.read(this)
-
-    /**
-     * Same accessor Termux:X11 uses for the bar height. It is null before
-     * MainActivity has created its Prefs in this process (its static prefs
-     * field is set in MainActivity.onCreate), so fall back to the default
-     * config's two rows.
-     */
-    private fun extraKeyRows(): Int =
-        runCatching {
-            com.termux.x11.utils.TermuxX11ExtraKeys.getExtraKeysInfo()?.matrix?.size
-        }.getOrNull() ?: DisplayGeometry.DEFAULT_EXTRA_KEY_ROWS
 
     /** a3: the scale is resolved against the display the desktop will be on. */
     private fun targetDensityDpi(dock: DockStatus): Int {
