@@ -17,7 +17,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
 | V6 | Session end and the error screen (H10-H15) | **PASS on S4's build `9dae471b`** (phase 11); **FAIL on the R10 build** (phase 3, reproduced in phase 7) | S4's build: the ended screen with the reason 0.02-0.03 s after `session ended` in all three clean exits, the exit-7 launch shows "(exit 7)", no ANR in any of the four logs, Start again restores the desktop in 18-19 s; Hyprland segfaulted at exit in 3 of 3 clean exits (log tail on screen) while the app's exit code read 0, 139, 0. R10 build: blank or stuck on "Starting desktop...", ANR 5.0 s after the end, no Start button, an icon tap does not restart; see "V6" and "V6, re-run" |
-| V7 | Pinch and three-finger touch | PARTIAL (phase 5 answered the first half; phase 8 queued for the Hyprland swipe) | pinch: both points reach a client, positions within 0.5 logical px, 0 cancels; three fingers: all three reach it, then HyperOS takes the gesture (split screen, then home) after ~160 ms; Hyprland swipe: not configured; scratch `verify/p5-multitouch.log` |
+| V7 | Pinch and three-finger touch | **PARTIAL** (pinch PASS; three-finger taken by HyperOS; phase 8's bound 2- and 4-finger swipe changed nothing) | pinch: both points reach a client, positions within 0.5 logical px, 0 cancels; a three-finger swipe is consumed by HyperOS (split screen, then home) with `enable_three_gesture=1`; a runtime `hl.gesture` bind for 2 or 4 fingers answered `ok` but neither a bound nor an unbound swipe changed workspace, monitor or top activity, and the swipes landed on an empty desktop, so the Hyprland touch workspace swipe is **not demonstrated** and stays open; see "V7" |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
 
 ## What changed
@@ -408,9 +408,23 @@ straight lines, 30 steps of 16 ms), and `touchlog` (R5 build, sha256 `68a58e97�
   so nothing is bound.
 - **Invalid, not counted:** the V7.3 ("enable `workspace_swipe_touch`") and V7.4 (runtime `hl.gesture` bind, three fingers)
   swipes ran while Omdroid was in split screen or the Android home screen was on top, so they say nothing about Hyprland.
-  `workspace_swipe_touch = true` alone binds no gesture in this version. Phase 8 binds a two-finger and a four-finger
-  workspace gesture at runtime (counts the system does not use), swipes each way from a cold start, and runs the two-finger
-  swipe with nothing bound as the control.
+  `workspace_swipe_touch = true` alone binds no gesture in this version.
+- **Phase 8, the runtime `hl.gesture` follow-up (10:38-10:42 UTC, R10 build, four cold-start arms; **measured**, screenshots **viewed**).**
+  Arms: nothing bound (control), 2 fingers bound, 4 fingers bound; each swiped right then left. The bind
+  `hl.gesture({ fingers = N, direction = "horizontal", action = "workspace" })` (the vendor config's own example shape, `input.lua`
+  lines 53-57) answered `ok` in both bound arms. **Result: after every one of the six swipes the state was identical to before it** —
+  `ws=2`, monitor `WAYLAND-1 3200x1970@120.00 scale=2.0`, top `com.termux.x11.MainActivity`. No workspace change, no gesture visible,
+  in the bound arms or the control.
+  - **Limit of this run as built:** the frames taken after the swipes show an empty desktop with no window (viewed, `c2-right-after`
+    and `g2-right-after`: wallpaper, search bar, key bar, nothing else), while the arm starts foot and then focuses workspace 2 explicitly,
+    so foot was either never started or left behind on another workspace. The swipes therefore landed on an empty workspace, which is not the
+    arrangement a workspace gesture is aimed at. Injection itself is proven from phase 5 (the same helper delivered a two-finger pinch, 31
+    motion events per finger, into a client), so the failure is not "nothing was ever injected".
+  - **What it does and does not show:** a runtime bind plus a swipe with that finger count changes nothing here, and the bound arm is
+    indistinguishable from the unbound control. It does **not** show whether the touch reached Hyprland's gesture recogniser, or whether the
+    bind alone is enough with `gestures:workspace_swipe_touch` false. **The Hyprland touch workspace swipe is not demonstrated; V7's gesture
+    question stays open.** The next experiment, if wanted: the same arms with foot focused on the visible workspace, and a third arm with
+    `gestures:workspace_swipe_touch = true` set at runtime and restored afterwards.
 
 ### Incident: phase 7 held the tablet lock for five hours (my script, **measured**)
 
