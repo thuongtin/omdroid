@@ -22,6 +22,7 @@ import com.phoshdroid.app.launch.ProcessLimits
 import com.phoshdroid.app.launch.SessionAction
 import com.phoshdroid.app.launch.SessionRequest
 import com.phoshdroid.app.launch.UiScale
+import com.phoshdroid.app.settings.AndroidControls
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import com.phoshdroid.app.storage.ShareRule
 import java.io.File
@@ -36,6 +37,7 @@ class ProotService : Service() {
     private var brokerProcess: Process? = null
     private var commandBuilder: ProotCommandBuilder? = null
     private var manager: ProotDistroManager? = null
+    private var androidControls: AndroidControls? = null
 
     private var stopping = false
 
@@ -49,6 +51,9 @@ class ProotService : Service() {
     private var width = 0
     private var height = 0
     private var scale = 2
+    // The display the desktop was handed to (a4): Android's settings pages open there too, so a
+    // docked session raises them on the monitor instead of out of sight on the built-in screen.
+    private var sessionDisplayId: Int? = null
     private var refreshMhz = 120_000
     private var bindSdcard = true
     private var gpu = GpuMode.KGSL
@@ -110,6 +115,7 @@ class ProotService : Service() {
         val prefs = PhoshdroidPreferences(this)
         width = intent.getIntExtra(EXTRA_WIDTH, 0)
         height = intent.getIntExtra(EXTRA_HEIGHT, 0)
+        sessionDisplayId = intent.getIntExtra(EXTRA_DISPLAY, -1).takeIf { it >= 0 }
         // The launcher resolves the scale from the window it predicted (UiScale)
         // and passes the integer; the density fallback covers an older caller.
         scale =
@@ -183,6 +189,9 @@ class ProotService : Service() {
         writeResolvConf()
 
         startRequestWatcher()
+        androidControls =
+            AndroidControls(applicationContext, File(prefixDir), sessionDisplayId).also { it.start() }
+
         startBroker()
         startProot()
     }
@@ -580,6 +589,8 @@ class ProotService : Service() {
         // Main thread (the notification Stop and onDestroy): no waiting here. A guest that already
         // exited is a no-op; a live one is signalled on its own thread, and the monitor thread returns
         // on `stopping` when it goes.
+        androidControls?.stop()
+        androidControls = null
         prootProcess?.let { proc ->
             ProcessStop.stopAsync("GuestStop", JavaProcessStoppable(proc), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
                 android.util.Log.i("ProotService", "session: guest process stopped ($it)")
@@ -674,6 +685,7 @@ class ProotService : Service() {
         private const val EXTRA_WIDTH = "width"
         private const val EXTRA_HEIGHT = "height"
         private const val EXTRA_SCALE = "scale"
+        private const val EXTRA_DISPLAY = "display"
 
         /** How long a process may take to die after SIGTERM before it is killed. */
         private const val GUEST_STOP_WAIT_S = 3L
@@ -705,6 +717,7 @@ class ProotService : Service() {
             width: Int,
             height: Int,
             scale: Int,
+            displayId: Int? = null,
         ) {
             active = true
             val intent =
@@ -712,6 +725,8 @@ class ProotService : Service() {
                     putExtra(EXTRA_WIDTH, width)
                     putExtra(EXTRA_HEIGHT, height)
                     putExtra(EXTRA_SCALE, scale)
+                    // Absent means "the default display": an undocked launch never asks for one.
+                    if (displayId != null) putExtra(EXTRA_DISPLAY, displayId)
                 }
             context.startForegroundService(intent)
         }

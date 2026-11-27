@@ -40,6 +40,11 @@
 #                 when idle; down when its user service isn't running, none
 #                 without voxtype (in the root image; Remove > Dictation
 #                 takes it out)
+#
+# Under OMARCHY_PROOT=1 the airplane and powerprofile probes are answered as
+# "none" without being run: those two tiles read Android's own state there
+# (omdroid.android), so the rfkill and power-profiles-daemon passes would cost
+# a shell start for an answer nothing reads.
 
 cache="${OMAMOBILE_TILE_STATE_CACHE:-$HOME/.cache/omamobile/tile-state}"
 dir=$(mktemp -d "${TMPDIR:-/tmp}/omamobile-tile-state.XXXXXX") || dir=
@@ -200,9 +205,17 @@ sys.exit(0 if isinstance(s, dict) and s.get("available") and not s.get("running"
     fi
 }
 
-p_airplane > "$dir/10-airplane" &
+# Under proot the airplane-mode and battery-saver tiles read Android's own state
+# (omdroid.android), so those two probes are answered without being run: the rfkill
+# and power-profiles-daemon passes answer a question the proot UI no longer asks.
+if [ "${OMARCHY_PROOT:-}" = "1" ]; then
+    echo "airplane=none" > "$dir/10-airplane"
+    echo "powerprofile=none" > "$dir/30-powerprofile"
+else
+    p_airplane > "$dir/10-airplane" &
+    p_powerprofile > "$dir/30-powerprofile" &
+fi
 p_hotspot > "$dir/20-hotspot" &
-p_powerprofile > "$dir/30-powerprofile" &
 p_theme > "$dir/40-theme" &
 p_nightlight > "$dir/50-nightlight" &
 p_stayawake > "$dir/60-stayawake" &

@@ -14,6 +14,7 @@ import "TilesModel.js" as TilesModel
 import "NotificationsModel.js" as NotificationsModel
 import "Readable.js" as Readable
 import "MediaModel.js" as MediaModel
+import "../omdroid.android" as Android
 
 // Pull-down quick settings for the phone. The sheet drops from the top edge
 // over the status bar, collapsed as on Android: a clock header, the first
@@ -46,6 +47,9 @@ import "MediaModel.js" as MediaModel
 // nothing; see the STUB notes below.
 Item {
   id: root
+
+  Android.AndroidState { id: android }
+  function openAndroid(page) { android.open(page); root.dismiss() }
 
   // Injected by the host.
   property var shell: null
@@ -184,7 +188,8 @@ Item {
   // `shell call omamobile.quicksettings openSettings ''`: the header's gear.
   function openSettings() {
     root.dismiss()
-    Quickshell.execDetached(["omarchy-menu", "summon", "root"])
+    if (android.hosted) android.open("settings")
+    else Quickshell.execDetached(["omarchy-menu", "summon", "root"])
     return "ok"
   }
 
@@ -232,8 +237,9 @@ Item {
     for (var i = 0; i < TilesModel.CATALOG.length; i++) {
       var id = TilesModel.CATALOG[i].id
       var b = backends[id]
+      // An unknown reading is reported as null, not as false: false says the radio is off.
       out.push({ id: id, shown: TilesModel.indexOf(layout, id) >= 0, available: !!b && b.available,
-                 enabled: !!b && b.enabled, status: b ? b.status : "" })
+                 enabled: b && b.enabled !== undefined ? b.enabled : null, status: b ? b.status : "" })
     }
     return JSON.stringify(out)
   }
@@ -479,11 +485,13 @@ Item {
   // back on needs a reboot today.
   QtObject {
     id: airplane
-    readonly property bool available: root.probedHas("airplane")
-    readonly property bool enabled: available && root.probedOn("airplane", "airplane")
-    readonly property string icon: enabled ? "󰀝" : "󰀞"
-    readonly property string status: !available ? "No radios" : enabled ? "On" : "Off"
-    function toggle() { if (available) root.runTileAction("airplane", !enabled) }
+    readonly property bool available: android.hosted || root.probedHas("airplane")
+    // Under proot a reading can be missing or stale, and unknown is not off: the tile takes no
+    // fill and no glyph rather than the off one (contract section 13).
+    readonly property var enabled: android.hosted ? android.value("airplaneMode") : available && root.probedOn("airplane", "airplane")
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰀝" : "󰀞"
+    readonly property string status: android.hosted ? android.status("airplaneMode") : !available ? "No radios" : enabled ? "On" : "Off"
+    function toggle() { if (android.hosted) root.openAndroid("airplane"); else if (available) root.runTileAction("airplane", !enabled) }
   }
 
   // A Wi-Fi hotspot through NetworkManager. Long-press opens the Wi-Fi panel.
@@ -501,14 +509,14 @@ Item {
   // Battery saver: power-profiles-daemon's power-saver profile.
   QtObject {
     id: batterySaver
-    readonly property bool available: root.probedHas("powerprofile")
-    readonly property bool enabled: available && (root.optimistic["battery-saver"] !== undefined
+    readonly property bool available: android.hosted || root.probedHas("powerprofile")
+    readonly property var enabled: android.hosted ? android.value("powerSave") : available && (root.optimistic["battery-saver"] !== undefined
       ? root.optimistic["battery-saver"] : root.probed.powerprofile === "power-saver")
-    readonly property string icon: enabled ? "󰂃" : "󰁹"
-    readonly property string status: !available ? "No power profiles"
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰂃" : "󰁹"
+    readonly property string status: android.hosted ? android.status("powerSave") : !available ? "No power profiles"
       : root.optimistic["battery-saver"] !== undefined ? (enabled ? "On" : "Off")
       : TilesModel.powerStatus(root.probed.powerprofile)
-    function toggle() { if (available) root.runTileAction("battery-saver", !enabled) }
+    function toggle() { if (android.hosted) root.openAndroid("battery"); else if (available) root.runTileAction("battery-saver", !enabled) }
   }
 
   // Dark theme: swaps between the last light and last dark Omarchy theme.
@@ -678,7 +686,9 @@ Item {
   }
 
   readonly property var battery: UPower.displayDevice
-  readonly property bool hasBattery: !!battery && battery.isPresent === true
+  readonly property bool hasBattery: android.hosted ? android.value("batteryPercent") !== undefined : !!battery && battery.isPresent === true
+  readonly property int batteryPercent: android.hosted ? (android.value("batteryPercent") ?? -1) : hasBattery ? Math.round(battery.percentage * 100) : -1
+  readonly property bool batteryCharging: android.hosted ? android.value("charging") === true : hasBattery && battery.state === UPowerDeviceState.Charging
 
   // ---------------------------------------------------------------- Wi-Fi
 
@@ -698,12 +708,16 @@ Item {
         if (networks[i] && networks[i].connected) return networks[i]
       return null
     }
-    readonly property bool available: backendAvailable && !!device && Networking.wifiHardwareEnabled !== false
-    readonly property bool enabled: available && Networking.wifiEnabled
-    readonly property string icon: enabled ? "󰤨" : "󰤭"
+    readonly property bool available: android.hosted || (backendAvailable && !!device && Networking.wifiHardwareEnabled !== false)
+    readonly property var enabled: android.hosted ? android.value("wifiEnabled") : available && Networking.wifiEnabled
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰤨" : "󰤭"
     readonly property bool details: true
     function openDetails() { root.openWifiPanel() }
     readonly property string status: {
+      if (android.hosted) {
+        if (android.value("wifiEnabled") !== true) return android.status("wifiEnabled")
+        return android.value("wifiConnected") === true ? android.t("connected") : android.t("on")
+      }
       if (!backendAvailable) return "NetworkManager not running"
       if (!device) return "No Wi-Fi radio"
       if (!Networking.wifiEnabled) return "Off"
@@ -711,6 +725,7 @@ Item {
     }
 
     function toggle() {
+      if (android.hosted) { root.openAndroid("wifi"); return }
       if (available) Networking.wifiEnabled = !Networking.wifiEnabled
     }
   }
@@ -719,17 +734,21 @@ Item {
   // window, so the sheet goes away and the picker stays up on its own; its
   // back glyph brings the sheet back.
   function openWifiPanel() {
+    if (android.hosted) { root.openAndroid("wifi"); return }
     openPage("wifi")
     root.dismiss()
   }
 
   function openBluetoothPanel() {
+    if (android.hosted) { root.openAndroid("bluetooth"); return }
     openPage("bluetooth")
     root.dismiss()
   }
 
-  // One page at a time.
+  // One page at a time. Under proot the Android pages go through openAndroid, which dismisses
+  // the sheet first (a page opened under a live sheet on the built-in display is out of sight).
   function openPage(page) {
+    if (android.hosted && (page === "wifi" || page === "bluetooth")) { root.openAndroid(page); return }
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()
@@ -763,11 +782,11 @@ Item {
     id: bluetooth
 
     readonly property var adapter: Bluetooth.defaultAdapter
-    readonly property bool available: !!adapter
-    readonly property bool enabled: available && adapter.enabled
+    readonly property bool available: android.hosted || !!adapter
+    readonly property var enabled: android.hosted ? android.value("bluetoothEnabled") : available && adapter.enabled
     property bool pending: false
     readonly property bool busy: pending
-    readonly property string icon: enabled ? (connected ? "󰂱" : "󰂯") : "󰂲"
+    readonly property string icon: enabled === undefined ? "" : enabled ? (connected ? "󰂱" : "󰂯") : "󰂲"
     readonly property bool details: true
     function openDetails() { root.openBluetoothPanel() }
     readonly property var connected: {
@@ -777,6 +796,7 @@ Item {
       return null
     }
     readonly property string status: {
+      if (android.hosted) return android.status("bluetoothEnabled")
       if (!available) return "No adapter"
       if (pending) return enabled ? "Turning off…" : "Turning on…"
       if (!enabled) return "Off"
@@ -789,6 +809,7 @@ Item {
     // reboots, BlueZ's Powered does not. Ask for a direction, not a toggle, so
     // a second tap while BlueZ catches up cannot undo the first.
     function toggle() {
+      if (android.hosted) { root.openAndroid("bluetooth"); return }
       if (!available || pending) return
       pending = true
       bluetoothPendingTimeout.restart()
@@ -1099,16 +1120,20 @@ Item {
   QtObject {
     id: rotationLock
 
-    property bool available: false
-    property bool enabled: false
+    property bool linuxAvailable: false
+    readonly property bool available: android.hosted || linuxAvailable
+    property bool linuxEnabled: false
+    readonly property var enabled: android.hosted ? android.value("rotationLocked") : linuxEnabled
     readonly property string icon: "󰑵"
-    readonly property string status: !available ? "No sensor" : enabled ? "Locked" : "Auto-rotate"
+    readonly property string status: android.hosted && android.value("rotationLocked") === undefined ? android.t("settings") : !available ? "No sensor" : enabled ? "Locked" : "Auto-rotate"
 
     function refresh() {
+      if (android.hosted) return
       if (!rotationRead.running) rotationRead.running = true
     }
 
     function toggle() {
+      if (android.hosted) { root.openAndroid("rotation"); return }
       if (!available || rotationWrite.running) return
       rotationWrite.command = enabled
         ? ["sh", "-c", "rm -f \"$HOME/.local/state/omamobile/rotation-lock\"; systemctl --user enable --now omamobile-autorotate.service"]
@@ -1128,8 +1153,8 @@ Item {
       waitForEnd: true
       onStreamFinished: {
         var value = String(text || "").trim()
-        rotationLock.available = value === "auto" || value === "locked"
-        rotationLock.enabled = value === "locked"
+        rotationLock.linuxAvailable = value === "auto" || value === "locked"
+        rotationLock.linuxEnabled = value === "locked"
       }
     }
   }
@@ -1366,6 +1391,7 @@ Item {
     property int pendingPercent: -1
 
     function refresh() {
+      if (android.hosted) return
       if (!brightnessRead.running) brightnessRead.running = true
     }
 
@@ -1636,7 +1662,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
               text: root.hasBattery
-                ? (root.battery.state === UPowerDeviceState.Charging ? "󰂄 " : "󰁹 ") + Math.round(root.battery.percentage * 100) + "%"
+                ? (root.batteryCharging ? "󰂄 " : "󰁹 ") + root.batteryPercent + "%"
                 : ""
               color: root.foreground
               font.family: Style.font.family
@@ -1948,7 +1974,22 @@ Item {
             width: parent.width
             spacing: Style.spacing.sm
 
+            SheetButton {
+              visible: android.hosted
+              width: parent.width
+              label: android.t("displaySettings")
+              onTapped: root.openAndroid("display")
+            }
+
+            SheetButton {
+              visible: android.hosted && root.expanded
+              width: parent.width
+              label: android.t("volumeSettings")
+              onTapped: root.openAndroid("volume")
+            }
+
             SliderRow {
+              visible: !android.hosted
               width: parent.width
               icon: "󰃠"
               value: brightness.percent / 100
@@ -1958,7 +1999,7 @@ Item {
             }
 
             SliderRow {
-              visible: root.expanded
+              visible: root.expanded && !android.hosted
               width: parent.width
               icon: audio.icon
               value: audio.volume
