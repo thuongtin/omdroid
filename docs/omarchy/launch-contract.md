@@ -17,14 +17,15 @@ only number that is always right is the root size at that moment.
 - The guest never trusts the hint over the root: cage's window is kept equal to the root
   (`fit-x11.py`), Hyprland follows its parent, the shell's layers follow the monitor.
 - Parity is the guest's job: an odd root width or height is rounded DOWN to an even number for
-  cage's window (odd sizes are normal: 2136 - 165 = 1971 on the tablet), so the logical size is
+  cage's window (odd sizes are normal: a cutout inset can make either side odd), so the logical size is
   integral at scale 2. The spare pixel row stays black. The host does not round anything.
 - The host makes its prediction exact for the normal full-screen case, so that no resize happens
   at hand-over: X width = window width minus the left and right display-cutout insets; X height
-  = window height minus the top and bottom display-cutout insets minus the bottom gap. The bottom
-  gap is the Termux:X11 extra-key bar when it is shown, `round(37.5 * density * rows)` pixels
-  (rows = 2 by default), else 0. There is no top gap any more: Termux:X11 runs with
-  `hideCutout=false`, so Android itself keeps the window clear of a cutout in every rotation.
+  = window height minus the top and bottom display-cutout insets. The host reserves no bottom
+  gap (r12): the Termux:X11 extra-key bar starts hidden in every session and, with
+  `adjustHeightForEK` off, it is drawn over the X view when summoned instead of shrinking it.
+  There is no top gap either: Termux:X11 runs with `hideCutout=false`, so Android itself keeps
+  the window clear of a cutout in every rotation.
 
 ## 2. Ready marker
 
@@ -45,8 +46,9 @@ on the host (`<prefix>` = `/data/data/com.phoshdroid.app/files/usr`).
 
 ## 3. Live size changes
 
-Rotation, fold/unfold, multi-window and the extra-key bar can change the X root while the session
-runs. Required end state, with no user action and no session restart: within 15 s of the root
+Rotation, fold/unfold and multi-window can change the X root while the session runs; the extra-key
+bar cannot, because it is an overlay that starts hidden. Required end state, with no user action
+and no session restart: within 15 s of the root
 changing, `docs/omarchy/tools/probe.sh` prints `VERDICT: PASS` and the windows that were open are
 still open. The host does not kill or restart the session because the display size changed.
 
@@ -71,8 +73,8 @@ this Hyprland build accepts.
    then exec Hyprland. Hyprland's own config starts the shell.
 5. Guest watcher: write the ready marker; afterwards keep the layers in step with the monitor.
 6. Host: on the marker (or the fallback), bring `com.termux.x11.MainActivity` forward with the
-   same bottom gap it used for the prediction (extras `phoshdroid_top_padding_px` = 0,
-   `phoshdroid_bottom_padding_px` = gap). The X view sits at the top of the window.
+   same padding it used for the prediction (extras `phoshdroid_top_padding_px` = 0,
+   `phoshdroid_bottom_padding_px` = 0). The X view fills the window.
 
 ## 6. Logs both sides can rely on
 
@@ -168,17 +170,16 @@ which is research route 1 and always works. If a monitor appears while a session
 running, the host re-launches the same `singleTask` activity with that display id; no second X
 activity can be created, and the X root follows the surface the view lands on.
 
-**Keyboard, mouse, bar.** Docked: `showAdditionalKbd=false` (the extra-key bar is a phone
-affordance, and its height comes straight out of the X root), and the X activity asks for Android
-16.1's keyboard capture — `<uses-permission android:name="android.permission.CAPTURE_KEYBOARD"/>`
+**Keyboard, mouse, bar.** The extra-key bar is hidden in every session until the user summons it
+with Termux:X11's floating keyboard button, bottom-left (r12): the bar is an overlay drawn over the
+X view, so it never changes the X root and no display reserves space for it. Docked, the X activity
+asks for Android 16.1's keyboard capture — `<uses-permission android:name="android.permission.CAPTURE_KEYBOARD"/>`
 plus `LayoutParams.setKeyboardCaptureEnabled(true)` by reflection, because neither is in the
 compileSdk 35 SDK — so Meta reaches Hyprland instead of opening the system's own shortcut. On a
 platform without it the reflection logs once and Termux:X11's accessibility `KeyInterceptor` stays
-the key path. Undocked: the bar and its gap come back. The X view's margins (the launcher's
-`phoshdroid_top_padding_px` / `phoshdroid_bottom_padding_px`, i.e. the extra-key bar's gap) apply
-only while the X activity is on the built-in display; on any other display the view fills the
-window, so the X root equals the monitor. A launch made while docked also passes
-`phoshdroid_builtin_bottom_padding_px`, the built-in display's gap, for the way back.
+the key path. The X view fills the window on every display (the launcher passes
+`phoshdroid_top_padding_px` = `phoshdroid_bottom_padding_px` = 0) and on a monitor the view is the
+monitor, so the X root equals it.
 
 **Input while docked.** Android keeps keyboard focus and its mouse pointer on the built-in display
 (no desktop mode on HyperOS: the pointer cannot reach the monitor and the monitor never gets focus),

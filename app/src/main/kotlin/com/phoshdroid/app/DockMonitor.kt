@@ -2,12 +2,10 @@ package com.phoshdroid.app
 
 import android.app.Application
 import android.content.Intent
-import android.content.SharedPreferences
 import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import androidx.preference.PreferenceManager
 import com.phoshdroid.app.launch.DisplayLaunch
 import com.phoshdroid.app.launch.DockState
 import com.phoshdroid.app.launch.DockStatus
@@ -21,8 +19,8 @@ import java.io.File
 
 /**
  * Process-level dock edge (a1/a2/a4/a7): one `dock:` line per change, the guest's
- * UI mode file, the extra-key bar preference, and — when a session is already
- * running — the X activity re-launched onto the monitor.
+ * UI mode file, and — when a session is already running — the X activity
+ * re-launched onto the monitor.
  *
  * A `DisplayManager.DisplayListener` registered for the application's lifetime,
  * so a monitor appearing or disappearing is noticed while the X activity is on
@@ -106,11 +104,6 @@ class DockMonitor(
         // already finds the scale of the same display and restarts its shell once.
         applyUiScale(status)
         applyUiMode(status)
-
-        // a7: the extra-key bar is a phone affordance. Hiding it here also removes
-        // it from the X root prediction, because LauncherActivity reads the same
-        // preferences before it computes one.
-        setExtraKeysVisible(!status.docked)
 
         if (!relaunch) return
         if (!ProotService.isRunning()) return
@@ -204,26 +197,6 @@ class DockMonitor(
         }
     }
 
-    private fun setExtraKeysVisible(visible: Boolean) {
-        val prefs = preferences() ?: return
-        val shown = prefs.getBoolean(KEY_SHOW_EXTRA_KEYS, true)
-        val visibleFlag = prefs.getBoolean(KEY_EXTRA_KEYS_VISIBLE, true)
-        if (shown == visible && visibleFlag == visible) return
-        prefs
-            .edit()
-            .putBoolean(KEY_SHOW_EXTRA_KEYS, visible)
-            .putBoolean(KEY_EXTRA_KEYS_VISIBLE, visible)
-            .apply()
-        Log.i(TAG, "dock: extra-key bar " + if (visible) "shown" else "hidden")
-    }
-
-    private fun preferences(): SharedPreferences? =
-        try {
-            PreferenceManager.getDefaultSharedPreferences(app)
-        } catch (e: Exception) {
-            null
-        }
-
     private fun guestRootfs(): File? {
         val dir =
             File(
@@ -249,10 +222,6 @@ class DockMonitor(
         private const val TAG = "Phoshdroid"
         private const val DEBOUNCE_MS = 400L
         private const val X_ACTIVITY = "com.termux.x11.MainActivity"
-
-        /** Termux:X11's own preference keys (TermuxX11's Prefs). */
-        const val KEY_SHOW_EXTRA_KEYS = "showAdditionalKbd"
-        const val KEY_EXTRA_KEYS_VISIBLE = "additionalKbdVisible"
 
         /** Set by [register]; guards a second registration in the same process. */
         @Volatile

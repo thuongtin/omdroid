@@ -12,36 +12,30 @@ data class XGeometry(
  * (contract section 1), so no resize happens at hand-over.
  *
  * - X width = window width minus the left and right display-cutout insets.
- * - X height = window height minus the top and bottom insets minus the
- *   Termux:X11 extra-key bar while it is shown. There is no top gap:
- *   Termux:X11 runs with `hideCutout=false`, so Android itself keeps the
- *   window clear of a cutout in every rotation.
- * - The bar is `round(37.5 * density * rows)` px tall, the same formula
- *   Termux:X11's `MainActivity.setTerminalToolbarView()` uses.
+ * - X height = window height minus the top and bottom insets. Nothing is
+ *   reserved for the Termux:X11 extra-key bar: since r12 the bar starts hidden
+ *   and, with `adjustHeightForEK` off (the default), it is drawn over the X
+ *   view instead of shrinking it. [XGeometry.bottomGap] is therefore always 0
+ *   and the predicted root fills the window on every display.
+ * - There is no top gap either: Termux:X11 runs with `hideCutout=false`, so
+ *   Android itself keeps the window clear of a cutout in every rotation.
  * - If the result is not positive, fall back to the window size with no gap.
  *
  * Nothing is rounded to even here; the guest does that for cage's window.
  */
 object DisplayGeometry {
-    /** Termux:X11's default extra-key config has two rows. */
-    const val DEFAULT_EXTRA_KEY_ROWS = 2
-
     /**
      * The same prediction for the display the X activity will be drawn on (a3):
-     * the display's own real metrics and density, not the launcher's window.
+     * the display's own real metrics, not the launcher's window.
      *
      * A display's real size is what a full-screen, immersive X activity gets, so
-     * a 4K monitor predicts 3840x2160 at its own density instead of the phone's
-     * window at the phone's density. Insets default to 0 because an external
-     * display has no cutout; the caller passes the target display's own insets
-     * when it has them.
+     * a 4K monitor predicts 3840x2160 instead of the phone's window. Insets
+     * default to 0 because an external display has no cutout; the caller passes
+     * the target display's own insets when it has them.
      */
     fun forDisplay(
         displayWidth: Int,
         displayHeight: Int,
-        densityDpi: Int,
-        extraKeyRows: Int,
-        extraKeysShown: Boolean,
         insetLeft: Int = 0,
         insetTop: Int = 0,
         insetRight: Int = 0,
@@ -50,9 +44,6 @@ object DisplayGeometry {
         compute(
             windowWidth = displayWidth,
             windowHeight = displayHeight,
-            density = densityDpi.coerceAtLeast(0) / 160f,
-            extraKeyRows = extraKeyRows,
-            extraKeysShown = extraKeysShown,
             insetLeft = insetLeft,
             insetTop = insetTop,
             insetRight = insetRight,
@@ -62,25 +53,16 @@ object DisplayGeometry {
     fun compute(
         windowWidth: Int,
         windowHeight: Int,
-        density: Float,
-        extraKeyRows: Int,
-        extraKeysShown: Boolean,
         insetLeft: Int = 0,
         insetTop: Int = 0,
         insetRight: Int = 0,
         insetBottom: Int = 0,
     ): XGeometry {
-        val bottomGap =
-            if (extraKeysShown && extraKeyRows > 0) {
-                Math.round(37.5f * density * extraKeyRows)
-            } else {
-                0
-            }
         val width = windowWidth - insetLeft - insetRight
-        val height = windowHeight - insetTop - insetBottom - bottomGap
+        val height = windowHeight - insetTop - insetBottom
         if (windowWidth <= 0 || windowHeight <= 0 || width <= 0 || height <= 0) {
             return XGeometry(windowWidth, windowHeight, 0)
         }
-        return XGeometry(width, height, bottomGap)
+        return XGeometry(width, height, 0)
     }
 }
