@@ -417,7 +417,7 @@ the write at another file. Schema version 2:
 | `wifiConnected` | boolean | - | a Wi-Fi network is up (a `NetworkCallback`, not a scan) |
 | `bluetoothEnabled` | boolean | - | `Settings.Global.BLUETOOTH_ON`: the OS radio state, not the paired-device list |
 | `airplaneMode` | boolean | - | `Settings.Global.AIRPLANE_MODE_ON` |
-| `rotationLocked` | boolean | - | Omdroid's embedded activity has a fixed `forceOrientation` preference; `auto` is false, an unavailable activity or unknown preference is null |
+| `rotationLocked` | boolean | - | the auto-rotate switch (`Settings.System.ACCELEROMETER_ROTATION`) is off, or the embedded activity holds a fixed `forceOrientation` preference; both false is false, an unreadable switch or unavailable activity is null |
 | `powerSave` | boolean | - | `PowerManager.isPowerSaveMode` |
 | `batteryPercent` | integer | percent, 0-100 | `level / scale` of the battery broadcast |
 | `charging` | boolean | - | the battery is plugged in |
@@ -445,29 +445,38 @@ page is started on the display the desktop is on (`DisplayLaunch`, contract sect
 docked desktop raises it on the monitor rather than out of sight on the built-in screen. The
 interface accepts no arbitrary intent, command, argument or URL.
 
-**Omdroid rotation lock.** The rotation tile sends `rotation-lock` to keep the activity's
-current portrait/landscape orientation, including reverse orientations, or `rotation-auto`
-to follow Android's rotation policy again. It keeps the sheet open, ignores additional taps
-while a request is pending, and waits for the published state to acknowledge the change.
-After five seconds without that acknowledgement it allows another tap; unknown or expired
-state stays unavailable. The requests are explicit directions: repeating a lock does not
-unlock or recapture another orientation.
+**Omdroid rotation lock.** The rotation tile sends `rotation-lock` to freeze rotation, or
+`rotation-auto` to follow Android's rotation policy again. It keeps the sheet open, ignores
+additional taps while a request is pending, and waits for the published state to acknowledge the
+change. After two seconds without that acknowledgement it drops the in-flight indication and
+allows another tap; unknown or expired state stays unavailable. The requests are explicit
+directions: repeating a lock does not unlock or recapture another orientation.
 
-The host applies the activity orientation and saves Termux:X11's `forceOrientation`
-preference, which its activity reapplies on focus and after restart. Preference changes and
-activity resume/destruction refresh the snapshot; the existing eight-second refresh and
-ten-second expiry rule still apply. The preference listener follows the active display's
-preference store and is removed when the bridge stops. Android's global rotation setting
-is not changed. Android/OEM multi-window and external-display policies can override an
-activity's requested orientation; the snapshot describes the saved app preference.
+The host writes Android's own auto-rotate switch: `Settings.System.ACCELEROMETER_ROTATION` (and
+`USER_ROTATION`, pinned to the quarter turn on screen, before it freezes) for `rotation-lock`, and
+the same switch back to `1` for `rotation-auto`. Every write is read back, and only a matching
+read-back is a success; a refused write (`SecurityException`, no `WRITE_SETTINGS`) or one Android
+ignores leaves the switch where it was, logs `rotation lock refused: wanted=… read=… canWrite=…`
+with the exception, and the snapshot keeps the confirmed value, so the tile shows what happened
+rather than the intent. After the switch is confirmed the host also sets the activity orientation
+and saves Termux:X11's `forceOrientation` preference, which its activity reapplies on focus and
+after restart. Preference and settings changes and activity resume/destruction refresh the
+snapshot; the eight-second refresh and ten-second expiry rule still apply. The preference listener
+follows the active display's preference store and is removed when the bridge stops.
+Android/OEM multi-window and external-display policies can override an activity's requested
+orientation; the snapshot describes the switch and the saved app preference.
 The older `rotation` request remains available for native Android rotation-settings navigation,
 but the tile uses the two app-specific requests.
 
-**Permissions.** Only `ACCESS_NETWORK_STATE` and `ACCESS_WIFI_STATE` are added. The bridge needs
-no secure-settings grant, location permission, nearby-device permission, root or accessibility
-service. An Android/OEM restriction on a read leaves that field unknown; a missing settings
-activity reports an error. Stopping the session unregisters the listeners and removes the
-snapshot.
+**Permissions.** `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` and `WRITE_SETTINGS` are added.
+`WRITE_SETTINGS` is app-op protected: the app only writes `ACCELEROMETER_ROTATION` and
+`USER_ROTATION`, and the write needs the app-op granted, which `docs/omarchy/tools/install.sh`
+does over adb (`appops set com.phoshdroid.app WRITE_SETTINGS allow`) or the owner does by hand in
+Settings, Apps, Omdroid, Special access, Modify system settings. Without it every other field is
+unaffected and the rotation tile stays on the confirmed state. The bridge needs no secure-settings
+grant, location permission, nearby-device permission, root or accessibility service. An
+Android/OEM restriction on a read leaves that field unknown; a missing settings activity reports
+an error. Stopping the session unregisters the listeners and removes the snapshot.
 
 ## 14. Guest time zone (host -> guest)
 

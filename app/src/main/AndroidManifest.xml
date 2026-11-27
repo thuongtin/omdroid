@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The rotation tile's auto-rotate switch. An app-op permission: declaring it puts the app
+         on Settings' Special access page ("Modify system settings"), and install.sh grants it
+         over adb (`appops set com.phoshdroid.app WRITE_SETTINGS allow`). Without the grant the
+         write throws SecurityException and the tile stays on the confirmed state. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Read radio state for the guest UI; Android Settings owns connection changes. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
