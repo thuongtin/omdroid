@@ -38,11 +38,11 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Nothing here polls. Android pushes every field: a broadcast receiver covers the battery and
  * power saver, a [ConnectivityManager.NetworkCallback] the network transports, and settings
- * observers the radio switches the platform only publishes through `Settings`. Rotation follows
- * the embedded activity's saved preference, with lifecycle and preference listeners. A
- * [FileObserver] covers the guest's request mailbox. Everything runs on the main looper, where
- * the callbacks already arrive: each pass is a handful of local system-service reads, and a pass
- * happens when something changed.
+ * observers the radio switches and the auto-rotate switch the platform only publishes through
+ * `Settings`. Rotation reads both that switch and the embedded activity's saved preference, with
+ * lifecycle and preference listeners. A [FileObserver] covers the guest's request mailbox.
+ * Everything runs on the main looper, where the callbacks already arrive: each pass is a handful
+ * of local system-service reads, and a pass happens when something changed.
  *
  * The snapshot is rewritten only when a reading changes, or when a reading has aged far enough
  * that the guest would expire it ([AndroidState.REFRESH_MS] under [AndroidState.FIELD_TTL_MS]).
@@ -216,6 +216,10 @@ class AndroidControls(
             for (uri in listOf(
                 Settings.Global.getUriFor(Settings.Global.AIRPLANE_MODE_ON),
                 Settings.Global.getUriFor(Settings.Global.BLUETOOTH_ON),
+                // The rotation tile's switch, so a change made in Android's own Settings is
+                // republished without waiting for the eight-second refresh.
+                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
+                Settings.System.getUriFor(Settings.System.USER_ROTATION),
             )) {
                 resolver.registerContentObserver(uri, false, settingsObserver)
             }
@@ -365,8 +369,28 @@ class AndroidControls(
         }
     }
 
-    /** The activity preference owns the lock; Android's global rotation setting is untouched. */
-    private fun rotationLocked(): Boolean? {
+    /**
+     * The tile's state, from what Android actually holds: the platform's auto-rotate switch, read
+     * back after every write, plus the activity preference the tile also sets. A refused or
+     * silently ignored write leaves the switch where it was, so the tile cannot claim a lock the
+     * platform did not take.
+     */
+    private fun rotationLocked(): Boolean? =
+        AndroidRotationLock.combinedLocked(
+            AndroidRotationLock.lockedFromSetting(readRotationSetting()),
+            rotationPreference(),
+        )
+
+    /** The auto-rotate switch, or null when it cannot be read: unknown, never a guessed false. */
+    private fun readRotationSetting(): Int? =
+        try {
+            Settings.System.getInt(context.contentResolver, Settings.System.ACCELEROMETER_ROTATION)
+        } catch (_: Settings.SettingNotFoundException) {
+            null
+        }
+
+    /** The activity preference, and the listener that republishes its changes. */
+    private fun rotationPreference(): Boolean? {
         val activity = MainActivity.getInstance()?.takeUnless { it.isFinishing || it.isDestroyed }
         val prefs = activity?.let { MainActivity.getPrefs() }
         val current = prefs?.get()
@@ -378,30 +402,81 @@ class AndroidControls(
         return AndroidRotationLock.locked(prefs?.forceOrientation?.get())
     }
 
+    /**
+     * The tile's two writes: Android's auto-rotate switch (needs the WRITE_SETTINGS app-op the
+     * installer grants) and the activity preference. The switch is written and read back first;
+     * when Android refuses or ignores it nothing else is written, the refusal is logged with its
+     * reason, and the snapshot stays at the confirmed state - so the tile shows what happened
+     * instead of the intent.
+     */
     private fun setRotationLock(locked: Boolean) {
+        val value = if (locked) AndroidRotationLock.SETTING_LOCKED else AndroidRotationLock.SETTING_AUTO
+        val result = AndroidRotationLock.applyAndConfirm(value, ::writeRotationSetting, ::readRotationSetting)
+        val error = result.exceptionOrNull()
+        if (error != null) {
+            warn("rotation lock refused: wanted=$value read=${readRotationSetting()} canWrite=${canWriteSettings()}", error)
+            Toast.makeText(context, R.string.android_rotation_unavailable, Toast.LENGTH_SHORT).show()
+            schedule()
+            return
+        }
+        setRotationPreference(locked)
+        schedule()
+    }
+
+    /** Whether the app holds the WRITE_SETTINGS app-op; a failed check is not held. */
+    private fun canWriteSettings(): Boolean =
         try {
-            val activity = checkNotNull(MainActivity.getInstance())
-            check(!activity.isFinishing && !activity.isDestroyed)
-            val prefs = checkNotNull(MainActivity.getPrefs())
-            val preference = if (locked) {
-                // A repeated lock request keeps the first chosen orientation.
-                if (AndroidRotationLock.locked(prefs.forceOrientation.get()) == true) return
-                val resources = activity.resources
-                val reverseId = resources.getIdentifier("config_reverseDefaultRotation", "bool", "android")
-                checkNotNull(AndroidRotationLock.currentPreference(
-                    resources.configuration.orientation,
-                    checkNotNull(activity.display).rotation,
-                    reverseId != 0 && resources.getBoolean(reverseId),
-                ))
-            } else "auto"
+            Settings.System.canWrite(context)
+        } catch (_: Exception) {
+            false
+        }
+
+    /** Writes the auto-rotate switch; freezing first pins Android to the quarter turn on screen. */
+    private fun writeRotationSetting(value: Int) {
+        val resolver = context.contentResolver
+        if (value == AndroidRotationLock.SETTING_LOCKED) {
+            val activity = MainActivity.getInstance()?.takeUnless { it.isFinishing || it.isDestroyed }
+            activity?.display?.rotation?.let {
+                Settings.System.putInt(resolver, Settings.System.USER_ROTATION, it)
+            }
+        }
+        Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, value)
+    }
+
+    /**
+     * The activity preference, applied only after the platform switch is confirmed. It keeps
+     * Termux:X11's own "Screen orientation" value in step, which the activity reapplies on focus
+     * and after a cold start; a failure here leaves the confirmed system switch in place.
+     */
+    private fun setRotationPreference(locked: Boolean) {
+        try {
+            val activity = MainActivity.getInstance()?.takeUnless { it.isFinishing || it.isDestroyed }
+            val prefs = MainActivity.getPrefs()
+            if (activity == null || prefs == null) return
+            if (!locked) {
+                activity.requestedOrientation = AndroidRotationLock.requestedOrientation("auto")
+                prefs.forceOrientation.put("auto")
+                return
+            }
+            // A repeated lock request keeps the first chosen orientation.
+            if (AndroidRotationLock.locked(prefs.forceOrientation.get()) == true) return
+            val resources = activity.resources
+            val reverseId = resources.getIdentifier("config_reverseDefaultRotation", "bool", "android")
+            val preference = AndroidRotationLock.currentPreference(
+                resources.configuration.orientation,
+                checkNotNull(activity.display).rotation,
+                reverseId != 0 && resources.getBoolean(reverseId),
+            )
+            if (preference == null) {
+                // The quarter turn is not identifiable: the system switch already holds the
+                // display, so leave the preference alone rather than pin a wrong orientation.
+                warn("rotation preference not recorded: unknown orientation")
+                return
+            }
             activity.requestedOrientation = AndroidRotationLock.requestedOrientation(preference)
-            // MainActivity reapplies this on focus and after a cold start.
             prefs.forceOrientation.put(preference)
         } catch (error: Exception) {
-            warn("Could not change Omdroid rotation", error)
-            Toast.makeText(context, R.string.android_rotation_unavailable, Toast.LENGTH_SHORT).show()
-        } finally {
-            schedule()
+            warn("rotation preference not applied", error)
         }
     }
 

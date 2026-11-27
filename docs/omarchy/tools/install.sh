@@ -22,13 +22,27 @@ LOCAL_SHA=$(sha256sum "$APK" | cut -d' ' -f1)
 echo "apk $(stat -c %s "$APK") bytes sha256=$LOCAL_SHA"
 
 sh_() { adb -s "$T" shell "$@" 2>/dev/null | tr -d '\r'; }
-# The two grants the app needs after an install, and the proof they landed (r4-input K4):
-# POST_NOTIFICATIONS for the session notification, WRITE_SECURE_SETTINGS for the accessibility
-# service write the launcher does at bootstrap (launch: key-capture ...).
+# The grants the app needs after an install, and the proof they landed (r4-input K4, r12
+# rotation lock): POST_NOTIFICATIONS for the session notification, WRITE_SECURE_SETTINGS for the
+# accessibility service write the launcher does at bootstrap (launch: key-capture ...), and the
+# WRITE_SETTINGS app-op for the rotation tile's auto-rotate switch. WRITE_SETTINGS is not a
+# runtime permission - `pm grant` cannot give it - so it is an app-op, and Settings' Special
+# access page is the way to grant it without adb.
 grants() {
     sh_ pm grant $PKG android.permission.POST_NOTIFICATIONS
     sh_ pm grant $PKG android.permission.WRITE_SECURE_SETTINGS
-    echo "GRANTS write_secure_settings granted=$(sh_ dumpsys package $PKG | grep -c 'WRITE_SECURE_SETTINGS: granted=true')"
+    sh_ appops set $PKG WRITE_SETTINGS allow
+    local write_settings declared
+    write_settings=$(sh_ appops get $PKG WRITE_SETTINGS | head -1)
+    declared=$(sh_ dumpsys package $PKG | grep -c 'android.permission.WRITE_SETTINGS')
+    echo "GRANTS write_secure_settings granted=$(sh_ dumpsys package $PKG | grep -c 'WRITE_SECURE_SETTINGS: granted=true') declared_write_settings=$declared write_settings=${write_settings:-unavailable}"
+    case "$write_settings" in
+        *allow*) ;;
+        *)
+            echo "GRANTS: the WRITE_SETTINGS app-op was not granted; the rotation tile cannot lock rotation."
+            echo "        Grant it by hand: Settings > Apps > Omdroid > Special access > Modify system settings > Allow."
+            ;;
+    esac
 }
 installed_sha() {
     local p
@@ -49,6 +63,7 @@ tap_text() {
 
 if [ "$(installed_sha)" = "$LOCAL_SHA" ]; then
     echo "INSTALLED sha256=$LOCAL_SHA (already installed)"
+    grants   # re-applying the grants is how a revoked app-op is restored
     echo "INSTALL: PASS"
     exit 0
 fi

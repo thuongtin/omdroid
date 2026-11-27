@@ -1162,7 +1162,10 @@ Item {
   }
   Timer {
     id: rotationPendingTimeout
-    interval: 5000
+    // The host republishes the confirmed switch on change, so a real confirmation arrives in well
+    // under a second. Two seconds without one means the write was refused or ignored: drop the
+    // in-flight indication and let the tile fall back to the state Android actually holds.
+    interval: 2000
     onTriggered: rotationLock.pendingValue = null
   }
 
