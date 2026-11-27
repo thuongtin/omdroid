@@ -81,6 +81,10 @@ val syncGuestOverlay =
             include("omamobile/**")
             include("fake-proc/**")
             include("lib/**")
+            // R11 per-feature trees, each with an optional session-start.sh hook that
+            // start.sh runs (mem: memory and software GPU, share: Android storage,
+            // complete: Omarchy features under Android).
+            include("mem/**", "share/**", "complete/**")
         }
         into(guestOverlayAssetDir.map { it.dir("etc/phoshdroid") })
     }

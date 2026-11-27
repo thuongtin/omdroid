@@ -174,6 +174,17 @@ if [ -f "$session_env" ]; then
     echo "session.env: read $session_env"
 fi
 
+# Per-feature hooks, run after session.env so its switches apply: mem (memory and
+# software GPU), share (Android storage), complete (Omarchy features under
+# Android). Each is a plain bash script that returns within a few seconds and
+# starts any long-running helper in the background itself. A failing hook is
+# logged and never stops the session.
+for hook in /etc/phoshdroid/mem/session-start.sh /etc/phoshdroid/share/session-start.sh /etc/phoshdroid/complete/session-start.sh; do
+    if [ -f "$hook" ]; then
+        bash "$hook" || echo "hook $hook rc=$?"
+    fi
+done
+
 # Ready marker + layer-fit watcher: writes the marker once the desktop is really
 # drawn, then keeps the shell layers in step with the monitor after a live root
 # size change. Logs to /tmp/omarchy-watch.log.
