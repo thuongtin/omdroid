@@ -12,7 +12,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | # | Item | Status | Proof |
 |---|---|---|---|
 | V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
-| V2 | Correctness vs a forced full repaint, 3 runs of toast / open-close / scroll / rotation | **FAIL by the rule** (7 of 24 forced comparisons differ by 24 px of one level); no visible defect; counter-check phase 10 queued | redo `verify/p9-repaint2.log`: forcing step `damage_tracking` 0 then 2 proved (erases a painted 400x250 remnant, 54 damaged commits, bare `vfr=false` re-assert 0 damaged commits and the remnant stays); 17 of 24 comparisons exact (15 ZERO, 2 clock only); the other 7 all show the same 24 px, 1 level, in row y=88 x 3057-3082 after a window close or a rotation back; see "V2, redo" |
+| V2 | Correctness vs a forced full repaint, 3 runs of toast / open-close / scroll / rotation | **FAIL by the rule** (7 of 24 forced comparisons differ by 24 px of one level); no visible defect | redo `verify/p9-repaint2.log`: forcing step `damage_tracking` 0 then 2 proved (erases a painted 400x250 remnant, 54 damaged commits, bare `vfr=false` re-assert 0 damaged commits and the remnant stays); 17 of 24 comparisons exact (15 ZERO, 2 clock only); the other 7 all show the same 24 px, 1 level, in row y=88 x 3057-3082 after a window close or a rotation back; **attribution: phase 10's arm-A control failed and was voided, phase 12 repeats it with a control that works there**; see "V2, redo" and "V2, attribution" |
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
@@ -89,6 +89,41 @@ whole-surface form). Both arms checked from the process: `/proc/<Hyprland>/envir
   it with a real-time instrument (a foot client's `wl_callback.done` events with `WAYLAND_DEBUG=1`), a
   continuous flood instead of typing, two injected stalls (SIGSTOP on Hyprland for 200 and 400 ms) as the
   positive control, and the arm order B A A B.
+
+### V2, attribution: phase 10's control failed in arm A, voided (phase 10, 09:26-09:5x UTC; **measured**, frames **viewed**)
+
+Phase 10 was meant to say whether the 24 px come from the damage patch: arms B A A B, arm A = `AQ_WAYLAND_FULL_DAMAGE=1` (aquamarine
+sends the whole surface every commit). Each arm's control paints the 400x250 remnant and expects to see it on screen before the event.
+
+| Arm | control: clean frame vs painted frame | what the screen showed 1.5 s after the paint |
+| --- | --- | --- |
+| B1 (shipped) | **CHANGED**, 100,000 px, bbox 1400,900,1800,1150 (viewed: the magenta rectangle on the wallpaper) | the remnant, as intended |
+| A1 | **ZERO**, nothing | the clean desktop, no rectangle (viewed) |
+| A2 | **ZERO**, nothing | the clean desktop |
+
+The draw itself worked in all three: the tool prints the window it fills, and in every arm that is the one root-sized top-level window
+(geometry 0,0,3200,1970; A1 window 0x200004, A2 0x400004, B1 0x200004), and the session's own environment in the A arms carries
+`AQ_WAYLAND_FULL_DAMAGE=1` (`p10-sliver.log` lines 35 and 62, read from `/proc/<pid>/environ` by `arm_check`). So the A arms are not
+painting some other surface: a frame landed between the paint and the shot, ~1.5 s = ~90 commits at 60 Hz, and with the whole surface in
+every commit each frame puts the X window's content back. **A pixel control cannot work in that arm**; A1's other three rows (`ctl2` ZERO,
+`ctl3` ZERO, every `after-vs-forced` ZERO) are the same fact and prove nothing about the event.
+**Phase 10 settles nothing about attribution, and its close events are not graded here.** The one observation worth carrying, marked
+ungraded because it comes from the arm whose control failed: A1's close 2 shows the same 22 px, 1 level at x 3058-3083, y 88 (`before-vs-after` 22 px), so the residue
+may be there in the whole-surface arm too, which would say the patch is not its cause.
+
+Two facts from the valid arm B do carry:
+- the remnant survives 3 s in B1 (`ctl2` ZERO) and the forcing step erases it, so the B-side instrument works;
+- B1's `ctl3` (clean frame vs the frame after the forcing step) is **CHANGED, 22 px, max_diff 1, at 3058-3083, y 88**: the forcing step alone
+  produces that 1-level difference at that row, with no window close and no event. So it is a difference between the damage-limited render and the
+  full repaint at that pixel row, not something a window close leaves behind.
+- phase 10's arm A "2322 px" event difference was mostly the pointer: 2037 px at x 320-608, rows 383-453, max_diff 235 (a white
+  arrow against a dark one), plus the 22 px row-88 difference and the clock; pixel diff and both frames viewed. The pointer moves between shots, so
+  phase 12 parks it at a fixed spot before every frame.
+
+**Phase 12 (queued) replaces the arm-A control** with something that can exist there: `verify-xcorrupt.py paint-read` paints and then reads the
+rectangle back out of cage's window with XGetImage, ms apart, so "the paint is in the window, the screen shows no paint" is measured rather than
+assumed, plus the commit trace (`whole_surface` on every commit in arm A). It also adds a **steady control** (two frames 3 s apart, no event and no
+forcing) to say whether the 1-level row exists without any trigger, and it parks the cursor before every shot.
 
 ### V2, redo with a proven forcing step (phase 9, 09:10-09:22 UTC; **measured**, crops and shots **viewed**)
 
