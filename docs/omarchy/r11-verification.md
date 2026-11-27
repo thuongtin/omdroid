@@ -12,7 +12,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | # | Item | Status | Proof |
 |---|---|---|---|
 | V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
-| V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | PENDING | |
+| V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | PASS | 24 forced-repaint comparisons: 21 identical, 3 differ only in the bar clock (viewed), 0 changed elsewhere; real-change control read CHANGED (5,388,233 px); the `vfr=true` control stayed clean (not a reproduction of the R10 remnant, see "V2"); scratch `verify/p2-repaint.log`, APK `bef783d7…` |
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PENDING | |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PENDING | |
@@ -89,6 +89,44 @@ whole-surface form). Both arms checked from the process: `/proc/<Hyprland>/envir
   it with a real-time instrument (a foot client's `wl_callback.done` events with `WAYLAND_DEBUG=1`), a
   continuous flood instead of typing, two injected stalls (SIGSTOP on Hyprland for 200 and 400 ms) as the
   positive control, and the arm order B A A B.
+
+### V2, correctness against a forced full repaint (phase 2, 01:51-02:01 UTC; **measured**, crops and shots **viewed**)
+
+Per scenario: settle 3 s, screenshot, `hc.sh '/eval hl.config({ debug = { vfr = false } })'` (re-asserts the
+value and repaints everything), settle 3 s, screenshot, exact pixel diff (`verify-scrdiff.py`; verdict ZERO,
+CLOCK_ONLY when every changed pixel lies in the clock box at x 130-180, y 20-70 of the mobile bar, else CHANGED).
+Hyprland reported `debug:vfr` false and `debug:damage_tracking` 2 at the start. App pid 29409 throughout.
+
+| Scenario | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- |
+| toast fade (`notify-send -t 2500`, judged 10 s later) | CLOCK_ONLY (364 px, bbox 141,29-160,58) | ZERO | CLOCK_ONLY (366 px, same bbox) |
+| window open (foot) | ZERO | ZERO | ZERO |
+| window close | ZERO | ZERO | ZERO |
+| scrolling terminal stopped (`seq 1 60` loop) | ZERO | ZERO | ZERO |
+| the scrolling window closed | ZERO | ZERO | ZERO |
+| rotation to portrait, foot open | ZERO | ZERO | ZERO |
+| the foot closed, portrait | ZERO | ZERO | ZERO |
+| rotation back to landscape | CLOCK_ONLY (343 px, bbox 141,28-160,58) | ZERO | ZERO |
+
+- **Totals: 24 comparisons, 21 ZERO, 3 CLOCK_ONLY, 0 CHANGED.** All three non-zero diffs were viewed as a
+  before | after | diff crop at 4x (`<scratch>/verify/p2-repaint/crops/`): the clock turned over a minute between the two
+  shots (01:53 to 01:54, 01:54 to 01:55, 01:58 to 01:59); the magenta pixels are the last digit and nothing else.
+- Viewed: `toast-1-showing` shows the test toast at the top right (so the scenario really drew one),
+  `open-2-after` a foot prompt full width with the bar and the key bar intact, `scroll-2-running` the numbers 11-60
+  filling the terminal, `rot-2-portrait-open-after` the portrait desktop (2136x3200 root) with the bar, a
+  full-width foot window and nothing cut off. Every rotation: `probe.sh` VERDICT PASS within 12 s, same app pid.
+- **Control a (a real change must read CHANGED): PASS.** Opening foot between two shots: `changed=5388233 changed_gt8=5008098`.
+- **Control b (`debug.vfr=true`, then a toast fade, the case that left a remnant in R10 before committed damage): three
+  ZERO.** I could not reproduce a remnant, so this control does not show that the instrument sees a stale-pixel
+  remnant in particular, only that it sees every real change. It also did not read `vfr` back after setting it to true
+  (the check ran `hl.config` and trusted it), so "VFR on and clean" is not claimed.
+- **Finding for the parent (not this stream's change): two sticky notifications on the owner's desktop.** Every screenshot of
+  the phase shows `Omdroid could not shutdown` and `Omdroid could not stop` ("This Omdroid build does not answer session
+  requests. Update the app."), present from the first shot to the last, rotations included. The string exists only in the
+  S4 worktree's `rootfs/overlay/etc/phoshdroid/complete/bin/omdroid-session` (line 63); the guest has no `complete/` directory
+  now. They are most likely S4's own test notifications, restored from the shell's notification history at each start.
+  They do not change any diff above (static pixels). The owner will see them until the history is cleared
+  (`qs ipc -p /usr/share/omarchy/shell call notifications clear`); I left them in place.
 
 ### V3, `onTrimMemory` (phase 1, 01:17 UTC; **measured**, plus **read** for the refusals)
 
