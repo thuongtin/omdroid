@@ -35,6 +35,7 @@ import com.phoshdroid.app.launch.ReadyDecision
 import com.phoshdroid.app.launch.SessionPrep
 import com.phoshdroid.app.launch.UiModeFile
 import com.phoshdroid.app.launch.UiScale
+import com.phoshdroid.app.launch.UiScaleFile
 import com.phoshdroid.app.launch.XGeometry
 import com.phoshdroid.app.proot.ProotCommandBuilder
 import com.phoshdroid.app.proot.ProotDistroManager
@@ -735,18 +736,24 @@ class LauncherActivity : AppCompatActivity() {
         // pinned mode is never overwritten.
         val ui = UiModeFile(rootfsDir).apply(dock.docked)
         logLaunch("ui ${ui.effective} ${ui.reason}")
-        ProotService.start(
-            this,
-            launchWidth,
-            launchHeight,
-            // The scale follows the density of the display the desktop will be on
-            // (a3) unless the user chose one (contract section 4).
+        // The scale follows the density of the display the desktop will be on
+        // (a3) unless the user chose one (contract section 4).
+        val sessionScale =
             UiScale.resolve(
                 PhoshdroidPreferences(this).uiScale,
                 targetDensityDpi(dock),
                 minOf(winWidth, winHeight),
-            ),
-        )
+            )
+        // F6: the same number goes into the guest's live scale file, so the watcher's
+        // baseline is what monitors.lua uses at start and only a later dock change moves it.
+        val scaleOutcome =
+            try {
+                UiScaleFile(rootfsDir).apply(sessionScale)
+            } catch (e: Exception) {
+                null
+            }
+        logLaunch("ui-scale $sessionScale ${if (scaleOutcome?.written == true) "written" else "kept"}")
+        ProotService.start(this, launchWidth, launchHeight, sessionScale)
         logLaunch("session-started")
         statusText.text = getString(R.string.starting_desktop)
 

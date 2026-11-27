@@ -13,6 +13,9 @@ import com.phoshdroid.app.launch.DockState
 import com.phoshdroid.app.launch.DockStatus
 import com.phoshdroid.app.launch.DockStatusReader
 import com.phoshdroid.app.launch.UiModeFile
+import com.phoshdroid.app.launch.UiScale
+import com.phoshdroid.app.launch.UiScaleFile
+import com.phoshdroid.app.settings.PhoshdroidPreferences
 import com.phoshdroid.app.proot.ProotService
 import java.io.File
 
@@ -99,6 +102,9 @@ class DockMonitor(
         status: DockStatus,
         relaunch: Boolean,
     ) {
+        // F6: the scale first, then the mode, so a guest that reacts to the mode change
+        // already finds the scale of the same display and restarts its shell once.
+        applyUiScale(status)
         applyUiMode(status)
 
         // a7: the extra-key bar is a phone affordance. Hiding it here also removes
@@ -134,6 +140,38 @@ class DockMonitor(
             }
         val verb = if (outcome.written != null) "written" else "kept"
         Log.i(TAG, "dock: ui ${outcome.effective} $verb (${outcome.reason})")
+    }
+
+    /**
+     * F6: the UI scale for the display the desktop is on now, next to the mode file.
+     * The user's `ui_scale` setting wins (UiScale.resolve), else the display's own
+     * density and shorter edge. The guest watcher applies it live.
+     */
+    private fun applyUiScale(status: DockStatus) {
+        val rootfs = guestRootfs() ?: return
+        val target = if (status.docked) status.display else status.builtin
+        val scale =
+            UiScale.forDisplay(
+                try {
+                    PhoshdroidPreferences(app).uiScale
+                } catch (e: Exception) {
+                    null
+                },
+                target,
+            )
+        if (scale == null) {
+            Log.i(TAG, "dock: ui-scale not written, display unreadable")
+            return
+        }
+        val outcome =
+            try {
+                UiScaleFile(rootfs).apply(scale)
+            } catch (e: Exception) {
+                Log.w(TAG, "dock: ui-scale write failed: ${e.message}")
+                return
+            }
+        val on = target?.let { " display=${it.id} ${it.width}x${it.height}@${it.densityDpi}" } ?: ""
+        Log.i(TAG, "dock: ui-scale $scale ${if (outcome.written) "written" else "kept"}$on")
     }
 
     /** a4: put the already-running X activity on the monitor. */

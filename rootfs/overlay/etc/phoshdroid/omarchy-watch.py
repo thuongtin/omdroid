@@ -14,6 +14,11 @@ Started by start.sh before cage starts. Contract halves:
     back on the X root, restart only the shell, then reload Hyprland's config
     (config-only) for the looknfeel half. The session and its windows are never
     touched.
+  * launch contract section 4 (F6) - the UI scale follows the display: the host writes
+    $HOME/.config/omdroid/ui-scale (1 or 2) for the display the desktop is on, and the
+    watcher puts the monitor on that scale with the same runtime rule it uses for the
+    size, then the layer remedy restarts only the shell. OMDROID_SCALE_FOLLOW=0 (in
+    session.env) turns it off, and a missing or unreadable file changes nothing.
   * after ready, keep the Hyprland monitor equal to the even-rounded X root:
     monitors.lua builds its mode from the start-time size, so any config reload
     (Hyprland reloads by itself when a config file changes) puts the start-time
@@ -71,6 +76,8 @@ ACT = os.environ.get("OMARCHY_WATCH_ACT", "1") == "1"
 HOME = os.environ.get("HOME", "/home/omarchy")
 UI_FILE = os.path.join(HOME, ".config", "omdroid", "ui")
 UI_PIN = os.path.join(HOME, ".config", "omdroid", "ui-pin")
+UI_SCALE = os.environ.get("OMDROID_WATCH_SCALE_FILE", os.path.join(HOME, ".config", "omdroid", "ui-scale"))
+SCALE_FOLLOW = os.environ.get("OMDROID_SCALE_FOLLOW", "1") != "0"
 UI_SCRIPT = os.environ.get("OMDROID_WATCH_UI_SCRIPT", "/etc/phoshdroid/omdroid-ui.sh")
 INDEX_SCRIPT = os.environ.get("OMDROID_WATCH_INDEX_SCRIPT", "/etc/phoshdroid/omarchy-plugin-index.sh")
 
@@ -278,6 +285,29 @@ def ui_mode(path=None, pin_path=None):
     return read_mode(pin_path or UI_PIN) or read_mode(path or UI_FILE) or "mobile"
 
 
+def wanted_scale(path=None):
+    """The UI scale the host wants (1 or 2), or None when the watcher must leave it alone.
+
+    The host (DockMonitor, LauncherActivity) writes ~/.config/omdroid/ui-scale for the
+    display the desktop is on. Missing, unreadable, fractional or any other value means
+    None, as does OMDROID_SCALE_FOLLOW=0: then the start-time OMARCHY_SCALE stays, which
+    is exactly the behaviour before F6.
+    """
+    if not SCALE_FOLLOW:
+        return None
+    try:
+        with open(path or UI_SCALE) as fh:
+            value = fh.read().strip()
+    except OSError:
+        return None
+    return {"1": 1, "2": 2}.get(value)
+
+
+def scale_matches(st, want):
+    """True when the monitor already runs the wanted scale (or none is wanted)."""
+    return want is None or abs((st.get("scale") or 1) - want) < 0.01
+
+
 def run_script(path, label, timeout=60):
     """Run one guest script; `label rc=0`, or the failing line, never an exception."""
     if not os.path.exists(path):
@@ -311,14 +341,17 @@ def reload_config(sig, timeout=15):
     return f"hyprctl reload config-only rc={r.returncode}"
 
 
-def fit_monitor(st, timeout=10):
+def fit_monitor(st, timeout=10, scale=None):
     """Put the Hyprland monitor on the even-rounded X root with a runtime rule.
 
     Hyprland follows cage on its own, but every config reload (an explicit one,
     or Hyprland's autoreload when omdroid-ui.sh edits looknfeel.lua) re-applies
     monitors.lua, whose mode is the size at session start. `hyprctl eval` with
     `hl.monitor` puts the current size back at once (measured on the tablet:
-    3200x1970 -> 1920x914 in one call); scale and refresh are kept.
+    3200x1970 -> 1920x914 in one call); scale and refresh are kept, unless `scale`
+    names the one the host wants (F6): then the same rule carries it, and the GDK
+    scale that monitors.lua exported at start follows in a second, best-effort call
+    (apps started after it get the new GDK_SCALE).
     """
     exe = shutil.which("hyprctl")
     sig = signature()
@@ -326,15 +359,24 @@ def fit_monitor(st, timeout=10):
         return "monitor fit skipped: no hyprctl or Hyprland instance"
     tw, th = st["target"]
     hz = st.get("hz") or 120.0
+    new_scale = st["scale"] if scale is None else scale
     lua = ('hl.monitor({ output = "", mode = "%dx%d@%.3f", position = "auto", '
-           'scale = %g, transform = 0 })' % (tw, th, hz, st["scale"]))
+           'scale = %g, transform = 0 })' % (tw, th, hz, new_scale))
     env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=sig)
     try:
         r = subprocess.run([exe, "eval", lua], capture_output=True, text=True,
                            timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"monitor fit failed: {e}"
-    return f"monitor fit {tw}x{th} rc={r.returncode}"
+    line = f"monitor fit {tw}x{th} scale {new_scale:g} rc={r.returncode}"
+    if scale is not None and abs(scale - st["scale"]) >= 0.01:
+        try:
+            r2 = subprocess.run([exe, "eval", 'hl.env("GDK_SCALE", "%d")' % int(round(scale))],
+                                capture_output=True, text=True, timeout=timeout, env=env)
+            line += f"; GDK_SCALE {int(round(scale))} rc={r2.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as e:
+            line += f"; GDK_SCALE failed: {e}"
+    return line
 
 
 # Non-empty while a UI switch could not restart the shell because of the rate
@@ -364,8 +406,9 @@ def switch_ui(mode, st=None):
     if st.get("missing"):
         parts.append("shell restart deferred: " + st["missing"])
         return "; ".join(parts)
-    if not st.get("mon_is_root"):
-        parts.append(fit_monitor(st))
+    want = wanted_scale()
+    if not st.get("mon_is_root") or not scale_matches(st, want):
+        parts.append(fit_monitor(st, scale=want))
         time.sleep(0.5)
     if not ACT:
         parts.append("shell restart off (OMARCHY_WATCH_ACT=0)")
@@ -451,6 +494,8 @@ def main():
     size_since = time.monotonic()
     attempts = 0
     fits = 0
+    scale_fits = 0
+    last_want = wanted_scale()
     limited = False
     last_root = None
     last_sig = None
@@ -486,6 +531,11 @@ def main():
         # shell live (contract section 8). Checked before the readiness gate so a
         # mode change that arrives while Hyprland is still starting is applied
         # rather than dropped.
+        want = wanted_scale()
+        if want != last_want:
+            log("ui-scale %s -> %s" % (last_want, want))
+            last_want = want
+            scale_fits = 0
         mode = ui_mode()
         if mode != last_ui:
             log("ui mode %s -> %s, switching in place" % (last_ui, mode))
@@ -518,6 +568,7 @@ def main():
             size_since = time.monotonic()
             attempts = 0
             fits = 0
+            scale_fits = 0
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
@@ -540,6 +591,18 @@ def main():
                 log("monitor %dx%d != X root %dx%d (even-rounded): %s, attempt %d/%d" %
                     (key[0], key[1], st["target"][0], st["target"][1], fit_monitor(st),
                      fits, RETRY_CAP))
+                size_since = time.monotonic()
+                hot_until = size_since + HOT_S
+                hypr_data = None
+        elif not scale_matches(st, want):
+            # F6: the host wants another scale (a dock or undock moved the desktop to a
+            # display with another density, or a config reload put the start-time scale
+            # back). The same runtime rule as the size fit; the layers then no longer fit
+            # the new logical size and the remedy below restarts only the shell.
+            if stable >= STABLE_S and scale_fits < RETRY_CAP:
+                scale_fits += 1
+                log("monitor scale %g != ui-scale %d: %s, attempt %d/%d" %
+                    (st["scale"], want, fit_monitor(st, scale=want), scale_fits, RETRY_CAP))
                 size_since = time.monotonic()
                 hot_until = size_since + HOT_S
                 hypr_data = None
