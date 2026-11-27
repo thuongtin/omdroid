@@ -163,6 +163,24 @@ Ran on the parent's instruction after S1 reported that two stock `omarchy-restar
 - **My old dock/undock test would have missed this:** it read `probe.sh` 2 s and ~6 s after each change; phase 9's death came about 8 s after the undock's PASS. Phase 10's repeat-with-60-s-soak is the shape that catches it.
 - **Notifications (phase 9):** popups 0, history 6, every file one of S5's "R11 V2 redo toast 1/2/3" (two rounds); **0 files carry the text "Omdroid"** — the two phase-2 "Omdroid could not stop/shutdown" toasts are gone. The bar's notification indicator is fed by those six history entries, not by anything of mine; left alone.
 
+### Phase 11/12 results: the recovery launch (device, 10:59-11:16, **measured**)
+
+Policy from the parent: a FAILED restart authorises exactly ONE **fresh launch** (`omarchy-launch-shell`), never a second restart; 2 s wait, 10 s window, then the size is exhausted. Implemented in `8926077`; `00354fd` fixes the exhaustion being cleared by the size change that caused it (phase 11 undock 1 showed a second restart running through the clear). APKs: `7710b2a6` (`8926077`), `0bc1e417` (`00354fd`). Harness: `complete-scale-test.py` 19 checks, 0 failed — `crash` (one restart + one launch, `recovered after one fresh launch`), `crash2` (one restart + one failed launch per size, marker rewritten, `left alone`), `unfit` control (3 actions, 0 launches, `giving up`).
+
+Device, 2 docks and 2 undocks in the order dock, undock, dock, undock, `probe.sh` at 0/10/30/60 s and the `comm` census at 0 and 60 s:
+
+| Event | `8926077` (`7710b2a6`) | `00354fd` (`0bc1e417`, shipped) |
+| --- | --- | --- |
+| dock 1 | PASS 4/4, census 0 at +0 s, 1 at +60 s | PASS 4/4, census 0 at +0 s, 1 at +60 s |
+| undock 1 | FAIL 0/10/30 s, PASS +60 s: the recovery launch failed, then a second restart ran through the exhaustion-clear bug and brought the layers back in **0.1 s** | FAIL 0/10/30/60 s, black frame (8.5 KB, viewed), census 1 at +0 s then 0 at +60 s: the rule held |
+| dock 2 | PASS 4/4 | PASS 4/4 — the dock's own restart **revives the dead shell** |
+| undock 2 | FAIL 0/10/30/60 s, black (9.7 KB) | FAIL 0/10/30/60 s, black (9.7 KB), marker `2026-11-27 11:14:36` |
+
+- **The fresh launch does not revive a lost shell: 4 attempts, 0 recoveries.** Every one logged `recovery: one fresh shell launch after the failed restart (omarchy-launch-shell rc=0)` and then `layers background=none bar=none quickshell=0`. The stock restart does revive it, three times, in 0.1 s (phase 11 undock 1, phase 12 dock 2, and every clean dock). Cause not proven; the likely difference is that the restart kills the old instance first (`while timeout 5 quickshell kill -p $CONFIG_DIR --any-display`) and dispatches the launch from Hyprland (`hl.dsp.exec_cmd`), while a bare `omarchy-launch-shell` is a watcher child whose backgrounded `quickshell -n` may refuse against a stale instance.
+- **Product consequence of the rule as shipped:** an undock leaves a black desktop, measured 2/2 on `00354fd`, until the next dock/size change (a dock recovers it) or an app restart. Before the guard, the undock's extra restart recovered it (0.1 s).
+- **The three-shell reading was a `pgrep -f` artefact; the `comm` census is exact.** `pgrep -c -f 'quickshell .*-p '` reads 4 on this guest — the shell, the `gx.sh` proot wrapper and the probe's own `bash -c`, the last two only because the pattern text is in their command lines. Counting `/proc/*/comm == quickshell`: 1 at rest, 0 at the instant a restart reports settled (the old shell is gone), 1 again within 5 s, never more than 1 in any of 12 samples.
+- **Notifications:** 0 files carry the text "Omdroid" (the two phase-2 toasts are gone); history holds 6 files, all S5's "R11 V2 redo toast 1/2/3" in two rounds, and the bar's indicator is fed by those.
+
 ## Device proof
 
 | Phase | APK | What it proved |
@@ -204,6 +222,7 @@ Items from phase 3 that phase 4 settled or narrowed:
 
 - Capture, nightlight, brightness, Wi-Fi and Bluetooth rows are not fixed or hidden (1.2 rows 6-9).
 - Clipboard bridge (step 5): measured and designed, not built.
+- The recovery after a lost shell is measured not to work as a bare launch (section "Phase 11/12"): it needs a kill first. Decision with the parent: kill+launch, or one `omarchy-restart-shell` as the single recovery.
 - The Hyprland exit crash (exit 139) is not settled: needs 10 exits per arm, default against `OMDROID_COMPLETE_BANNERS=0`, on one build. Until then the banner block ships on, because the two start-up warnings it removes appear in every session.
 - No main-thread Java stack of the R10 hang: S5's JDWP capture hung the tablet lock and was stopped; the cause is read from the source and the wchan samples.
 - `:app:lintDebug` was not run (CI runs it).
