@@ -17,23 +17,11 @@ PORT=8761
 trap 'adb_ forward --remove tcp:$PORT > /dev/null 2>&1; owner_restore' EXIT
 trap 'exit 130' INT TERM
 
-state_script=$PHASE_OUT/state.sh
-cat > "$state_script.tpl" << 'EOF'
-pid=__PID__
-echo "main thread: state=$(cut -d' ' -f3 /proc/$pid/task/$pid/stat) wchan=$(cat /proc/$pid/task/$pid/wchan) syscall=$(cut -c1-40 /proc/$pid/task/$pid/syscall)"
-for t in /proc/$pid/task/*; do echo "$(cut -d' ' -f2,3 $t/stat) wchan=$(cat $t/wchan)"; done | sort | uniq -c | sort -rn | head -10
-EOF
-main_state() { # $1 label
-    local pid; pid=$(app_pid)
-    [ -n "$pid" ] || { phase_log "$1: no app process"; return; }
-    sed "s/__PID__/$pid/" "$state_script.tpl" > "$state_script"
-    phase_log "$1: app pid $pid"
-    runas "$state_script" 2>&1 | sed 's/^/    /'
-}
 java_stacks() { # $1 label
     local pid; pid=$(app_pid)
     [ -n "$pid" ] || { phase_log "$1: no app process for jdb"; return; }
-    phase_log "$1: jdwp pids $(adb_ jdwp | tr '\n' ' ')"
+    # adb jdwp STREAMS pids forever (it hung phase 7 for five hours): always under timeout
+    phase_log "$1: jdwp pids $(timeout 3 adb -s "$TABLET_SERIAL" jdwp 2> /dev/null | tr '\n' ' ')"
     adb_ forward --remove tcp:$PORT > /dev/null 2>&1
     adb_ forward tcp:$PORT jdwp:$pid > /dev/null 2>&1
     { sleep 2; echo suspend; sleep 1; echo 'where all'; sleep 8; echo resume; sleep 1; echo exit; } | timeout 50 "$JDB" -attach localhost:$PORT > "$PHASE_OUT/jdb-$1.txt" 2>&1
