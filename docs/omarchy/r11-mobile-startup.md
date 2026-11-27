@@ -20,6 +20,7 @@ inside quickshell's own start-up window and needs a profiler; that is this strea
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
 | 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | FAIL (target) | APK `cc12c0e3…` from `3ae27b9`, installed sha proven; mobile desktop-PASS 6.3 / 6.6 / 11.3 / 11.7 s against desktop 4.0 / 3.0 / 2.5 s — target not met, and the mobile spread (~5 s) is larger than the change; gestures: bar tap, sheet close, dock swipe-up and app open PASS, three items blocked by the switcher not closing |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
+| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PENDING | commit `9f407c8`; phase 6: A = `OMDROID_DRAWER_MAPPED=1` control (buffers present), B = lazy (absent), C = tap → layer ms against the sheet as positive control, D = the gestures |
 
 ## What changed
 
@@ -38,6 +39,10 @@ inside quickshell's own start-up window and needs a profiler; that is this strea
 - `…/omamobile.launcher/Launcher.qml:515-548` — `omamobile-osk-watch` (a binary of the unported
   `omamobile.keyboard` plugin) and its 3 s restart run only while that plugin is vendored. It
   could not exec at all, so the timer relaunched a failing exec every 3 s.
+- `…/omamobile.launcher/Launcher.qml:776-800` — the drawer window unmaps while it is closed:
+  `visible: drawerAlwaysMapped || opened || warm || settle.running`; `open()` maps it and waits one
+  mapped frame (24 ms) before the slide, and the dock's tap sets `warm` before its IPC summon
+  (`:486-493`). `OMDROID_DRAWER_MAPPED=1` restores the always-mapped window.
 - `…/omamobile/SOURCE.md` — one row per changed upstream file, with the measurement that forced it.
 
 ## Host proof
@@ -166,6 +171,8 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
 
 - `OMDROID_QS_PROBE_AT_LOAD=1` in `~/.config/omdroid/session.env` → the probe runs at load again
   (the old behaviour, for an A/B on the merged build).
+- `OMDROID_DRAWER_MAPPED=1` → the launcher's drawer window stays mapped for the life of the shell
+  (45.9 MiB of `wl_shm` buffers) instead of unmapping while it is closed.
 - `OMAMOBILE_TILE_STATE_CACHE` → where the pass caches its output (`~/.cache/omamobile/tile-state`).
 
 ## Risks
