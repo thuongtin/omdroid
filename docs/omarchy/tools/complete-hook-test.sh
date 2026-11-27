@@ -13,7 +13,7 @@ ok() { echo "PASS  $1"; }
 bad() { echo "FAIL  $1  -- $2"; fail=1; }
 check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 
-export HOME=$T/home OMDROID_COMPLETE_DIR=$D OMDROID_COMPLETE_BIN=$T/bin OMDROID_COMPLETE_OMARCHY_BIN=$T/omarchy-bin
+export OMDROID_SESSION_LOG=$T/session.log HOME=$T/home OMDROID_COMPLETE_DIR=$D OMDROID_COMPLETE_BIN=$T/bin OMDROID_COMPLETE_OMARCHY_BIN=$T/omarchy-bin
 export OMDROID_COMPLETE_REAL_XTE=$T/no-such-xte OMDROID_COMPLETE_NVIM=no-such-nvim OMDROID_COMPLETE_NANO=bash
 export OMDROID_COMPLETE_LOG=$T/hook.log OMDROID_HOST_DIR=$T/host OMDROID_SESSION_WAIT_DS=8
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/extensions"

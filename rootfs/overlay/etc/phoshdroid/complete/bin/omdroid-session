@@ -26,6 +26,7 @@ case "$action" in
 esac
 dir=${OMDROID_HOST_DIR:-/tmp/omdroid-host}
 wait_ds=${OMDROID_SESSION_WAIT_DS:-40}
+log=${OMDROID_SESSION_LOG:-/tmp/omdroid-session.log}
 req=$dir/request
 mkdir -p "$dir" 2> /dev/null
 
@@ -56,6 +57,7 @@ while [ -e "$req" ] && [ "$i" -lt "$wait_ds" ]; do
     sleep 0.1
     i=$((i + 1))
 done
+echo "$(date +%T) $action ack_after=$((i * 100))ms taken=$([ -e "$req" ] && echo no || echo yes)" >> "$log" 2> /dev/null
 if [ -e "$req" ]; then
     rm -f "$req"
     notify "Omdroid could not $action" "This Omdroid build does not answer session requests. Update the app."
