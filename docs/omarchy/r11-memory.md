@@ -450,8 +450,8 @@ control really ran on the R10 integration APK. Then the candidate APK, four arms
 00:54:08 and first installed at 01:00:52, so that crash happened before this stream touched the tablet, on the
 build the owner already had. Its report has the same section structure; I did not print its stack. So the
 Quickshell crash on a shell restart **predates this stream** and is not caused by the `mem/` files or the ring
-cap. It is also not reproducible on demand: 3 crashes in 12 candidate restarts (phases 6, 7, 9) and 0 in 2 on the
-R10 APK. It is a QML object-creation crash in the restarted instance, and both the patched and the original
+cap. It is also not reproducible on demand: 3 crash folders across 13 candidate restarts (phases 6, 7, 9) plus one
+more restart that ended black with no folder, and 0 in 2 on the R10 APK. It is a QML object-creation crash in the restarted instance, and both the patched and the original
 `Background.qml` produced it (Q2 patched, crash; M original, no crash folder but a dead shell), so the QML patch is
 not implicated by this evidence. Left open for whoever owns the shell's start (S4's `omarchy-watch.py` restarts
 the shell on every size change; upstream's `omarchy-restart-shell` is what fails).
@@ -539,7 +539,8 @@ stream changes behaviour at runtime.
 - `LP_NUM_THREADS` and `debug.vfr` are measured and **not shipped** (a 1.7-3 commits/s desktop, and the lost-last-frame
   risk respectively).
 - The busy state was not traced to a cause, and the manual-restart crash was not bisected beyond the four arms of
-  phase 9 (12 restarts in total is too few for a QML-creation crash that fires about one restart in four).
+  phase 9 (13 candidate restarts and 2 on the R10 APK is too few for a QML-creation crash that fires about one
+  restart in four).
 - `dumpsys meminfo` (TOTAL/Graphics) was taken in phase 2 only; later phases used the smaps roll-up alone.
 - The Quickshell `wl_shm` buffer swing of about ±23 MB between sessions is not explained (UNVERIFIED: one extra
   drawer buffer, size fits, not proven).
