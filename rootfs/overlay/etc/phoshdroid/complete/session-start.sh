@@ -16,9 +16,12 @@
 #   OMDROID_COMPLETE_BANNERS=0 keep Hyprland start-up warning banners
 #   OMDROID_COMPLETE_CLIPBOARD=0  no clipboard bridge between the guest Wayland
 #                              clipboard and the X display Android talks to
+#   OMDROID_COMPLETE_BROWSER=0 keep the image's brave launcher (which aborts here: the
+#                              sandbox helper cannot be root-owned 4755 inside proot)
 # Every change is key-level and reversible; the state lives in ~/.local/state/omdroid/complete.
 D=${OMDROID_COMPLETE_DIR:-/etc/phoshdroid/complete}
 BIN=${OMDROID_COMPLETE_BIN:-/usr/local/bin}
+USRBIN=${OMDROID_COMPLETE_USRBIN:-/usr/bin}
 OMARCHY_BIN=${OMDROID_COMPLETE_OMARCHY_BIN:-/usr/share/omarchy/bin}
 STATE=$HOME/.local/state/omdroid/complete
 LOG=${OMDROID_COMPLETE_LOG:-/tmp/omdroid-complete.log}
@@ -35,7 +38,8 @@ terminal=${OMDROID_COMPLETE_TERMINAL:-1}
 editor=${OMDROID_COMPLETE_EDITOR:-1}
 banners=${OMDROID_COMPLETE_BANNERS:-1}
 clipboard=${OMDROID_COMPLETE_CLIPBOARD:-1}
-[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; clipboard=0; }
+browser=${OMDROID_COMPLETE_BROWSER:-1}
+[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; clipboard=0; browser=0; }
 
 # --- power and session entries -------------------------------------------------
 # The omarchy-* names are links in /usr/local/bin to /usr/share/omarchy/bin (set at image
@@ -169,6 +173,29 @@ if [ "$clipboard" != 0 ]; then
 else
     stop_bridge
     say "clipboard: bridge off (switch)"
+fi
+
+# --- browsers ------------------------------------------------------------------------
+# No member of the Chromium family can sandbox itself inside proot: the helper must be
+# root-owned mode 4755 and the zygote needs user namespaces, neither of which exists
+# here. A bare brave therefore aborts before a window appears, and the next launch says
+# it quit unexpectedly. The image's Chromium only works because Omarchy's own launcher
+# passes the flags (omarchy-launch-browser's proot branch). One launcher covers the
+# family: it takes the name it was called by, and only names the image actually has are
+# linked, so /usr/local/bin/brave and /usr/local/bin/chromium both get the flags from
+# a desktop entry, the menu, omarchy-launch-browser or a terminal.
+browser=${OMDROID_COMPLETE_BROWSER:-1}
+browsers="brave chromium google-chrome-stable microsoft-edge-stable vivaldi-stable opera"
+if [ "$browser" != 0 ]; then
+    for name in $browsers; do
+        [ -x "$USRBIN/$name" ] && link_ours "$name" "$D/bin/chromium-proot"
+    done
+    say "browser: chromium-family browsers launch with the sandbox off (proot)"
+else
+    for name in $browsers; do
+        [ "$(readlink "$BIN/$name" 2> /dev/null)" = "$D/bin/chromium-proot" ] && rm -f "$BIN/$name"
+    done
+    say "browser: the image launchers kept (switch)"
 fi
 
 exit 0

@@ -1,0 +1,29 @@
+#!/bin/bash
+# Chromium-family launcher for the session. One file serves every browser: it takes
+# the name it was called by, so /usr/local/bin/brave runs /usr/bin/brave and
+# /usr/local/bin/chromium runs /usr/bin/chromium, both with the flags proot needs.
+#
+# Why the flags. Chromium's setuid sandbox demands a helper that is owned by root with
+# mode 4755, and its zygote wants user namespaces. Inside proot neither exists: the
+# image ships /opt/brave-bin/chrome-sandbox as -rwsr-xr-x owned by the session user,
+# and /usr/lib/chromium/chrome-sandbox as -rwx------, so a bare launch aborts with
+#   FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:172]
+#   The SUID sandbox helper binary was found, but is not configured correctly.
+# before any window exists, and the next launch reports that the browser quit
+# unexpectedly. Nothing inside proot can fix the helper, so the sandbox is off by
+# design here, exactly as Omarchy's own launcher runs Chromium in its proot branch:
+#   exec chromium --no-sandbox --disable-dev-shm-usage --password-store=basic ...
+#
+# The hook links this file into /usr/local/bin for each family member the image has
+# (that directory comes before /usr/bin in the session PATH), so a desktop entry's
+# `Exec=brave %U`, the Omarchy menu, omarchy-launch-browser and a plain `brave` in a
+# terminal all get the flags.
+#
+# Electron apps are a separate case: they honour ELECTRON_DISABLE_SANDBOX=1 from the
+# session environment rather than a wrapper, and the image has none installed.
+name=${0##*/}
+exec "/usr/bin/$name" \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --password-store=basic \
+    "$@"
