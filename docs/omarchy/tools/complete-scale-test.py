@@ -16,13 +16,13 @@ Scenarios (each is its own watcher run)
   junk     the file holds 1.5, then 3, then garbage: nothing happens (integers 1 and 2 only)
   reload   a config reload puts the start-time scale back (what omdroid-ui.sh edits do):
            the watcher fits it again, up to the retry cap, and logs it
-  crash    the restart loses the shell (no omarchy layers, no Quickshell process): ONE attempt,
-           a FAILED line, a marker file, no retry, then exactly ONE fresh launch
-           (`omarchy-launch-shell`, never another restart) which recovers it
-  crash2   the same, and the fresh launch fails too: the marker is rewritten, that monitor size is
-           exhausted (no further actions), and a later size change is a new attempt
-           (r11 S1: a second stock restart leaves a black screen; phase 10: one fresh launch
-           recovered an undock that lost the shell)
+  crash    the restart loses the shell (no omarchy layers, no Quickshell process): a FAILED line,
+           a marker file, no retry of that call, then exactly ONE recovery restart which recovers
+           it (2 restarts in total for that size)
+  crash2   the recovery restart fails too: the marker is rewritten, that monitor size is exhausted,
+           no third restart ever (r11 phases 11/12: a bare fresh launch revived 0 of 4, the stock
+           restart 3 of 3 - the kill half is what the restart adds)
+  crash3   the same failure at two different sizes: one recovery each, no more
   unfit    the restart leaves the shell's layers merely unfit: the retry cap still applies
            (positive control for `crash`: the same harness sees the retries)
 
@@ -77,8 +77,7 @@ class Comp:
         self.scale = scale
         self.layer_scale = scale          # the scale the shell laid its layers out for
         self.shell_procs = 1              # Quickshell processes the watcher counts
-        self.launches = 0                 # fresh omarchy-launch-shell calls
-        self.recovery_works = True        # a fresh launch brings the shell back
+        self.crash_first_n = 0            # this many initial restarts lose the shell
         self.crash_on_restart = False     # the restart loses the shell (S1's black screen)
         self.restart_noop = False         # the restart leaves the layers as they were
         self.fail_path = None
@@ -123,20 +122,13 @@ class FakeSubprocess:
                 self.comp.evals.append(cmd[2])
             else:
                 self.comp.evals.append(cmd[2])
-        elif cmd[0].endswith("omarchy-launch-shell"):
-            self.comp.launches += 1
-            if self.comp.recovery_works:
-                self.comp.shell_procs = 1
-                self.comp.layer_scale = self.comp.scale
-            else:
-                self.comp.shell_procs = 0
-                self.comp.layer_scale = None
         elif cmd[0].endswith("omarchy-restart-shell"):
             self.comp.restarts += 1
-            if self.comp.crash_on_restart:
+            if self.comp.restarts <= self.comp.crash_first_n:
                 self.comp.shell_procs = 0
                 self.comp.layer_scale = None
             elif not self.comp.restart_noop:
+                self.comp.shell_procs = 1
                 self.comp.layer_scale = self.comp.scale
         return res
 
@@ -155,23 +147,22 @@ def load(path, tmp, env):
     mod.UI_SCALE = os.path.join(tmp, "ui-scale")
     os.makedirs(os.path.join(tmp, "omarchy", "bin"), exist_ok=True)
     open(os.path.join(tmp, "omarchy", "bin", "omarchy-restart-shell"), "w").close()
-    open(os.path.join(tmp, "omarchy", "bin", "omarchy-launch-shell"), "w").close()
+    open(os.path.join(tmp, "omarchy", "bin", "omarchy-launch-shell"), "w").close()  # unused: recovery is a restart
     mod.OMARCHY = os.path.join(tmp, "omarchy")
     mod.FAIL_PATH = os.path.join(tmp, "shell-restart-failed")
     return mod
 
 
 def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=(), reload_stale=False,
-        crash=False, noop=False, state_events=(), recovery=True):
+        crash=0, noop=False, state_events=()):
     """events: [(t, text-or-None)] written to ui-scale at t (None removes the file).
 
     state_events: [(t, fn)] called with the fake compositor at t, for a rotation or a revived shell.
     """
     tmp = tempfile.mkdtemp(prefix="f6-")
     comp = Comp(root, scale)
-    comp.crash_on_restart = crash
+    comp.crash_first_n = crash
     comp.restart_noop = noop
-    comp.recovery_works = recovery
     env = {"OMDROID_SCALE_FOLLOW": "1" if follow else "0"}
     mod = load(path, tmp, env)
     pending = list(events)
@@ -279,40 +270,41 @@ def main():
     check("reload with a stale size: the size fit itself carries the wanted scale (never re-applies 2)",
           scales4 and set(scales4) == {"1"} and comp4.scale == 1, "evals=%s final=%g" % (scales4, comp4.scale), res, v)
 
-    # r11 S1/phase 10: a restart that loses the shell is never retried; exactly one fresh launch
-    # follows, and only the launch's own window decides whether the size is exhausted.
-    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 45, crash=True)
-    check("crash: exactly one restart and one fresh launch, then no more actions",
-          comp.restarts == 1 and comp.launches == 1,
-          "restarts=%d launches=%d" % (comp.restarts, comp.launches), res, v)
-    check("crash: the fresh launch recovers and the log says so",
-          "recovered after one fresh launch" in log and "shell restart FAILED" in log,
-          " | ".join([ln for ln in log.splitlines() if "FAILED" in ln or "recovered" in ln][:3]), res, v)
-    check("crash: layers fit at the end and the failing call was never retried",
-          comp.layer_scale == 1 and "attempt 2/3" not in log,
-          "layer_scale=%s" % comp.layer_scale, res, v)
+    # r11 phases 11/12: a restart that loses the shell is never retried as-is; exactly one recovery
+    # restart follows (the measured call), and its own window decides whether the size is exhausted.
+    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 45, crash=1)
+    check("crash: one attempt + one recovery restart, then a clean budget",
+          comp.restarts == 2, "restarts=%d" % comp.restarts, res, v)
+    check("crash: the recovery is logged as such and the layers fit again",
+          "recovered after one recovery restart" in log and comp.layer_scale == 1,
+          " | ".join([ln for ln in log.splitlines() if "recovery" in ln][:3]), res, v)
+    check("crash: the failing call was never retried as a retry (no attempt 2/3)",
+          "attempt 2/3" not in log,
+          " | ".join([ln for ln in log.splitlines() if "attempt" in ln][:3]), res, v)
 
-    def rotate(c):
-        c.root = (2400, 1500)
-
-    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 80, crash=True, recovery=False,
-                       state_events=[(40.0, rotate)])
-    check("crash2: one restart + one failed launch per size, none repeated (2 sizes)",
-          comp.restarts == 2 and comp.launches == 2,
-          "restarts=%d launches=%d" % (comp.restarts, comp.launches), res, v)
-    check("crash2: the launch's failure is logged, the marker written, the size left alone",
+    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 70, crash=99)
+    check("crash2: both the attempt and the recovery fail: exactly 2 restarts, no third",
+          comp.restarts == 2, "restarts=%d" % comp.restarts, res, v)
+    check("crash2: marker rewritten, the size left alone, no further actions",
           "did not bring the layers back" in log and "no further actions" in log
           and comp.fail_path and os.path.exists(comp.fail_path)
           and "shell restart failed" in open(comp.fail_path).read(),
-          " | ".join([ln for ln in log.splitlines() if "no further actions" in ln or "did not bring" in ln][:2]), res, v)
-    check("crash2: the failing restart itself is still never retried", "attempt 2/3" not in log,
-          " | ".join([ln for ln in log.splitlines() if "attempt" in ln][:3]), res, v)
+          " | ".join([ln for ln in log.splitlines() if "no further actions" in ln][:2]), res, v)
+
+    def rotate2(c):
+        c.root = (2400, 1500)
+        c.crash_first_n = c.restarts + 1   # the first restart of the new size loses the shell too
+
+    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 90, crash=99,
+                       state_events=[(45.0, rotate2)])
+    check("crash3: two sizes, two episodes: 2 restarts each, never a third",
+          comp.restarts == 4, "restarts=%d" % comp.restarts, res, v)
 
     comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 80, noop=True)
-    check("unfit: layers that exist but never fit still use the retry cap, 3 actions, no launch "
-          "(control for crash)", comp.restarts == 3 and comp.launches == 0 and "giving up" in log
+    check("unfit: layers that exist but never fit still use the retry cap, 3 actions, no recovery "
+          "(control for crash)", comp.restarts == 3 and "recovery" not in log and "giving up" in log
           and "shell restart FAILED" not in log,
-          "restarts=%d launches=%d" % (comp.restarts, comp.launches), res, v)
+          "restarts=%d" % comp.restarts, res, v)
 
     failed = [n for n, ok in res if not ok]
     print("\n%d checks, %d failed" % (len(res), len(failed)))

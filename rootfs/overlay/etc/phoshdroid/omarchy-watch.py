@@ -555,51 +555,63 @@ def write_failure(facts):
         pass
 
 
-def launch_shell():
-    """A FRESH shell launch: `omarchy-launch-shell`, never `omarchy-restart-shell`.
+def restart_shell():
+    """The stock restart: `omarchy-restart-shell` (kill the instances, then dispatch a launch).
 
-    The restart is the call that lost the shell (r11 phases 9 and 10: the second restart of a
-    dock or undock cycle left no shell at all), so running it again is exactly the retry the guard
-    forbids. `omarchy-launch-shell` only starts one, and it returns once the shell answers.
+    The recovery used to be a bare `omarchy-launch-shell` and never revived a lost shell: 4
+    attempts, 0 recoveries, every one `rc=0` with no Quickshell process afterwards (r11 phases 11
+    and 12). The restart revived it 3 of 3 in 0.1 s, and the piece it adds is the kill half — the
+    stale instance is cleared before Hyprland dispatches the launch. So the recovery is one more
+    of the same call, bounded to one: a copy of the retry loop is what the guard exists to stop.
     """
-    exe = os.path.join(OMARCHY, "bin", "omarchy-launch-shell")
+    exe = os.path.join(OMARCHY, "bin", "omarchy-restart-shell")
     if not os.path.exists(exe):
-        return "omarchy-launch-shell missing"
+        return "omarchy-restart-shell missing"
     env = dict(os.environ)
     env.setdefault("OMARCHY_PATH", OMARCHY)
     try:
         r = subprocess.run([exe], capture_output=True, text=True, timeout=60, env=env)
-        return "omarchy-launch-shell rc=%d" % r.returncode
+        return "omarchy-restart-shell rc=%d" % r.returncode
     except (OSError, subprocess.TimeoutExpired) as e:
-        return "omarchy-launch-shell failed: %s" % e
+        return "omarchy-restart-shell failed: %s" % e
+
+
+# Monitor sizes whose one recovery restart has been used: never a third restart for one size.
+RECOVERED = []
 
 
 def recover(st):
-    """The ONE recovery launch a lost shell authorises. Returns `(ok, one line)`.
+    """The ONE recovery restart a lost shell authorises. Returns `(ok, one line)`.
 
-    Called only after `shell_after_failure()` said `failed` and the marker was written. A second
-    launch is never attempted: if the layers are not back within RECOVER_WAIT the caller marks the
-    size exhausted and nothing more is done for it until the size changes or the user acts.
+    Called only after `shell_after_failure()` said `failed` and the marker was written. Restart
+    budget for one size: the attempt that failed plus this one recovery, never a third. A second
+    episode on the same size (a recovery already used) goes straight to exhausted.
     """
     key = tuple(st.get("mon") or ())
+    if key in RECOVERED:
+        write_failure("recovery already used for %dx%d" % (key[0], key[1]) if len(key) > 1 else "recovery already used")
+        log("recovery: a recovery restart was already used for %dx%d: no further actions"
+            % (key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
+        return False, "recovery already used for this size, no further actions"
+    RECOVERED[:] = [key]
     time.sleep(2)
-    log("recovery: one fresh shell launch after the failed restart (%s)" % launch_shell())
+    log("recovery: one recovery restart after the failed one (%s)" % restart_shell())
     t0 = time.monotonic()
     while time.monotonic() - t0 < RECOVER_WAIT:
         time.sleep(0.5)
         now = evaluate()
         if not now.get("missing") and now.get("layers_ok"):
             took = time.monotonic() - t0
-            log("recovery: recovered after one fresh launch %.1f s" % took)
-            return True, "recovered after one fresh launch %.1f s" % took
+            log("recovery: recovered after one recovery restart %.1f s" % took)
+            return True, "recovered after one recovery restart %.1f s" % took
     now = evaluate()
     procs = shell_processes()
     facts = "layers background=%s bar=%s quickshell=%s" % (
         surface(now.get("bg")), surface(now.get("bar")), "unknown" if procs is None else procs)
     write_failure(facts)
-    log("recovery: the fresh launch did not bring the layers back (%s): %dx%d is left alone, "
+    log("recovery: the recovery restart did not bring the layers back (%s): %dx%d is left alone, "
         "no further actions" % (facts, key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
-    return False, "recovery launch did not bring the layers back (%s), no further actions" % facts
+    return False, "recovery restart did not bring the layers back (%s), no further actions" % facts
 
 
 def mark_exhausted(st):
@@ -712,6 +724,8 @@ def main():
             if EXHAUSTED and EXHAUSTED[0] != key:
                 EXHAUSTED[:] = []
                 exhausted_logged = False
+            if RECOVERED and RECOVERED[0] != key:
+                RECOVERED[:] = []
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
