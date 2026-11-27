@@ -58,11 +58,19 @@ class AndroidControlRequests(private val directory: File) {
             null
         }
 
-    /** Deletes [file] without following a link: the link goes, whatever it points at stays. */
-    private fun discard(file: File) {
+    /**
+     * Deletes [file] without following a link: the link goes, whatever it points at stays. The
+     * descent stops after [MAX_DEPTH] levels and the deeper entry is left in place: the guest owns
+     * that tree and can nest it far past what this stack can walk, and a StackOverflowError is an
+     * Error - it would escape every catch here and take the main thread with it.
+     */
+    private fun discard(
+        file: File,
+        depth: Int = 0,
+    ) {
         try {
-            if (Files.isDirectory(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-                file.listFiles()?.forEach { discard(it) }
+            if (depth < MAX_DEPTH && Files.isDirectory(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                file.listFiles()?.forEach { discard(it, depth + 1) }
             }
             Files.deleteIfExists(file.toPath())
         } catch (_: Exception) {
@@ -86,6 +94,9 @@ class AndroidControlRequests(private val directory: File) {
 
         /** Candidates inspected per call: a directory at the head cannot make the walk unbounded. */
         private const val MAX_WALK = 16
+
+        /** Directory levels the prune descends before it leaves a guest-made tree alone. */
+        private const val MAX_DEPTH = 4
 
         fun parse(text: String): String? = text.trim().takeIf { text.length <= 32 && it in actions }
     }

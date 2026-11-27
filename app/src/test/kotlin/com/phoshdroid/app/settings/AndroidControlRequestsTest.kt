@@ -75,4 +75,19 @@ class AndroidControlRequestsTest {
         assertFalse(blocker.exists())
         assertFalse(File(directory, "1.request").exists())
     }
+
+    @Test fun `a deeply nested directory is walked past, not walked into`() {
+        // The guest owns this tree and can nest it as deep as it likes; the prune must stop at its
+        // own depth cap instead of recursing until the stack goes.
+        val top = File(directory, "0.request").also { it.mkdirs() }
+        var leaf = top
+        repeat(12) { leaf = File(leaf, "d").also { it.mkdirs() } }
+        File(leaf, "keep").writeText("data")
+        File(directory, "1.request").writeText("wifi")
+        val mailbox = AndroidControlRequests(directory)
+        repeat(40) { assertEquals(if (it == 0) listOf("wifi") else emptyList<String>(), mailbox.take()) }
+        // Left in place below the cap: the mailbox is not wedged, and nothing overflowed.
+        assertTrue(top.exists())
+        assertEquals("data", File(leaf, "keep").readText())
+    }
 }
