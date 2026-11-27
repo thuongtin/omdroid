@@ -168,6 +168,20 @@ Items from phase 3 that phase 4 settled or narrowed:
 - `probe.sh` showing no layers 4 s after `home` did not recur: three samples at +4, +10, +20 s all PASS. Treated as a one-off sampling coincidence, not explained.
 
 ## Risks
+- **The F6 remedy wraps a script another stream has seen fail (S1, S2).** Every dock, undock and
+  size change that leaves the layers unfit restarts the shell with the stock
+  `omarchy-restart-shell` (`omarchy-watch.py` `act()`), rate-limited to 6 per minute; S1 measured
+  that running it twice from a live session leaves a black screen on both builds ("Quickshell has
+  crashed" on the candidate), and S2 measured three shells started per call. `b394174` stops the
+  amplifier: after a restart, no `omarchy-background`/`omarchy-bar` layer at all, or no Quickshell
+  process, is a FAILED restart, not a slow one — one attempt per monitor size, the failure written
+  to `~/.local/state/omdroid/shell-restart-failed`, and the desktop left for the next size change or
+  user action; retries stay for layers that exist and are merely unfit (3 per size, then `giving up`).
+  Watcher test 17 checks incl. the `crash` scenario and the `unfit` control. Not measured on the
+  device: how many Quickshell processes one restart really leaves, and whether a lost shell
+  recovers on the next size change (queued for the next tablet phase, with one `probe.sh` sample
+  60 s after a dock).
+
 
 - The request watcher and the kill path are device-only; a bug there leaves a session that cannot be ended from the menu (the notification Stop still works).
 - The `systemctl` wrapper changes what every guest script sees for the three power verbs; every other verb still reaches the real binary.

@@ -339,6 +339,13 @@ layer remedy restarts only the shell. Every size fit carries the wanted scale: a
 the start-time scale back (`monitors.lua`), and a fit that kept the reverted scale would leave the
 docked desktop at scale 2 until the next poll. A missing file, or any value other than `1` or `2`,
 changes nothing (an older host keeps the start-time scale). `OMDROID_SCALE_FOLLOW=0` in
-`~/.config/omdroid/session.env` turns the guest side off. Log lines: guest `ui-scale <a> -> <b>`,
+`~/.config/omdroid/session.env` turns the guest side off. The restart itself is the stock `omarchy-restart-shell`, called from
+`act()` with a rate limit (6 per rolling minute, 2 s apart); S1 measured that calling it twice from
+a live session can leave a black screen on both builds, so the watcher does not amplify it: after a
+restart the layers that are missing altogether, or no Quickshell process, mean the restart LOST the
+shell (`act: shell restart FAILED (...): not retrying`), which writes
+`~/.local/state/omdroid/shell-restart-failed` and ends the retry budget for that monitor size
+(one attempt; a later size change is a new attempt). Only layers that exist and do not fit yet keep
+the retry budget (3 actions per size, then `giving up`). Log lines: guest `ui-scale <a> -> <b>`,
 `monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
 display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.
