@@ -375,9 +375,30 @@ Item {
 
   ListModel { id: editModel }
 
-  // Probe once at load so the first open doesn't show every probed tile
-  // dimmed while the pass runs.
-  Component.onCompleted: refreshProbe()
+  // The pass used to run from Component.onCompleted. It is a serial `timeout 3`
+  // sweep, ~7 s on the tablet, and the whole shell paid for it at every start:
+  // the bar, dock and back strips did not map until it exited (R11 S2, measured:
+  // tile-state.sh 2.5 s -> 9.6 s, the mobile layers 9.5-9.6 s, marker 9.8 s,
+  // against 2.5 s on the desktop UI). So the last result is read from the cache
+  // tile-state.sh writes (a file read, no process) and the pass runs once the
+  // shell is up. OMDROID_QS_PROBE_AT_LOAD=1 restores probe-at-load.
+  readonly property bool probeAtLoad: Quickshell.env("OMDROID_QS_PROBE_AT_LOAD") === "1"
+  readonly property string probeCachePath: Quickshell.env("HOME") + "/.cache/omamobile/tile-state"
+
+  FileView {
+    id: probeCache
+    path: root.probeCachePath
+    printErrors: false
+    watchChanges: false
+    onLoaded: root.probed = TilesModel.parseProbe(text())
+  }
+
+  Timer {
+    id: firstProbe
+    interval: root.probeAtLoad ? 0 : 8000
+    running: true
+    onTriggered: root.refreshProbe()
+  }
 
   // ---------------------------------------------------------------- probed tiles
 
