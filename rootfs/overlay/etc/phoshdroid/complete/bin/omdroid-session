@@ -66,8 +66,8 @@ if [ -e "$req" ]; then
     exit 1
 fi
 # The host took the request. For stop, restart and shutdown the guest now ends itself the way a real
-# logout does: Hyprland exits (its own exit dispatcher; SIGTERM only when that fails, because the
-# patched build segfaults on SIGTERM and the crash lands in the session-ended screen), cage and
+# logout does: Hyprland exits (its own exit dispatcher, the orderly path; SIGTERM only when that
+# fails. Hyprland also crashes at exit now and then on either path, see r11-completeness.md), cage and
 # dbus-run-session follow, the session script ends and proot exits by itself. The fake-root broker is
 # a second proot that the host cannot reliably stop by signal (it survived SIGKILL on the device), so
 # its python program is told to end too, and proot leaves with it. Signalling proot from the app did
