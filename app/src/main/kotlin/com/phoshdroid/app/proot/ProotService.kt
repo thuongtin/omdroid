@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.os.Environment
 import androidx.core.app.NotificationCompat
 import com.phoshdroid.app.LauncherActivity
 import com.phoshdroid.app.PhoshdroidApp
@@ -19,6 +20,7 @@ import com.phoshdroid.app.launch.MemorySignals
 import com.phoshdroid.app.launch.ProcessLimits
 import com.phoshdroid.app.launch.UiScale
 import com.phoshdroid.app.settings.PhoshdroidPreferences
+import com.phoshdroid.app.storage.ShareRule
 import java.io.File
 
 /**
@@ -107,7 +109,16 @@ class ProotService : Service() {
                     minOf(width, height),
                 )
         refreshMhz = prefs.refreshMhz
-        bindSdcard = prefs.bindSdcard
+        // Android storage at ~/Phone (contract section 10): the tri-state rule decides, so an
+        // install that was granted all-files access shares by default and one that was not stays
+        // off. One log line, so a device round can read the decision.
+        val shareMode = prefs.bindSdcardMode
+        val allFiles = Environment.isExternalStorageManager()
+        bindSdcard = ShareRule.resolve(shareMode, allFiles)
+        android.util.Log.i(
+            "Phoshdroid",
+            "share: mode=$shareMode all-files=$allFiles -> bind=$bindSdcard",
+        )
         // The GPU path is decided once per session and handed to the guest as OMDROID_GPU
         // (contract section 9). One log line, so a device round can see why a path was chosen.
         val gpuPreference = prefs.gpuMode
