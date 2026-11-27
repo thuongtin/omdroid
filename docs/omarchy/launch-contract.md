@@ -324,8 +324,7 @@ systemd or `uwsm`, absent here) are mapped onto one request channel.
   path of `LaunchDecision`). `shutdown`: end the guest and remove the app's tasks and process (the X
   server lives in it). `home` (Suspend, Lock): the Android home screen comes up, the session keeps
   running; Android owns locking and sleeping. None of them retries (`SessionExit.shouldRetry` is not
-  consulted for a requested end). The guest process and the broker are given 3 s to die before they
-  are killed, off the main thread. Log lines (tag `Phoshdroid`): `session: request <ACTION>`,
+  consulted for a requested end). The guest ends itself once the host has acknowledged: `omdroid-session` calls Hyprland's exit dispatcher (`hyprctl dispatch 'hl.dsp.exit()'`; SIGTERM only when that fails, because the patched Hyprland segfaults on SIGTERM and the crash would show in the session-ended screen's log tail) and tells the fake-root broker's python program to end, and proot exits by itself. The host waits 10 s for the guest process to die, and only then signals it (SIGTERM, then SIGKILL, 3 s each): on the device a signal to the session proot did not end the guest, and the broker proot outlived SIGKILL. A request is finished exactly once, by the monitor thread or by the request thread, whichever sees the exit first. `OMDROID_SESSION_END=term` (session.env) skips the dispatcher. Log lines (tag `Phoshdroid`): `session: request <ACTION>`,
   `session: request <ACTION>: guest process ended (forced=<bool>)`, `launch: session ended by request
   <ACTION>`, `launch: restart requested by the guest`; guest `/tmp/omdroid-session.log`: time, action,
   acknowledgement delay, taken yes/no.
