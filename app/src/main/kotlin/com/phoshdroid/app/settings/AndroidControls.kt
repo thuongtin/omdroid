@@ -17,8 +17,16 @@ import android.widget.Toast
 import com.phoshdroid.app.R
 import org.json.JSONObject
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 
-/** Android owns the radios and screen. Publish facts and open its user-mediated controls. */
+/**
+ * Android owns the radios and screen. Publish facts and open its user-mediated controls.
+ *
+ * The bridge directory is the guest's `/tmp`, so the guest can write it: the snapshot is opened
+ * exclusively (a link planted at the temp name cannot redirect the write) and a directory that
+ * has itself been replaced by a link turns the bridge off instead of being written through.
+ */
 class AndroidControls(private val context: Context, prefix: File) {
     private val directory = File(prefix, "tmp/omdroid-android")
     private val requestsDirectory = File(directory, "requests")
@@ -29,7 +37,10 @@ class AndroidControls(private val context: Context, prefix: File) {
 
     fun start() {
         if (running) return
-        requestsDirectory.mkdirs()
+        if (!usableDirectory(directory) || !usableDirectory(requestsDirectory)) {
+            Log.w("AndroidControls", "Android controls: the bridge directory is a symbolic link; off")
+            return
+        }
         // Do not replay taps from a previous session.
         requestsDirectory.listFiles()?.filter { it.name.endsWith(".request") }?.forEach { it.delete() }
         running = true
@@ -98,9 +109,7 @@ class AndroidControls(private val context: Context, prefix: File) {
         }
         field("charging") { battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)?.let { it != 0 } }
         field("full") { battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1)?.let { it == BatteryManager.BATTERY_STATUS_FULL } }
-        val temporary = File(directory, "state.json.new")
-        temporary.writeText(state.toString())
-        check(temporary.renameTo(File(directory, "state.json"))) { "Could not replace Android state" }
+        check(writeSnapshot(directory, "state.json", state.toString())) { "Could not replace Android state" }
     }
 
     private fun open(action: String) {
@@ -122,4 +131,31 @@ class AndroidControls(private val context: Context, prefix: File) {
             Toast.makeText(context, R.string.android_settings_unavailable, Toast.LENGTH_SHORT).show()
         }
     }
+}
+
+/**
+ * Writes [body] to `[directory]/[name]` by temp name plus rename, opening the temp file
+ * exclusively so a link planted at that name cannot redirect the write at another file.
+ * Returns false when the rename failed.
+ */
+internal fun writeSnapshot(
+    directory: File,
+    name: String,
+    body: String,
+): Boolean {
+    val temporary = File(directory, "$name.new")
+    Files.deleteIfExists(temporary.toPath())
+    Files.newOutputStream(temporary.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        .use { it.write(body.toByteArray()) }
+    return temporary.renameTo(File(directory, name))
+}
+
+/**
+ * True when [file] is a real directory, not a symbolic link, and exists. The guest can write the
+ * bridge tree, so a link at either level would aim everything below it somewhere else; a session
+ * that finds one runs without the bridge instead of writing through it.
+ */
+internal fun usableDirectory(file: File): Boolean {
+    if (Files.isSymbolicLink(file.toPath())) return false
+    return file.isDirectory || file.mkdirs()
 }
