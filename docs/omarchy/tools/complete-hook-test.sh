@@ -24,6 +24,7 @@ mkdir -p "$HOME/.config/omarchy/extensions" "$T/bin" "$T/omarchy-bin" "$T/host" 
 # real desktop (window close, OSD, notification), and refuse to go on unless the stubs win in PATH.
 for c in omarchy-osd omarchy-hyprland-window-close-all; do printf '#!/bin/bash\n: stub\n' > "$T/stubs/$c"; chmod 755 "$T/stubs/$c"; done
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/notified"\n' "$T" > "$T/stubs/omarchy-notification-send"; chmod 755 "$T/stubs/omarchy-notification-send"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/pkill.calls"\n' "$T" > "$T/stubs/pkill"; chmod 755 "$T/stubs/pkill"
 export PATH=$T/stubs:$PATH
 for c in omarchy-osd omarchy-hyprland-window-close-all omarchy-notification-send; do
     case "$(command -v $c)" in "$T"/stubs/*) ;; *) echo "refusing to run: $c is not stubbed"; exit 2 ;; esac
@@ -112,6 +113,8 @@ bash "$D/bin/omdroid-session" lock
 check "lock is mapped to home" "[ \$(grep -c '^home ' $T/seen) = 2 ]"
 bash "$D/bin/omdroid-session" stop; bash "$D/bin/omdroid-session" restart; bash "$D/bin/omdroid-session" shutdown
 check "stop, restart and shutdown are written as such" "grep -q '^stop ' $T/seen && grep -q '^restart ' $T/seen && grep -q '^shutdown ' $T/seen"
+check "stop, restart and shutdown end the session themselves: one SIGTERM to Hyprland each" "[ \\$(grep -c -- '-TERM -x Hyprland' $T/pkill.calls) = 3 ]"
+check "home and lock never signal Hyprland" "[ \\$(grep -c . $T/pkill.calls) = 3 ]"
 bash "$D/bin/omdroid-session" nonsense 2> /dev/null; rc=$?
 check "an unknown action is refused with status 2" "[ $rc = 2 ]"
 : > "$T/seen"
@@ -124,8 +127,10 @@ touch "$T/stop-host"; wait "$HOST" 2> /dev/null
 
 # --- no host answers: the script must say so, not stay quiet
 rm -f "$OMDROID_HOST_DIR/request"
-bash "$D/bin/omdroid-session" home > /dev/null 2>&1; rc=$?
-check "no host: exit 1, a notification that names the cause, and the request file is cleaned up" "[ $rc = 1 ] && grep -q 'does not answer' $T/notified && [ ! -e $OMDROID_HOST_DIR/request ]"
+pk_before=$(grep -c . "$T/pkill.calls")
+bash "$D/bin/omdroid-session" stop > /dev/null 2>&1; rc=$?
+check "no host: exit 1, a normal-urgency notification that names the cause, and the request file is cleaned up" "[ $rc = 1 ] && grep -q -- '-u normal.*does not answer' $T/notified && [ ! -e $OMDROID_HOST_DIR/request ]"
+check "no host: the session is not ended (no extra pkill)" "[ \\$(grep -c . $T/pkill.calls) = $pk_before ]"
 
 rm -rf "$T"
 [ $fail = 0 ] && echo "all passed" || echo FAILED

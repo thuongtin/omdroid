@@ -13,6 +13,8 @@
 #             the desktop keeps running in the background
 #   lock      the same as home
 #
+# After the host takes a stop, restart or shutdown request the script ends the session itself
+# (SIGTERM to Hyprland); the host waits for that exit and only then falls back to signalling proot.
 # Never fails silently: when the host does not take the request within 4 s (an older app
 # build), a notification says so and the exit status is 1.
 action=${1:-}
@@ -30,8 +32,8 @@ log=${OMDROID_SESSION_LOG:-/tmp/omdroid-session.log}
 req=$dir/request
 mkdir -p "$dir" 2> /dev/null
 
-notify() { # $1 title, $2 body
-    omarchy-notification-send -u critical "$1" "$2" > /dev/null 2>&1 || echo "omdroid-session: $1: $2" >&2
+notify() { # $1 title, $2 body (normal urgency: a critical one is kept and shown again at every shell start)
+    omarchy-notification-send -u normal "$1" "$2" > /dev/null 2>&1 || echo "omdroid-session: $1: $2" >&2
 }
 
 if [ "$action" != home ]; then
@@ -62,5 +64,14 @@ if [ -e "$req" ]; then
     rm -f "$req"
     notify "Omdroid could not $action" "This Omdroid build does not answer session requests. Update the app."
     exit 1
+fi
+# The host took the request. For stop, restart and shutdown the guest now ends itself the way a real
+# logout does: Hyprland exits, cage and dbus-run-session follow, the session script ends, and proot
+# exits normally and takes the remaining guest processes with it. Signalling proot from the app did
+# not end the guest on the device (r11 phase 3: SIGTERM and SIGKILL, guest still running), so the host
+# only does that as a fallback after a grace period.
+if [ "$action" != home ]; then
+    echo "$(date +%T) $action ending the session: SIGTERM to Hyprland" >> "$log" 2> /dev/null
+    pkill -TERM -x Hyprland 2> /dev/null
 fi
 exit 0

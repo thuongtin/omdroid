@@ -43,6 +43,7 @@ class ProotService : Service() {
     @Volatile
     private var userRequest: SessionAction? = null
     private var requestObserver: FileObserver? = null
+    private val requestFinished = java.util.concurrent.atomic.AtomicBoolean(false)
     private var width = 0
     private var height = 0
     private var scale = 2
@@ -162,6 +163,7 @@ class ProotService : Service() {
         if (prootProcess != null) return
         stopping = false
         userRequest = null
+        requestFinished.set(false)
         // The launcher wipes <prefix>/tmp/omarchy-runtime and the stale sockets
         // before it starts the X server and this service (SessionPrep). Wiping
         // again here would run after the guest may already have started writing
@@ -238,7 +240,15 @@ class ProotService : Service() {
         }
     }
 
-    /** Ends the broker and the guest for a Logout, Restart or Shutdown, with a log line per step. */
+    /**
+     * Ends the broker and the guest for a Logout, Restart or Shutdown. Off the main thread.
+     *
+     * The guest ends itself first: `omdroid-session` sends SIGTERM to Hyprland once the request is
+     * acknowledged, and proot then exits normally. Signalling proot from here did not end the
+     * guest on the device (r11 phase 3: the process survived SIGTERM, then SIGKILL, and the exit
+     * never reached the monitor thread), so SIGTERM and SIGKILL are only the fallback, after
+     * [GUEST_EXIT_WAIT_MS]. A guest that is still alive after both is reported, never papered over.
+     */
     private fun endGuestForRequest(action: SessionAction) {
         stopBroker()
         val proc = prootProcess
@@ -246,18 +256,36 @@ class ProotService : Service() {
             android.util.Log.w("Phoshdroid", "session: request $action: no guest process to end")
             return
         }
-        proc.destroy()
-        val exited =
-            try {
-                proc.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (_: InterruptedException) {
-                false
+        var how = "by itself"
+        if (!waitDead(proc, GUEST_EXIT_WAIT_MS)) {
+            how = "after SIGTERM"
+            proc.destroy()
+            if (!waitDead(proc, GUEST_STOP_WAIT_S * 1000)) {
+                how = "after SIGKILL"
+                proc.destroyForcibly()
+                if (!waitDead(proc, GUEST_STOP_WAIT_S * 1000)) {
+                    android.util.Log.w("Phoshdroid", "session: request $action: guest process still alive after SIGKILL")
+                    return
+                }
             }
-        if (!exited) {
-            android.util.Log.w("Phoshdroid", "session: request $action: guest still alive after ${GUEST_STOP_WAIT_S}s, forcing")
-            proc.destroyForcibly()
         }
-        android.util.Log.i("Phoshdroid", "session: request $action: guest process ended (forced=${!exited})")
+        android.util.Log.i("Phoshdroid", "session: request $action: guest process ended $how")
+        // The monitor thread normally reports the exit; when it cannot (a pipe still held open),
+        // this does, once.
+        Thread.sleep(500)
+        finishRequested(action)
+    }
+
+    private fun waitDead(
+        proc: Process,
+        ms: Long,
+    ): Boolean {
+        val end = SystemClock.elapsedRealtime() + ms
+        while (proc.isAlive) {
+            if (SystemClock.elapsedRealtime() >= end) return false
+            Thread.sleep(100)
+        }
+        return true
     }
 
     /** Suspend and Lock: the Android home screen comes up, the session keeps running. */
@@ -435,6 +463,7 @@ class ProotService : Service() {
      * teardown happen on the main thread, in that order.
      */
     private fun finishRequested(action: SessionAction) {
+        if (!requestFinished.compareAndSet(false, true)) return
         Handler(Looper.getMainLooper()).post {
             if (stopping) return@post
             active = false
@@ -623,6 +652,9 @@ class ProotService : Service() {
 
         /** How long a process may take to die after SIGTERM before it is killed. */
         private const val GUEST_STOP_WAIT_S = 3L
+
+        /** How long a guest that was asked to end itself may take before the host signals proot. */
+        private const val GUEST_EXIT_WAIT_MS = 10_000L
 
         // True from the moment a session is requested until it is stopped, the
         // guest exits for good or the service dies. The launcher's readiness
