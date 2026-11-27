@@ -14,6 +14,8 @@
 #                              script that opens a terminal through it fails)
 #   OMDROID_COMPLETE_EDITOR=0  keep Omarchy default editor (nvim, which the image lacks)
 #   OMDROID_COMPLETE_BANNERS=0 keep Hyprland start-up warning banners
+#   OMDROID_COMPLETE_CLIPBOARD=0  no clipboard bridge between the guest Wayland
+#                              clipboard and the X display Android talks to
 # Every change is key-level and reversible; the state lives in ~/.local/state/omdroid/complete.
 D=${OMDROID_COMPLETE_DIR:-/etc/phoshdroid/complete}
 BIN=${OMDROID_COMPLETE_BIN:-/usr/local/bin}
@@ -32,7 +34,8 @@ menu=${OMDROID_COMPLETE_MENU:-1}
 terminal=${OMDROID_COMPLETE_TERMINAL:-1}
 editor=${OMDROID_COMPLETE_EDITOR:-1}
 banners=${OMDROID_COMPLETE_BANNERS:-1}
-[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; }
+clipboard=${OMDROID_COMPLETE_CLIPBOARD:-1}
+[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; clipboard=0; }
 
 # --- power and session entries -------------------------------------------------
 # The omarchy-* names are links in /usr/local/bin to /usr/share/omarchy/bin (set at image
@@ -126,4 +129,46 @@ if [ "$banners" != 0 ]; then
 else
     python3 "$D/omdroid-hypr-block.py" remove 2>&1 | tee -a "$LOG"
 fi
+# --- clipboard bridge ---------------------------------------------------------------
+# Under cage the Wayland clipboard and the X display Termux:X11 serves are separate
+# worlds: wl-copy then wl-paste works inside Hyprland, while an X client on :0 reads
+# CLIPBOARD owner=0x0. Android only ever talks to the X side (Xlorie forwards the X
+# selection owner's text to Android, and takes the selection itself when Android
+# copies), so without this nothing reaches Android in either direction.
+# omdroid-clipboard.py owns CLIPBOARD on :0 for text copied in the guest and copies
+# back whatever someone else puts there. Text only, 1 MiB cap, no images.
+cb_pid=$STATE/clipboard.pid
+cb_cmd=${OMDROID_COMPLETE_CLIPBOARD_CMD:-$D/omdroid-clipboard.py}
+stop_bridge() {
+    if [ -f "$cb_pid" ]; then
+        old=$(cat "$cb_pid" 2> /dev/null)
+        # The pid could have been reused since the file was written, so the command
+        # line must still name this bridge before anything is signalled.
+        if [ -n "$old" ] && tr '\0' ' ' < "/proc/$old/cmdline" 2> /dev/null | grep -qF "$cb_cmd"; then
+            kill "$old" 2> /dev/null
+        fi
+        rm -f "$cb_pid"
+    fi
+    # Backstop for an instance left without a pid file. Only a python interpreter
+    # whose second argument is this very script counts: a looser match also hits
+    # any wrapper (proot, bash -c) whose command line merely carries the text, and
+    # that kills the caller.
+    for p in /proc/[0-9]*; do
+        pid=${p#/proc/}
+        [ "$pid" = "$$" ] && continue
+        set -- $(tr '\0' '\n' < "$p/cmdline" 2> /dev/null)
+        case "${1##*/}" in python3*) ;; *) continue ;; esac
+        case "${2:-}" in */omdroid-clipboard.py) kill "$pid" 2> /dev/null ;; esac
+    done
+}
+if [ "$clipboard" != 0 ]; then
+    stop_bridge
+    nohup "$cb_cmd" >> "$LOG" 2>&1 < /dev/null &
+    echo $! > "$cb_pid"
+    say "clipboard: bridge started (pid $(cat "$cb_pid"))"
+else
+    stop_bridge
+    say "clipboard: bridge off (switch)"
+fi
+
 exit 0

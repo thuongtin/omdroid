@@ -92,6 +92,9 @@ Host gates: `:app:test` 193/0 at `d69b2d4` (the later commits change the service
 
 ## 5. Clipboard: the measured gap and the design
 
+**Built in R12**: `r12-clipboard.md` carries the implementation and the device measurements. What
+follows is the R11 measurement and design, kept as the record of the gap.
+
 **Measured** (phase 3 D, `28039e9`): `printf r11-clip | wl-copy` then `wl-paste` in the session returns `r11-clip`, while a small Xlib client on `DISPLAY=:0` reads `CLIPBOARD owner=0x0` and `PRIMARY owner=0x0` before and after. So the Wayland clipboard inside Hyprland is a closed world.
 
 **Read, Termux:X11 side** (`termux-x11/app/src/main/cpp/lorie/clipboard.c`): Xlorie is the one that talks to Android. When any X client takes the CLIPBOARD selection (`SelectionSetOwner` callback, `lorieSelectionCallback`) it asks that client for TARGETS and the text and sends it to Android; when Android copies, Xlorie takes CLIPBOARD ownership itself and answers `ConvertSelection` requests (`lorieProcConvertSelection`). The preference `clipboardEnable` defaults to true (`preferences.xml:55`). So the Android half already exists; only the guest has no X client that owns or reads the selection. Under cage's x11 backend nothing turns a Wayland data offer into an X selection (consistent with the measurement; I did not read wlroots).

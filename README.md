@@ -159,7 +159,7 @@ wrote. Under proot the switcher's cards are the app's icon and window title rath
 window copies, because a live copy needs a dmabuf version Hyprland does not offer here. Quick
 settings is honest about hardware the guest lacks: Wi-Fi, Bluetooth, mobile data, torch,
 fingerprint and the brightness slider are dimmed with their reason, while volume, Do Not
-Disturb, dark theme, clipboard, screenshot, rotation and stay-awake work.
+Disturb, dark theme, clipboard (text), screenshot, rotation and stay-awake work.
 
 <img src="docs/screenshots/mobile-desktop.jpg" width="800" alt="The mobile UI's home screen on the tablet: the 44 px bar with a clock and a Wi-Fi-off icon, the wallpaper, and the Search apps dock above Android's extra-key bar">
 <img src="docs/screenshots/mobile-quicksettings.jpg" width="800" alt="The expanded quick-settings sheet: three columns of tiles on page one, every missing backend dimmed with its reason, and the notification shade">
