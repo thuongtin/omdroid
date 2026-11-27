@@ -16,7 +16,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
-| V6 | Session end and the error screen (H10-H15) | PENDING | |
+| V6 | Session end and the error screen (H10-H15) | FAIL (phase 3; counter-check queued as phase 7) | the service side works (`session ended exit=0 ui=shown`, exit 7 reported), but the screen that should follow is blank or stuck on "Starting desktop...", Android raised `Omdroid isn't responding` (ANR trace written 5.0 s after the session ended), no Start button was ever visible, and a launcher tap 90 s later did not bring the desktop back; V6.2 did not run (see "V6") |
 | V7 | Pinch and three-finger touch | PENDING | |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
 
@@ -182,6 +182,35 @@ Typed into a foot shell with `adb shell input text` and `input keycombination`; 
 
 Not run (not asked): R6 steps 8-10 (ownership of a `sudo touch`, the broker log, killing the broker). The yay path was R6b's.
 Observation, not a failure: every pacman transaction on the fresh guest prints `warning: directory permissions differ on /usr/ filesystem: 700 package: 755` (also `/usr/bin/`, `/usr/share/`, `/usr/share/licenses/`): directories extracted by the app come out 0700. It is harmless to these transactions; it is the extractor's mode handling, not this stream's to change, so it is a note for the parent.
+
+### V6, session end and the error screen (phase 3, 02:25-02:32 UTC; **measured**, screenshots **viewed**)
+
+**Verdict: FAIL on the screen, PASS on the service.** Three ways to end a session, each from a cold start
+(app pid 15773, then 17766 after a force-stop):
+
+| Case | What the host did (logcat, tag `Phoshdroid` / `ProotService`) | What the screen did (viewed) |
+| --- | --- | --- |
+| V6.1 clean end: `hl.dsp.exit()` in the session | `ProotService: proot exited (0)`, `launch: session ended exit=0 ui=shown` at 02:26:09.9. **No `launch: ended-screen` line followed.** | Launcher activity on top 1 s later, but the screenshot (02:26:14) is a **blank dark screen**: no text, no button. uiautomator returned an empty dump (0 bytes). |
+| V6.1 recovery: launcher icon (`am start`) | nothing logged for 90 s | still the launcher activity, `probe.sh` says `no compositor window on the X root (cage is not running)`, `Hyprland: NO-IPC`: the desktop never came back |
+| V6.2 Hyprland killed 35 s in | **did not run**: the session was already gone, so `pkill` hit nothing | the app was already wedged; its screenshot shows Android's **"Omdroid isn't responding"** dialog (Wait / OK) |
+| V6.3 session dies at launch (`session.env`: `exit 7`), after a force-stop | `proot exited (7)`, `proot retry exited (7)` (one retry inside the 30 s window, as `SessionExit` says), `launch: session ended exit=7 ui=shown`, `launch: ended-screen exit=7 665ms` | 4 s later the screen shows the logo, "Omdroid" and **"Starting desktop..."**: not the error text, not the log tail, no Start button. uiautomator again 0 bytes. |
+| V6.3 recovery after putting `session.env` back | tap path as above | still the "Starting desktop..." splash after 90 s, no desktop |
+
+- **The ANR is the strongest fact.** `dumpsys activity exit-info` lists for pid 15773 (the V6 process) a trace
+  `anr_2026-11-27_02-26-14-976.gz`: 5.0 s after the session ended at 02:26:09.9 (the 5 s input-dispatch limit).
+  `/data/anr/anr_2026-11-27_02-26-14-976` exists (2.2 MB) but the shell cannot read it. So the app's
+  main thread stopped serving input from the moment the session ended and never recovered, and that is why there
+  is no `ended-screen` line (it is logged on the main thread, in `onNewIntent`) and no Start button.
+- **Not claimed:** the cause. The main thread is blocked somewhere between `ProotService.finishSession`
+  (`startActivity` of the launcher with `session_ended`) and `LauncherActivity.onNewIntent` →
+  `showSessionEnded` (`LauncherActivity.kt:923`), or the X display activity's teardown (the in-process X server
+  loses its only client at that moment). I did not stop at a guess: phase 7 repeats all three cases without touching
+  the screen first and captures the main thread's `/proc` state and every thread's Java stack through JDWP.
+- **Harness caveat, stated against myself:** phase 3 took a screenshot and a uiautomator dump within 5 s of the
+  end. Neither sends input, but the ANR timing alone cannot rule out that the dump contributed. Phase 7 reads
+  `/proc` and the log only for the first 8 s and touches the screen last. If the ANR appears there too, it is the product.
+- The H11 unit-tested parts hold on the device: the service clears `active`, reports the exit code, drops the notification
+  and retries once only inside 30 s. What the unit tests could not see is the Android side, which is what failed.
 
 ## V8, the owner-only checklist (do NOT attempt from an agent)
 
