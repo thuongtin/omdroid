@@ -286,3 +286,46 @@ source=auto`. Guest: the `gpu:` lines above in `/tmp/omarchy-session.log`.
 **Not shipped.** virgl (the image has no `virpipe` driver and there is no host-side virgl server) and
 ANGLE on the host are not options, and neither is a Mali, Xclipse or PowerVR hardware path: those
 drivers need a DRM render node the app sandbox does not expose.
+
+## 10. Shared storage (host <-> guest)
+
+Two directions, one switch.
+
+**Android -> Omarchy (`~/Phone`).** With sharing on, the host binds `/sdcard` at
+`/home/omarchy/Phone` and at `/sdcard` and exports `OMARCHY_SHARE=storage`; with it off, neither bind
+is added and the variable is unset. Guest scripts key on `OMARCHY_SHARE` alone, never on whether
+`~/Phone` happens to exist: with it set, `/etc/phoshdroid/share/session-start.sh` adds one Nautilus
+bookmark (`file:///home/omarchy/Phone`, label `Omdroid Phone`, in `~/.config/gtk-3.0/bookmarks` - the
+file GTK3 and GTK4 both read) and records it under `~/.local/state/omdroid/share/`; without it, the
+same hook removes that line only while it still equals the recorded text. A line the user edited is
+left alone and logged.
+
+**The default is `auto`** (preference `bind_sdcard_mode`): sharing is on exactly when the app holds
+`MANAGE_EXTERNAL_STORAGE`. A fresh install starts off - `~/Phone` does not exist - and the one grant
+that makes sharing useful also turns it on, with no second setting to find. `on` and `off` are the
+explicit overrides; the old boolean `bind_sdcard` is folded into the tri-state on first read. Host log
+line: `share: mode=<mode> all-files=<bool> -> bind=<bool>` (logcat tag `Phoshdroid`).
+
+Measured on the tablet (R10 integration APK, both arms in the same minute): with the bind on,
+`/home/omarchy/Phone` is the phone's storage, 35 top-level entries; a file written from the guest
+lands as uid 10298 (the app's own uid), group 1023 (`media_rw`), mode 0660, directories 2770; a cold
+start costs nothing measurable (10.3 s off, 10.6-11.2 s on). With the bind off `~/Phone` does not
+exist at all. A picture written from the guest is NOT in Android's media store until something scans
+it (`MEDIA_SCANNER_SCAN_FILE`), so gallery apps do not see it by themselves.
+
+**Omarchy -> Android (a DocumentsProvider).** `com.phoshdroid.app.storage.OmdroidDocumentsProvider`,
+authority `com.phoshdroid.app.documents`: one root, "Omdroid", whose documents are the files under
+the guest's `/home/omarchy`. It is independent of `OMARCHY_SHARE` - it serves the guest home, not
+`/sdcard`. Path rules, all in `GuestTree`:
+- document ids are `root` and `doc:<path relative to the home>`; anything else is refused;
+- `..` is refused anywhere, in a request and in a link target; an absolute id is refused;
+- a symlink is resolved in GUEST space: an absolute target is rebased on the guest rootfs, a
+  relative one on the link's own directory, at most 16 hops;
+- a path that resolves outside `/home/omarchy` is refused;
+- nothing is served while `<rootfs>/.extraction_complete` is absent.
+
+Read, write, create, delete and rename are supported; MIME types come from the file extension. The
+manifest declaration follows the platform's custom-provider page
+(`developer.android.com/guide/topics/providers/create-document-provider`): `exported="true"`,
+`grantUriPermissions="true"`, `android:permission="android.permission.MANAGE_DOCUMENTS"` and the
+`android.content.action.DOCUMENTS_PROVIDER` intent filter.

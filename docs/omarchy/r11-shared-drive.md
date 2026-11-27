@@ -1,0 +1,124 @@
+# R11 S3: a shared drive between Android and Omarchy
+
+Branch `r11/shared-drive`, worktree `proot-post-r11-share`, base `90d7494`.
+Brief: the round-11 share stream brief (kept with the round's scratch notes, not in the repo).
+
+Evidence labels: **measured** (command given), **read** (file:line or URL), **estimated**.
+
+## Status
+
+| Step | State | Proof |
+| --- | --- | --- |
+| 1. Today's path on the device (`bind_sdcard`, `~/Phone`, both directions, time, media store) | PASS | Phase 1, both arms in the same minute. Bind off: `/home/omarchy/Phone` does **not exist** (the brief said "empty directory" - it is absent). Bind on: 35 top-level entries, guest writes land as uid 10298/group 1023 mode 0660 (dirs 2770), both directions work, cold start 10.3 s off vs 10.6-11.2 s on, a guest-written picture is **not** in the media store until `MEDIA_SCANNER_SCAN_FILE`. `<scratch>/share/phase1/step1.txt` |
+| 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). `auto` follows the `MANAGE_EXTERNAL_STORAGE` grant; `on`/`off` override; the old boolean folds in. Device arms 1-3 in phase 2 |
+| 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device proof in phase 2 |
+| 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page |
+| 5. Device proof of the provider (`content query`, read, write, Files app) | PENDING | phase 2 |
+| 6. `launch-contract.md` storage section | PASS | `docs/omarchy/launch-contract.md` section 10 |
+
+## What changed
+
+**Step 2 - the default (host).**
+- `app/src/main/kotlin/com/phoshdroid/app/storage/ShareRule.kt:23` - the tri-state (`auto`/`on`/`off`),
+  `resolve(mode, allFilesGranted)` at `:37`, the legacy boolean fold at `:49`.
+- `settings/PhoshdroidPreferences.kt:63` - `bindSdcardMode` reads `bind_sdcard_mode`, folds a stored
+  `bind_sdcard` in once, and removes the old key on the next write.
+- `proot/ProotService.kt:110` - the session start resolves the rule with
+  `Environment.isExternalStorageManager()` and logs one line (`share: mode=.. all-files=.. -> bind=..`).
+- `SettingsFragment.kt:31` - a `ListPreference` with a live summary (`storageSummary`, `:42`) and the
+  all-files request kept on this screen only, never on the launch path (R2 rule).
+- `res/xml/preferences.xml:31`, `res/values/strings.xml:56` (`<!-- r11 share -->` block).
+
+**Step 3 - the guest side.**
+- `rootfs/overlay/etc/phoshdroid/share/session-start.sh` - one Nautilus bookmark for `~/Phone`
+  (`~/.config/gtk-3.0/bookmarks`, the file GTK3 and GTK4 both read), keyed on `OMARCHY_SHARE`;
+  idempotent, records what it added in `~/.local/state/omdroid/share/bookmark.line`, and removes the
+  line only while it still equals the recorded text. Supports `OMDROID_ROOT` for a host dry run.
+  `share/**` is already in `syncGuestOverlay` (`app/build.gradle.kts:87`) and in the packager, so no
+  list edit.
+
+**Step 4 - the provider.**
+- `storage/GuestTree.kt` - document id to host file, resolving symlinks in GUEST space (absolute target
+  rebased on the guest rootfs, relative on the link's directory, 16 hops), `..` refused, containment
+  in `/home/omarchy`, nothing before `.extraction_complete`.
+- `storage/OmdroidDocumentsProvider.kt` - authority `com.phoshdroid.app.documents`, one root
+  "Omdroid", ids `root` / `doc:<path>`; read, write, create, delete (no symlink following),
+  rename, MIME from the extension, one `documents:` log line per call.
+- `AndroidManifest.xml:57` - the `<provider>` exactly as the platform documents it for a custom
+  provider: `exported="true"`, `grantUriPermissions="true"`,
+  `android:permission="android.permission.MANAGE_DOCUMENTS"`, intent filter
+  `android.content.action.DOCUMENTS_PROVIDER`
+  (read: developer.android.com/guide/topics/providers/create-document-provider).
+
+**Step 6.** `docs/omarchy/launch-contract.md` section 10: the binds, `OMARCHY_SHARE`, the default
+rule, the measured numbers, the provider's authority and every path rule.
+
+## Host proof
+
+- `:app:testDebugUnitTest --tests 'com.phoshdroid.app.storage.*'` - BUILD SUCCESSFUL (14 tests:
+  `ShareRuleTest` 5, `GuestTreeTest` 9). `GuestTreeTest` covers: plain path, root, `..` and absolute
+  ids, a guest absolute symlink, a relative symlink, links that leave the home (`/etc/passwd`,
+  `../../etc/passwd`), a symlink loop (hop cap), the un-extracted guest, and listing order.
+- `bash -n` on `share/session-start.sh` and `phase1.sh`/`phase2.sh`.
+- The bookmark hook's dry run (`OMDROID_ROOT=<scratch tree>`): add -> one line; second run ->
+  "already present", still one line; a user line survives a removal; a user-edited label is logged
+  and left; `off` with no bookmarks file exits 0.
+- Build: `docs/omarchy/tools/build-chain.sh --no-repack` (assemble + `:app:test`) under the gradle
+  lock; the APK was copied out of `app/build/` at once. The chain prints
+  `IMAGE!=REPO start.sh` - expected with `--no-repack`: the reflinked image predates the base
+  commit's `start.sh`, and `GuestOverlay` re-syncs `etc/phoshdroid/**` from the APK on every cold
+  start, so the guest runs the repo copy.
+
+## Device proof
+
+**Step 1** (R10 integration APK, `<scratch>/share/phase1/step1.txt`, same minute, arms alternating):
+
+| Fact | Off | On |
+| --- | --- | --- |
+| `/home/omarchy/Phone` | absent (`ls` answers "No such file or directory") | the phone's storage, 35 top-level entries, `/sdcard` the same tree |
+| guest -> Android | n/a | `~/Phone/omdroid-guest-write.txt` created, `adb shell cat /sdcard/...` reads it back |
+| Android -> guest | n/a | a file created on `/sdcard/Download` appears in the guest listing at `~/Phone/Download` (mode 0660); that arm wrote 0 bytes (the `run-as` + `sh -c` quoting broke `printf`), so the content proof for this direction is the guest->Android row and step 5 |
+| ownership | n/a | guest-created files: uid 10298 (the app's uid), gid 1023 `media_rw`, mode 0660; dirs 2770; guest umask 0077 |
+| cold start to desktop | 10.3 s | 10.6 s and 11.2 s |
+| media store | n/a | a PNG written from the guest is absent from `content://media/external/images/media` until `MEDIA_SCANNER_SCAN_FILE` (then `Row: 13446 omdroid-media-test.png`) |
+
+Two things the round found that the brief did not know:
+- **`~/Phone` is absent when sharing is off, not empty.** A guest script cannot use "the directory
+  exists" as the signal; `OMARCHY_SHARE` is the only signal, which is what the hook reads.
+- **`run-as <pkg> cat /sdcard/Download/<file written by the guest>` answers `Permission denied`**
+  while `adb shell cat` on the same path reads it. The app's own uid created the file through the
+  proot bind, so this is the FUSE/MediaStore permission model, not file modes. It is a second reason
+  the provider serves the app-private guest home instead of `/sdcard`.
+
+**Steps 2-5:** see the phase 2 section below (appended when it ran).
+
+## Switches
+
+- `bind_sdcard_mode` = `auto` | `on` | `off` (Settings -> Storage -> Share Android storage). `auto`
+  (the default) is on exactly while the app holds all-files access. No rebuild needed to flip it.
+- `OMARCHY_SHARE=storage` in the guest env is the guest-side signal; unset it (or set the mode to
+  `off`) and the bookmark hook removes its line. `~/.config/omdroid/session.env` can override it for
+  a manual session.
+- The provider is always registered; it serves nothing before the guest is extracted.
+
+## Risks
+
+- The provider is reachable only through the system picker (`MANAGE_DOCUMENTS`), which is the
+  documented model, but it also means `adb shell content query` cannot read it (the platform answers
+  `requires that you obtain access using ACTION_OPEN_DOCUMENT`). Device proof therefore goes through
+  DocumentsUI and the provider's own log lines, not through `content`.
+- `deleteDocument` deletes a directory tree recursively, never following a symlink. A mis-tap in the
+  Files app on a big folder is a real delete; there is no trash.
+- Guest writes are not media-scanned, so a picture saved from Omarchy is invisible to Android's
+  gallery until something scans it (step 1, measured).
+- The provider is independent of the share mode: turning storage sharing off does not hide the guest
+  home from the picker.
+- No thumbnails (`FLAG_SUPPORTS_THUMBNAIL` is not set) and no search provider.
+
+## Not done
+
+- Reading and writing a document through `adb shell content` (blocked by the platform permission
+  model, not by this code); the phase uses DocumentsUI, which holds that permission.
+- A thumbnail/`queryRecentDocuments`/`querySearchDocuments` surface.
+- The guest-side file manager is Nautilus 50.3 + gvfs (read: image member list); if a future image
+  ships a different file manager, the bookmark path is the thing to re-check.
