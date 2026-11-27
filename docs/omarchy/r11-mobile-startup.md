@@ -20,7 +20,7 @@ inside quickshell's own start-up window and needs a profiler; that is this strea
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
 | 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | FAIL (target) | APK `cc12c0e3…` from `3ae27b9`, installed sha proven; mobile desktop-PASS 6.3 / 6.6 / 11.3 / 11.7 s against desktop 4.0 / 3.0 / 2.5 s — target not met, and the mobile spread (~5 s) is larger than the change; gestures: bar tap, sheet close, dock swipe-up and app open PASS, three items blocked by the switcher not closing |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
-| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PENDING | commit `9f407c8`; phase 6: A = `OMDROID_DRAWER_MAPPED=1` control (buffers present), B = lazy (absent), C = tap → layer ms against the sheet as positive control, D = the gestures |
+| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PENDING | commit `9f407c8`, APK `5fdc257b…` installed with the sha proven. Phase 6 lost its memory and latency numbers to two script bugs (a shell function run under `timeout`; a bad tuple unpack) and its gesture rows to a sheet the latency control left open, but its one same-build A/B is the first direct evidence for the start-up limiter: ready marker **13.7 s with `OMDROID_DRAWER_MAPPED=1`, 3.7 s with the drawer unmapped**. Phase 7 re-runs it 5×2 alternating with both measurements fixed |
 
 ## What changed
 
@@ -115,6 +115,20 @@ a cold-cache effect.
   desktop 4.0, 3.0, 2.5 s. The run-to-run spread on mobile (~5 s) is larger than the change
   measured, so this round cannot claim a start-up win; it can claim the mechanism change (a 7 s
   serial fork storm and three restart loops gone from the boot path).
+
+### Phase 6 — partial (two instrument bugs, recorded so they are not repeated)
+
+- `timeout 120 adb_ shell …` cannot work: `adb_` is a shell function, so `timeout` answers
+  `failed to run command 'adb_'` and every smaps capture came back as one line. Run the function
+  directly; `timeout` only wraps external commands.
+- The latency post-processor unpacked three values from a two-field tap file; it raised
+  `ValueError: not enough values to unpack` and wrote no latency at all.
+- Its gesture rows ran with the quick-settings sheet still open (the latency control's `KEYCODE_BACK`
+  does not close a layer-shell panel), so the dock tap landed on the sheet. The gesture matrix is
+  re-run from a clean state in phase 8.
+- What survived: the same-build A/B on the ready marker (13.7 s mapped vs 3.7 s unmapped, n=1) and
+  the confirmation that both arms ran the setting they were given (`drawer mapped` / `drawer
+  unmapped` read from the live layer list 6 s after the start).
 
 ### Gestures, mobile arm of phase 3 (direct touch, quick swipes, `<adb serial>`)
 
