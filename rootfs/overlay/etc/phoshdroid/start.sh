@@ -167,6 +167,9 @@ rm -f "$XDG_RUNTIME_DIR/omarchy-ready"
 session_env="$HOME/.config/omdroid/session.env"
 export MALLOC_ARENA_MAX=2
 export MESA_SHADER_CACHE_MAX_SIZE=128M
+# Ring of the nested output: two buffers, one 25 MB frame less in the session.
+# AQ_WAYLAND_SWAPCHAIN=3 in session.env restores Hyprland three-buffer ring.
+export AQ_WAYLAND_SWAPCHAIN=2
 if [ -f "$session_env" ]; then
     set -a
     . "$session_env"
