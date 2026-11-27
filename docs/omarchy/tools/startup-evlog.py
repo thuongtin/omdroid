@@ -57,7 +57,10 @@ def rebase():
 
 
 def log(msg):
-    fh.write("%7.2f %s %s\n" % (time.monotonic() - T0, time.strftime("%H:%M:%S"), msg))
+    now = time.time()
+    stamp = time.strftime("%H:%M:%S", time.localtime(now)) + ".%03d" % int((now % 1) * 1000)
+    fh.write("%7.2f %s %d.%03d %s\n"
+             % (time.monotonic() - T0, stamp, int(now), int((now % 1) * 1000), msg))
 
 
 log("start pid=%d seconds=%g" % (os.getpid(), SECONDS))
