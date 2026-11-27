@@ -219,6 +219,8 @@ class AndroidControls(
     /** Takes at most one request per event: the mailbox is where the rate limit lives. */
     private fun takeRequest() {
         if (!running) return
+        // Same rule as the write side: a directory swapped for a link is not followed.
+        if (!usableDirectory(requestsDirectory)) return
         val action = requests.take().firstOrNull() ?: return
         openOnce(action)
     }
@@ -246,6 +248,9 @@ class AndroidControls(
     }
 
     private fun publishNow() {
+        // The check `start()` makes is not enough on its own: the guest can replace the directory
+        // with a link while the session runs, so every write re-checks it (one lstat).
+        if (!usableDirectory(directory)) return
         val now = System.currentTimeMillis()
         if (!state.observe(read(), now)) return
         if (!writeSnapshot(directory, "state.json", state.json(now))) {
