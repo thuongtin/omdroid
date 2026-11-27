@@ -229,10 +229,11 @@ class ProotService : Service() {
     private fun stopBroker() {
         val process = brokerProcess ?: return
         brokerProcess = null
-        ProcessStop.stopAsync("BrokerStop", JavaProcessStoppable(process), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+        val stoppable = JavaProcessStoppable(process)
+        ProcessStop.stopAsync("BrokerStop", stoppable, GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
             when (it) {
                 StopOutcome.SURVIVED ->
-                    android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL")
+                    android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL: ${stoppable.survivorStatus()}")
                 else -> android.util.Log.i("ProotService", "session: root-broker stopped ($it)")
             }
         }
