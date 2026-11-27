@@ -177,9 +177,26 @@ Device, 2 docks and 2 undocks in the order dock, undock, dock, undock, `probe.sh
 | undock 2 | FAIL 0/10/30/60 s, black (9.7 KB) | FAIL 0/10/30/60 s, black (9.7 KB), marker `2026-11-27 11:14:36` |
 
 - **The fresh launch does not revive a lost shell: 4 attempts, 0 recoveries.** Every one logged `recovery: one fresh shell launch after the failed restart (omarchy-launch-shell rc=0)` and then `layers background=none bar=none quickshell=0`. The stock restart does revive it, three times, in 0.1 s (phase 11 undock 1, phase 12 dock 2, and every clean dock). Cause not proven; the likely difference is that the restart kills the old instance first (`while timeout 5 quickshell kill -p $CONFIG_DIR --any-display`) and dispatches the launch from Hyprland (`hl.dsp.exec_cmd`), while a bare `omarchy-launch-shell` is a watcher child whose backgrounded `quickshell -n` may refuse against a stale instance.
-- **Product consequence of the rule as shipped:** an undock leaves a black desktop, measured 2/2 on `00354fd`, until the next dock/size change (a dock recovers it) or an app restart. Before the guard, the undock's extra restart recovered it (0.1 s).
+- **The rule as first shipped (`00354fd`) left every undock black, measured 2/2**, until the next dock. The parent amended it on this data: the recovery is one more `omarchy-restart-shell`, never a fresh launch (below).
 - **The three-shell reading was a `pgrep -f` artefact; the `comm` census is exact.** `pgrep -c -f 'quickshell .*-p '` reads 4 on this guest — the shell, the `gx.sh` proot wrapper and the probe's own `bash -c`, the last two only because the pattern text is in their command lines. Counting `/proc/*/comm == quickshell`: 1 at rest, 0 at the instant a restart reports settled (the old shell is gone), 1 again within 5 s, never more than 1 in any of 12 samples.
 - **Notifications:** 0 files carry the text "Omdroid" (the two phase-2 toasts are gone); history holds 6 files, all S5's "R11 V2 redo toast 1/2/3" in two rounds, and the bar's indicator is fed by those.
+
+### Phase 13 results: the recovery restart (device, 11:18-11:26, build `8b90f8f` = `d2d0f822`, **measured**)
+
+Amended policy, implemented in `8b90f8f`: after the guard records FAILED and writes the marker, wait 2 s, run exactly ONE more `omarchy-restart-shell`; poll layers and the `comm` census for 10 s; success logs `recovered after one recovery restart` and gives that size a clean merely-unfit budget, failure rewrites the marker and exhausts the size for good. Budget: the failing attempt plus one recovery per size, never a third; a second episode at a size whose recovery is spent goes straight to exhausted. The code comment carries the reason (a bare launch cannot revive it: 0 of 4 measured; the kill half is what the restart adds). Harness: 19 checks, 0 failed (`crash` 2 restarts then clean budget; `crash2` 2 restarts total, marker, exhausted, no third; `crash3` two sizes, 2 restarts each; `unfit` control still 3 actions, no recovery).
+
+Device, 2 docks and 2 undocks in the order dock, undock, dock, undock, `probe.sh` at 0/10/30/60 s, `comm` census at 0 and 60 s:
+
+| Event | Probe 0 / 10 / 30 / 60 s | Census +0 / +60 s | Watch log |
+| --- | --- | --- | --- |
+| dock 1 | PASS / PASS / PASS / PASS | 1 / 1 | clean `omarchy-restart-shell rc=0`, `layers fit again 0.0 s` |
+| undock 1 | FAIL / FAIL / FAIL (bar only) / **PASS** | 1 / 1 | `omarchy-restart-shell rc=1`, `shell restart FAILED (…)`, then `recovery: one recovery restart (rc=0)`, `recovered after one recovery restart 0.5 s` (11:22:11) |
+| dock 2 | PASS / PASS / PASS / PASS | 1 / 1 | clean restart |
+| undock 2 | FAIL / FAIL / **PASS** / PASS | 1 / 1 | `rc=0` first restart (shell died anyway), `recovery … rc=0`, `recovered … 0.5 s` (11:24:50) |
+
+- **Both undocks came back**, which is what the amendment was for: undock 1 by +60 s, undock 2 by +30 s, each through one recovery restart that brought the layers back in 0.5 s. No `left alone` line in the whole phase, no ANR, one Quickshell process at every census point.
+- **The failing call is still never retried as a retry:** each FAILED is followed by exactly one recovery restart, and `attempt 2/3` never appears.
+- **Root cause of the lost shell: UNKNOWN.** Hypothesis, consistent with every measurement so far: the first restart races the monitor reconfiguration (it runs in the same pass as the `hl.monitor` rule, `GDK_SCALE` and the config reload, and its `quickshell kill` loop then launches into a compositor that is still resizing or reloading). The recovery restart, 2 s plus one kill loop later, finds the configuration settled — evidence: it brought the layers back in 0.5 s on every attempt it was allowed (3 of 3 recoveries here, and the dock restarts that revived a dead shell in phases 12 and 13). Not proven: no stack, no crash log read from Quickshell, and the one `rc=1` first restart versus one `rc=0` first restart that still lost the shell are both observed.
 
 ## Device proof
 
@@ -222,7 +239,7 @@ Items from phase 3 that phase 4 settled or narrowed:
 
 - Capture, nightlight, brightness, Wi-Fi and Bluetooth rows are not fixed or hidden (1.2 rows 6-9).
 - Clipboard bridge (step 5): measured and designed, not built.
-- The recovery after a lost shell is measured not to work as a bare launch (section "Phase 11/12"): it needs a kill first. Decision with the parent: kill+launch, or one `omarchy-restart-shell` as the single recovery.
+- The lost-shell root cause is UNKNOWN (section "Phase 13"): hypothesis is the first restart racing the monitor reconfiguration; the recovery restart, later, recovers in 0.5 s. A stack from a crashed Quickshell at that moment would settle it.
 - The Hyprland exit crash (exit 139) is not settled: needs 10 exits per arm, default against `OMDROID_COMPLETE_BANNERS=0`, on one build. Until then the banner block ships on, because the two start-up warnings it removes appear in every session.
 - No main-thread Java stack of the R10 hang: S5's JDWP capture hung the tablet lock and was stopped; the cause is read from the source and the wchan samples.
 - `:app:lintDebug` was not run (CI runs it).
