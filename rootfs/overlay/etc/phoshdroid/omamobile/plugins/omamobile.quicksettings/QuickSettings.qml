@@ -237,8 +237,9 @@ Item {
     for (var i = 0; i < TilesModel.CATALOG.length; i++) {
       var id = TilesModel.CATALOG[i].id
       var b = backends[id]
+      // An unknown reading is reported as null, not as false: false says the radio is off.
       out.push({ id: id, shown: TilesModel.indexOf(layout, id) >= 0, available: !!b && b.available,
-                 enabled: !!b && b.enabled, status: b ? b.status : "" })
+                 enabled: b && b.enabled !== undefined ? b.enabled : null, status: b ? b.status : "" })
     }
     return JSON.stringify(out)
   }
@@ -485,8 +486,10 @@ Item {
   QtObject {
     id: airplane
     readonly property bool available: android.hosted || root.probedHas("airplane")
-    readonly property bool enabled: android.hosted ? android.value("airplaneMode") === true : available && root.probedOn("airplane", "airplane")
-    readonly property string icon: enabled ? "󰀝" : "󰀞"
+    // Under proot a reading can be missing or stale, and unknown is not off: the tile takes no
+    // fill and no glyph rather than the off one (contract section 13).
+    readonly property var enabled: android.hosted ? android.value("airplaneMode") : available && root.probedOn("airplane", "airplane")
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰀝" : "󰀞"
     readonly property string status: android.hosted ? android.status("airplaneMode") : !available ? "No radios" : enabled ? "On" : "Off"
     function toggle() { if (android.hosted) root.openAndroid("airplane"); else if (available) root.runTileAction("airplane", !enabled) }
   }
@@ -507,9 +510,9 @@ Item {
   QtObject {
     id: batterySaver
     readonly property bool available: android.hosted || root.probedHas("powerprofile")
-    readonly property bool enabled: android.hosted ? android.value("powerSave") === true : available && (root.optimistic["battery-saver"] !== undefined
+    readonly property var enabled: android.hosted ? android.value("powerSave") : available && (root.optimistic["battery-saver"] !== undefined
       ? root.optimistic["battery-saver"] : root.probed.powerprofile === "power-saver")
-    readonly property string icon: enabled ? "󰂃" : "󰁹"
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰂃" : "󰁹"
     readonly property string status: android.hosted ? android.status("powerSave") : !available ? "No power profiles"
       : root.optimistic["battery-saver"] !== undefined ? (enabled ? "On" : "Off")
       : TilesModel.powerStatus(root.probed.powerprofile)
@@ -706,8 +709,8 @@ Item {
       return null
     }
     readonly property bool available: android.hosted || (backendAvailable && !!device && Networking.wifiHardwareEnabled !== false)
-    readonly property bool enabled: android.hosted ? android.value("wifiEnabled") === true : available && Networking.wifiEnabled
-    readonly property string icon: enabled ? "󰤨" : "󰤭"
+    readonly property var enabled: android.hosted ? android.value("wifiEnabled") : available && Networking.wifiEnabled
+    readonly property string icon: enabled === undefined ? "" : enabled ? "󰤨" : "󰤭"
     readonly property bool details: true
     function openDetails() { root.openWifiPanel() }
     readonly property string status: {
@@ -779,10 +782,10 @@ Item {
 
     readonly property var adapter: Bluetooth.defaultAdapter
     readonly property bool available: android.hosted || !!adapter
-    readonly property bool enabled: android.hosted ? android.value("bluetoothEnabled") === true : available && adapter.enabled
+    readonly property var enabled: android.hosted ? android.value("bluetoothEnabled") : available && adapter.enabled
     property bool pending: false
     readonly property bool busy: pending
-    readonly property string icon: enabled ? (connected ? "󰂱" : "󰂯") : "󰂲"
+    readonly property string icon: enabled === undefined ? "" : enabled ? (connected ? "󰂱" : "󰂯") : "󰂲"
     readonly property bool details: true
     function openDetails() { root.openBluetoothPanel() }
     readonly property var connected: {
@@ -1119,7 +1122,7 @@ Item {
     property bool linuxAvailable: false
     readonly property bool available: android.hosted || linuxAvailable
     property bool linuxEnabled: false
-    readonly property bool enabled: android.hosted ? android.value("rotationLocked") === true : linuxEnabled
+    readonly property var enabled: android.hosted ? android.value("rotationLocked") : linuxEnabled
     readonly property string icon: "󰑵"
     readonly property string status: android.hosted && android.value("rotationLocked") === undefined ? android.t("settings") : !available ? "No sensor" : enabled ? "Locked" : "Auto-rotate"
 
