@@ -69,12 +69,14 @@ class Comp:
         self.layer_scale = scale          # the scale the shell laid its layers out for
         self.evals = []
         self.restarts = 0
+        self.stale = None                 # a config reload put the start-time size back
 
     def logical(self, scale):
         return (round(self.root[0] & ~1) / scale, round(self.root[1] & ~1) / scale)
 
     def monitors(self):
-        return [{"name": "WL-1", "width": self.root[0] & ~1, "height": self.root[1] & ~1,
+        w, h = self.stale or self.root
+        return [{"name": "WL-1", "width": w & ~1, "height": h & ~1,
                  "scale": self.scale, "refreshRate": 120.0, "disabled": False}]
 
     def layers(self):
@@ -93,6 +95,8 @@ class FakeSubprocess:
     def run(self, cmd, **kw):
         res = types.SimpleNamespace(returncode=0, stdout="", stderr="")
         if len(cmd) > 2 and cmd[1] == "eval":
+            if "hl.monitor" in cmd[2]:
+                self.comp.stale = None
             m = re.search(r"scale = ([0-9.]+)", cmd[2])
             if m:
                 self.comp.scale = float(m.group(1))
@@ -123,7 +127,7 @@ def load(path, tmp, env):
     return mod
 
 
-def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=()):
+def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=(), reload_stale=False):
     """events: [(t, text-or-None)] written to ui-scale at t (None removes the file)."""
     tmp = tempfile.mkdtemp(prefix="f6-")
     comp = Comp(root, scale)
@@ -147,6 +151,8 @@ def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=()
         while reloads and reloads[0] <= t:
             reloads.pop(0)
             comp.scale = start_scale        # monitors.lua re-applies the start-time scale
+            if reload_stale:
+                comp.stale = (3200, 1970)   # ... and the start-time size
     clock = Clock(end, on_tick)
     mod.time = clock
     mod.xroot = lambda: comp.root
@@ -210,6 +216,13 @@ def main():
     fits3 = [e for e in comp3.evals if "hl.monitor" in e]
     check("reload: a reload that undoes the scale is fitted again, capped (retry cap 3 per size)",
           2 <= len(fits3) <= 1 + 3, "fits=%d" % len(fits3), res, v)
+
+    # r11 device finding: after a dock the config reload put the start-time size AND scale back, and
+    # the size fit re-applied the reverted scale 2; only a later scale fit reached 1.
+    comp4, log4, _ = run(args.watch, [(0.0, "1\n")], 70, root=(1920, 1080), scale=2, reload_at=(30.0,), reload_stale=True)
+    scales4 = [re.search(r"scale = ([0-9.]+)", e).group(1) for e in comp4.evals if "hl.monitor" in e]
+    check("reload with a stale size: the size fit itself carries the wanted scale (never re-applies 2)",
+          scales4 and set(scales4) == {"1"} and comp4.scale == 1, "evals=%s final=%g" % (scales4, comp4.scale), res, v)
 
     failed = [n for n, ok in res if not ok]
     print("\n%d checks, %d failed" % (len(res), len(failed)))

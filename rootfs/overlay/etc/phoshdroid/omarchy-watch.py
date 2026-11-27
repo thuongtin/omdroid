@@ -589,8 +589,8 @@ def main():
             if stable >= STABLE_S and fits < RETRY_CAP:
                 fits += 1
                 log("monitor %dx%d != X root %dx%d (even-rounded): %s, attempt %d/%d" %
-                    (key[0], key[1], st["target"][0], st["target"][1], fit_monitor(st),
-                     fits, RETRY_CAP))
+                    (key[0], key[1], st["target"][0], st["target"][1],
+                     fit_monitor(st, scale=want), fits, RETRY_CAP))
                 size_since = time.monotonic()
                 hot_until = size_since + HOT_S
                 hypr_data = None
