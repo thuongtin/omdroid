@@ -13,7 +13,7 @@ Evidence labels: **measured** (command given), **read** (file:line or URL), **es
 | 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). Device, three arms on the new build: `mode=auto all-files=true -> bind=true`; `mode=on all-files=false -> bind=true` and the guest then sees only **10** of the 35 top-level entries (the media dirs; the app's own files are missing); `mode=auto all-files=false -> bind=false`. The deny needs `appops set --uid` - the package mode alone does not change `Environment.isExternalStorageManager()` |
 | 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device: `file:///home/omarchy/Phone Omdroid Phone` added beside the owner's four bookmarks, and `omdroid-share: bookmark removed` with sharing off, the owner's lines untouched |
 | 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page; device: registered and queried by DocumentsUI |
-| 5. Device proof of the provider (read, write, Files app) | PARTIAL | phase 4: picker lists the "Omdroid" root, the guest home (11 children, names/sizes/dates) and a subdirectory; `createDocument` created a real file in the guest home (host-side `run-as` read back). Read (`openDocument`) is phase 5. Screenshots are PENDING-VISION |
+| 5. Device proof of the provider (read, write, Files app) | PARTIAL | phase 4/5/7: the picker lists the "Omdroid" root (parent-viewed), the guest home (11 children with names/sizes/dates) and a subdirectory, and `createDocument` created a real file in the guest home (host-side `run-as` read back). `openDocument` is what phase 8 adds. Screenshot coverage and its one caveat: the "Screenshots" section below |
 | 6. `launch-contract.md` storage section | PASS | `docs/omarchy/launch-contract.md` section 10 |
 
 ## What changed
@@ -151,6 +151,10 @@ picker by name, not by `content`.
   `-t */*` into `bin/abb` (the MIME type must be quoted for the *device* shell), and the tap matcher
   matched `omdroid-provider-create.txt` when told to tap "Omdroid" (exact-text matching now). The
   `OPEN_DOCUMENT` arm's drawer tap did not open the drawer in this run; `CREATE_DOCUMENT`'s did.
+- **Screenshot caveat (parent-viewed):** this phase's four picker shots
+  (`p4-picker-1`, `-downloads`, `-omdroid`, `-read`) are byte-identical - the screen did not change
+  between them - so they prove nothing about navigation. The listing claims here rest on the
+  provider's own log lines, not on the images.
 
 **Phase 5** (same APK; `<scratch>/share/phase5/step5d.txt`): the picker remembered the provider's
 folder from phase 4 and opened **inside** it:
@@ -181,6 +185,24 @@ to a viewer, so `openDocument` is called by the **viewer**, not by the picker - 
 whole phase holds only `queryDocument root`, `queryDocument doc:Downloads` and
 `children of 'doc:Downloads' … 1 [omdroid-read-test.txt]`. Phase 8 therefore answers the resolver with
 "Once" (never "Always": that would set a default app on the owner's device) and reads the log again.
+**Parent-viewed:** `p7-after-tap.png` shows precisely this - the picker inside Omdroid > Downloads with
+the file row and the system chooser on top.
+
+## Screenshots (viewed by the parent; this stream cannot see images)
+
+All under `<scratch>/share/<phase>/shots/`. They show the owner's account names and recent files, so
+they stay in scratch and are never committed (nothing image-shaped is in any commit on this branch).
+
+| File | Parent's verdict |
+| --- | --- |
+| `phase6/shots/p6-picker-list.png` | Android's file picker on "Recent"; its "Browse files in other apps" row lists **Omdroid** beside Termux and the Drive accounts - the root is registered and visible. It does not show the guest home's contents. |
+| `phase7/shots/p7-after-tap.png` | Inside **Omdroid > Downloads** ("Files from Omdroid/The Omarchy home inside Omdroid"), one file `omdroid-read-t…`, with the system "Open with" chooser on top. Browsing a guest folder from Android works and tapping a guest file reaches the app chooser; the file's contents are not shown yet - that is phase 8's job. |
+| `p4-picker-1`, `p4-picker-downloads`, `p4-picker-omdroid`, `p4-picker-read` | Byte-identical: the screen did not change between those steps, so they prove no navigation. |
+| `p5-picker-downloads` = `p5-picker-read`; `p6-picker-after-tap` = `p6-picker-preview` | Same, per phase. |
+
+So every listing, create and read claim in this report rests on the provider's own `documents:` logcat
+lines and on host-side `run-as` reads; a screenshot is corroboration only, and these particular ones
+corroborate just the two rows above.
 
 ## Switches
 
