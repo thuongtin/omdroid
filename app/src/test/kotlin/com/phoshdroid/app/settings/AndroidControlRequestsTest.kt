@@ -38,4 +38,29 @@ class AndroidControlRequestsTest {
         assertTrue(AndroidControlRequests(directory).take().isEmpty())
         assertEquals("wifi", target.readText())
     }
+
+    @Test fun `only one request is served per cycle and the surplus is deleted`() {
+        File(directory, "a.request").writeText("wifi")
+        File(directory, "b.request").writeText("bluetooth")
+        File(directory, "c.request").writeText("volume")
+        val mailbox = AndroidControlRequests(directory)
+        assertEquals(listOf("wifi"), mailbox.take())
+        // The other two are gone unread: one page per cycle is the whole mailbox's throughput.
+        assertFalse(File(directory, "b.request").exists())
+        assertFalse(File(directory, "c.request").exists())
+        assertEquals(emptyList<String>(), mailbox.take())
+    }
+
+    @Test fun `a directory named like a request is removed without being walked out of the tree`() {
+        val outside = File(directory.parentFile, "outside").also { it.mkdirs() }
+        File(outside, "keep").writeText("data")
+        val intruder = File(directory, "x.request")
+        Files.createSymbolicLink(intruder.toPath(), outside.toPath())
+        val mailbox = AndroidControlRequests(directory)
+        File(directory, "a.request").writeText("wifi")
+        assertEquals(listOf("wifi"), mailbox.take())
+        // The link went, the directory it pointed at and its contents stayed.
+        assertFalse(intruder.exists())
+        assertTrue(File(outside, "keep").isFile)
+    }
 }

@@ -34,6 +34,8 @@ class AndroidControls(private val context: Context, prefix: File) {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var running = false
     private var worker: Thread? = null
+    private var lastAction: String? = null
+    private var lastActionAt = 0L
 
     fun start() {
         if (running) return
@@ -49,7 +51,7 @@ class AndroidControls(private val context: Context, prefix: File) {
                 var nextState = 0L
                 while (running) {
                     try {
-                        requests.take().forEach { action -> main.post { if (running) open(action) } }
+                        requests.take().forEach { action -> openOnce(action) }
                         val now = SystemClock.elapsedRealtime()
                         if (now >= nextState) {
                             publish(System.currentTimeMillis())
@@ -112,6 +114,18 @@ class AndroidControls(private val context: Context, prefix: File) {
         check(writeSnapshot(directory, "state.json", state.toString())) { "Could not replace Android state" }
     }
 
+    /**
+     * Opens a page unless the same page was opened inside [REPEAT_MS]: a guest script that keeps
+     * asking for one page must not strobe it, and a person's second tap is far slower than this.
+     */
+    private fun openOnce(action: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (action == lastAction && now - lastActionAt < REPEAT_MS) return
+        lastAction = action
+        lastActionAt = now
+        main.post { if (running) open(action) }
+    }
+
     private fun open(action: String) {
         val intentAction = when (action) {
             "wifi" -> Settings.ACTION_WIFI_SETTINGS
@@ -130,6 +144,11 @@ class AndroidControls(private val context: Context, prefix: File) {
             Log.w("AndroidControls", "Android settings page unavailable: $action", error)
             Toast.makeText(context, R.string.android_settings_unavailable, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private companion object {
+        /** The same page twice inside this window is a repeat, not two taps. */
+        const val REPEAT_MS = 500L
     }
 }
 
