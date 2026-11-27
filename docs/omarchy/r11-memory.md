@@ -409,8 +409,30 @@ the desktop was intact afterwards.
 ended on the Quickshell crash dialog (viewed `r7-X-after.png`: crashed process 1867, crash folder `0d1z4l5pt`, created 09:03);
 the layers after it were only background, `omamobile-home-strip` and `omamobile-launcher` (no bar), and the process list
 had two live Quickshell processes plus one defunct. So the crash on the manual restart reproduced on the candidate,
-three of three times (phase 6 restart 1, phase 6 restart 2 shows the stale dialog, phase 7). Whether it is caused by this
-stream's changes is not known yet: phase 8 reads the crash report and runs the same restart on the R10 APK.
+in two sessions out of two (crash folders `7z8szi5pt` 08:16:42 and `0d1z4l5pt` 09:03:01, one per session, both on the
+first restart; the phase 6 `sr-C-2` dialog is the same dialog still on screen). Phase 8 below runs the control.
+
+## Phase 8: the same restart on the R10 APK (measured, tablet, 09:46-09:48)
+
+Before the control I put the guest's Quickshell files back to the image originals (the candidate had left a patched
+`Background.qml` behind: the R10 `start.sh` never runs the `mem/` hook, so `OMDROID_MEM_QML=0` is never applied; see
+Risks). Installed package at the start: versionName 0.0.18-alpha, the same as the candidate's; I take it to be the R10
+integration APK because the phase library reinstalls it only when the installed sha256 differs and the end of the phase
+printed no reinstall (read from the log; my own sha256 line in the script failed, so this is an inference).
+
+| manual `omarchy-restart-shell` on | exit | after 10 s (viewed) | new crash folders |
+| --- | --- | --- | --- |
+| candidate, first restart (phase 6 C, phase 7 X) | rc 0 | black screen, "Quickshell has crashed" dialog (`sr-C-1`, `r7-X-after`) | **1 per session, 2 sessions** |
+| R10 APK, original QML, restart 1 | rc 1, "Omarchy shell did not become ready after restart." | **intact desktop**: wallpaper, bar 09:47, search bar (`r8-R-1`) | 0 |
+| R10 APK, original QML, restart 2 | rc 1, same message | black screen with the cursor, no dialog, a defunct `quickshell` in the process list (`r8-R-2`) | 0 |
+
+Crash report of the candidate (`0d1z4l5pt`): the log ends "Exiting due to IPC request." (the old instance being stopped
+by `quickshell kill`), i.e. the crash is on the way out of the instance that the restart kills, not in the new one. The
+report headers I printed carry no backtrace section I could read; phase 9 prints the body. On the R10 control the restart
+also fails, differently: the shell does not answer the ping within the script's 2 s (20 x 0.1 s) and the script exits 1
+although a desktop comes up (restart 1). So the stock restart is unreliable on the base as well; the crash dialog is
+the candidate-only part of the evidence so far (2 of 2 against 0 of 2, n is small). The candidate differs from the control
+in the patched `Background.qml` (`sourceSize`) and in the ring of 2; phase 9 splits them.
 
 ## What changed
 
