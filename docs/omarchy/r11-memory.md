@@ -9,9 +9,9 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
 | 2 | Quickshell fixes (through `mem/`) | PASS (memory), fidelity noted | `47e1aee`: wallpaper `sourceSize`: Quickshell wallpaper block 77.7 -> 26.3 MiB, Quickshell heap 143.2 -> 91.3 / 92.3 MB in both candidate arms (phase 2, below); picture unchanged to my eye, fine-detail energy 36 % lower (measured, below); `OMDROID_MEM_QML=0` restores the file |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS on memory, CPU and commit rhythm; CORRECTNESS PARTIAL | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted (the trace line is live: 1,859 cap lines); cold start +0.3 s. Correctness: the forced-repaint step did NOT repaint (0 damaged commits of 256 and 233), so the "0 changed" table proves nothing about remnants; compared with the frame before the event instead: window open+close 0 px, toast area clean (bar shows clock and an unread badge), rotation round trip leaves edge-level wallpaper differences (9,503 px above 8 levels, unexplained, phase 6 retests) |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS on memory, CPU and commit rhythm; CORRECTNESS PARTIAL | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted (the trace line is live: 1,859 cap lines); cold start +0.3 s. Correctness: the forced-repaint step did NOT repaint (0 damaged commits of 256 and 233), so the "0 changed" table proves nothing about remnants; compared with the frame before the event instead: window open+close 0 px, toast area clean (bar shows clock and an unread badge), rotation round trip leaves edge-level wallpaper differences (9,503 px above 8 levels, unexplained; the phase 6 restart arm was invalid, phase 7 repeats it by rotation) |
 | 4 | Hyprland extras (logo, cursor, render options) | NOTHING TO CUT, 52 MiB block unattributed | read: logo, splash and blur and shadows are off in the image config (`default/hypr/looknfeel.lua`), `XCURSOR_SIZE` 24; read-back in a live session: `damage_tracking` 2, `direct_scanout` 0, border 0, rounding 0. The 52 MiB Hyprland anonymous block is not the ring and I have no lever for it (a guess, not tested: two monitor-size render targets of 24 MiB each) |
-| 5 | Software-GPU diet (`OMDROID_GPU=software`) | FAIL as written, REVERTED `41e272f`; typing lead in phase 5 | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without, idle Hyprland PSS 441.4 in both second arms. Typing costs 8 llvmpipe workers at 60-69 % each. Phase 4 levers: `LP_NUM_THREADS=2` 196 % but 199 % idle (open), `vfr` -25..-30 % (risk), the rest nothing |
+| 5 | Software-GPU diet (`OMDROID_GPU=software`) | DIET FAIL, REVERTED `41e272f`; one lead with a measurement, not shipped | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without. Typing costs 8 llvmpipe workers at 60-69 % each. Levers: `LP_NUM_THREADS` 2/4 sit at 197/384 % (not a fix), `vfr` -25..-30 % (risk, not shipped), the rest nothing. **Lead (phase 6, one session per arm): a quarter of the pixels (X root 1600x984 at scale 1 instead of 3200x1970 at scale 2) types at 147 % against 455 %, Hyprland -254 MB, session -400 MB, desktop intact (viewed); needs a smaller X-server surface in software mode, a host change handed to the parent.** The intermittent high-CPU state of phase 5 is unexplained and was not reproduced in phase 6 |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | NO EFFECT EXPECTED (read), not run | `termux-x11/app/src/main/cpp/lorie/InitOutput.c:799-803`: `loriePresentFlip` returns FALSE for a pixmap with `priv->mem` (cage's MIT-SHM frames, the only kind this chain presents) before the `TERMUX_X11_FORCE_FLIP` test is reached, and the flag is read by the in-process X server through `getenv`, so only the host app could set it; the check at 799 also compares `root.width` with `drawable.height` |
 
 ## Step 1: attribution on the R10 build (measured)
@@ -310,12 +310,14 @@ What the same shots do show, comparing each event with the frame taken **before*
 | --- | --- | --- | --- |
 | `foot` opened and closed | `idle-after` -> `foot-closed-after` | **0** | no remnant of the window (a full-screen window, so the whole picture was redrawn) |
 | toast shown and faded | `foot-closed-after` -> `toast-faded-after` | 2,131, all in the bar (y 24-88) | the toast area (y 88-253) is clean. I looked at both bars: the clock went 01:10 -> 01:11 and an unread badge "1" appeared beside it, which accounts for the x 141-220 part; a cluster at x 3000-3100 (right end of the bar) I did not identify |
-| rotation and back | `toast-faded-after` -> `restored-after` | 2,230,231 (9,503 above 8 levels, 620 above 24) | all on edges (mean gradient 27 at the large differences against 1.4 overall), spread over the lower wallpaper, best integer shift 0,0: consistent with the wallpaper being re-decoded at a size one pixel off, not with a remnant; not proven, phase 6 restarts the shell twice on both builds |
+| rotation and back | `toast-faded-after` -> `restored-after` | 2,230,231 (9,503 above 8 levels, 620 above 24) | all on edges (mean gradient 27 at the large differences against 1.4 overall), spread over the lower wallpaper, best integer shift 0,0: consistent with the wallpaper being re-decoded at a size one pixel off, not with a remnant; not proven; the phase 6 restart arm was invalid (below), phase 7 repeats the round trip on both builds |
 
 Positive controls on the same shots: toast visible against the frame before it 166,706 px; foot open
 against idle 5,809,341 px.
 
-### Where software mode puts its CPU (phase 5, measured)
+### Software mode: where the CPU goes (phases 5 and 6, measured)
+
+Phase 5 (02:48-03:00, candidate, software, one session per arm, timed windows; `LP_NUM_THREADS` unset / 2 / 4 / 2):
 
 | arm | idle before typing | typing | idle after foot closed | threads |
 | --- | --- | --- | --- | --- |
@@ -324,23 +326,60 @@ against idle 5,809,341 px.
 | LP4 | **384 %** | 387 / 382 % | 383 % | 4 workers at 95 % |
 | LP2b (repeat of LP2) | 2.0 % | 197 / 198 % | **197 %** | 2 workers at 98 % |
 
-Hyprland in software mode has a **persistent busy state**: once it is entered (in the 8-thread run it was
-entered by opening `foot` and typing; in two of the thread-capped runs it was already on during the idle
-windows after the start) it does not end when `foot` is closed. In it every llvmpipe worker sits at 91-98 %
-whatever the thread count, so the CPU is set by the thread count, not by what the user does. R10's
-"496 % while typing" matches this state, not the cost of typing. I measured it on the candidate (ring of 2) only;
-the R10 build's after-close behaviour was not re-measured, but nothing in this stream's changes touches the
-render path of Hyprland (the ring cap changes how many buffers exist, the wallpaper change is in Quickshell), and the
-busy state appeared in arms of every thread count, so I do not read it as caused by them (not proven: an R10-behaviour
-software arm with the same sequence is in phase 6 only for the half-resolution comparison, not as a control).
-Trace of the busy state, 2-thread run: **1.7 commits/s at idle, every one carrying damage**; typing 3.0
-commits/s, every one with damage; against 60 commits/s of empty damage at calm idle (8 threads) and 23
-commits/s with 52 damaged in 6 s while typing. Each damaged frame therefore costs about 0.6 to 1.2 core-seconds in
-software, against about 0.03 on kgsl (typing 49 damaged commits in 6 s on both): a software frame costs about the
-whole screen even when the damage is small (estimated from CPU divided by damaged commits; phase 6 tests
-whether the cost follows the pixel count).
-`LP_NUM_THREADS=2` is **not a fix**: it caps the CPU at two cores by cutting the frame rate to
-1.7-3 commits/s, which is a desktop that updates about three times a second.
+Phase 6 (08:09-08:16, candidate, software, default threads, no trace, one session per arm, timed windows; the half
+resolution arm sets the Android display override to 1068x1600 at 176 dpi, which gives an X root of 1600x984 at scale 1,
+the same logical layout as the native 3200x1970 at scale 2 with a quarter of the pixels):
+
+| arm | idle | foot open, not typing | typing 1 / 2 | after foot closed | Hyprland PSS idle / typing | session PSS idle / typing |
+| --- | --- | --- | --- | --- | --- | --- |
+| V1 native 3200x1970 | 1.9 % | 103.4 % | **428 / 483 %** | 1.9 % | 432.8 / 502.0 MB | 865.3 / 943.7 MB |
+| V3 half 1600x984 | 2.0 % | 3.7 % | **155 / 139 %** | 2.0 % | 229.9 / 248.1 MB | 519.4 / 544.8 MB |
+| V1 with `debug.vfr=true` set live | 0.1 % | - | **320 %** (one window) | 0.1 % | 448.1 / 502.4 MB | 871.7 / 946.2 MB |
+
+What this supports (all measured, one session per arm, so the size of each effect is a direction, not a figure
+with an error bar):
+
+1. **Software cost follows the pixel count.** A quarter of the pixels costs 3.1 times less CPU while typing (455 %
+   mean against 147 %), 254 MB less in Hyprland (502 -> 248 MB) and 400 MB less in the session (944 -> 545 MB). I looked
+   at the half-resolution frame (`phase6/shots/p6-V3-end.png`): desktop intact, bar text legible, no band or dialog;
+   it shows the two "Omdroid could not shutdown / could not stop" toasts, which are the guest leftovers listed in
+   Risks, not a rendering fault. The lever is a smaller X root in software mode. That is a host change (the surface the
+   X server is given), outside this stream's files: it is handed to the parent as the one software-mode win with
+   a measurement, not shipped here.
+2. **`debug.vfr` costs the same lever as before** (phase 4: -25..-30 %): typing 320 % against 428 / 483 %, idle 0.1 %.
+   Not shipped, for the lost-last-frame risk named in phase 4.
+3. **The "persistent busy state" I wrote up after phase 5 is retracted as a general property.** In phase 5 Hyprland
+   stayed at 742 % (LP8) or at the thread-count ceiling (LP2 197 %, LP4 384 %) after the foot window closed or even
+   from the first idle window. In phase 6 the same sequence ended at **1.9 %** both times (V1 and V3, 15.9 and 15.7 s
+   windows starting 3 s after the close). So the high state exists, it is intermittent, and I do not know what
+   enters it. Therefore my earlier sentence that R10's "496 % while typing" is this state is **withdrawn**: typing
+   at default threads costs 428-520 % in every default-thread typing window of phases 3 to 6, and in phase 6
+   the idle after it was 1.9 %.
+4. **`LP_NUM_THREADS` is not a fix.** At 2 or 4 threads the phase 5 arms sat at 197 % and 384 % through the idle
+   windows, while the default sat at 1.9 % in the same windows; the trace of the 2-thread run shows 1.7 commits/s, every
+   one carrying damage, against 60 empty commits/s at default idle (so it is not a quieter desktop). Whether the
+   typing figure (196 %) is dropped frames was not counted.
+5. **Per damaged frame** (estimated: CPU divided by damaged commits, trace on): typing at default threads is 52
+   damaged commits in 6 s at about 500 %, about 0.6 core-seconds per damaged frame; kgsl takes about 0.03 for 49 damaged commits
+   in the same window. The half-resolution arm was not traced, so the per-frame figure at a quarter of the pixels is not measured.
+
+Trace of the post-typing window (phase 6 `Vt`, trace on, 5-11 s after the foot window closed): 8.4 commits/s, 51 of 51
+with one damage rect, against 61.5 empty commits/s at calm idle. The trace arm did not measure CPU (the trace changes it),
+so I cannot say whether this window is the intermittent high state or the tail of the window closing; phase 7 repeats
+the phase 5 sequence on the candidate to see whether the high state recurs.
+
+### Phase 6, shell-restart determinism arm (K): invalid
+
+The arm took a frame, ran `omarchy-restart-shell` twice from the live session and compared the frames. It cannot
+answer the wallpaper-determinism question, because the manual restart does not leave a desktop on either build:
+after restart 1 on the R10 behaviour (arm B) the frame is a black screen with the cursor and no bar or wallpaper
+(I viewed `sr-B-1.png`); after restart 2 on the candidate (arm C) the frame is a black screen with a "Quickshell has
+crashed" dialog (viewed `sr-C-2.png`). The other three frames (`sr-C-0`, `sr-C-1`, `sr-B-0`) I could not view (the image
+did not come back), so I do not say what they show. The pixel counts (C: 5.88 M then 0.42 M changed; B: 6.30 M then 0)
+are therefore comparisons of dead frames. Both arms fail, so the candidate's changes are not the cause by that
+evidence alone; I have not run the manual restart on the R10 APK. The watcher's own shell restart (every rotation in
+phases 2 and 3) did leave a working desktop, so phase 7 retests determinism by rotation round trips and reads the
+manual restart's output and crash report.
 
 ## What changed
 
@@ -352,7 +391,8 @@ whether the cost follows the pixel count).
 - `rootfs/overlay/etc/phoshdroid/mem/`: `session-start.sh` (the hook), `qml-apply.sh` (patched
   Quickshell files over the image copies, original kept as `<file>.omdroid-orig`, applied only
   to the exact original whose sha256 is in `<file>.base-sha256`), `qml/plugins/background/Background.qml`
-  (the three wallpaper `Image` items get `sourceSize` = the screen in device pixels), `soft-diet.py`.
+  (the three wallpaper `Image` items get `sourceSize` = the screen in device pixels). A software-GPU diet helper
+  (`soft-diet.py`) was written and reverted (`41e272f`): it saved nothing measurable.
 - `docs/omarchy/tools/mem-attrib-smaps.sh` and `mem-attrib.py`: the attribution method.
 
 ## Host proof
@@ -366,7 +406,6 @@ whether the cost follows the pixel count).
 | aquamarine ring of two | `AQ_WAYLAND_SWAPCHAIN` (`session.env`) | `3` |
 | every change of `mem/` | `OMDROID_MEM` | `0` |
 | Quickshell file patches | `OMDROID_MEM_QML` | `0` |
-| software-GPU diet | `OMDROID_SOFT_DIET` | `0` |
 
 ## Risks
 
