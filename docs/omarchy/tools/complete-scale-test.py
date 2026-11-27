@@ -16,6 +16,11 @@ Scenarios (each is its own watcher run)
   junk     the file holds 1.5, then 3, then garbage: nothing happens (integers 1 and 2 only)
   reload   a config reload puts the start-time scale back (what omdroid-ui.sh edits do):
            the watcher fits it again, up to the retry cap, and logs it
+  crash    the restart loses the shell (no omarchy layers, no Quickshell process): ONE attempt,
+           a FAILED line, a marker file, no retry; a later size change is a new attempt
+           (r11 S1: a second stock restart leaves a black screen)
+  unfit    the restart leaves the shell's layers merely unfit: the retry cap still applies
+           (positive control for `crash`: the same harness sees the retries)
 
 usage: complete-scale-test.py [--watch PATH] [-v]       exit status 0 = every check passed
 """
@@ -67,6 +72,10 @@ class Comp:
         self.root = root
         self.scale = scale
         self.layer_scale = scale          # the scale the shell laid its layers out for
+        self.shell_procs = 1              # Quickshell processes the watcher counts
+        self.crash_on_restart = False     # the restart loses the shell (S1's black screen)
+        self.restart_noop = False         # the restart leaves the layers as they were
+        self.fail_path = None
         self.evals = []
         self.restarts = 0
         self.stale = None                 # a config reload put the start-time size back
@@ -80,6 +89,8 @@ class Comp:
                  "scale": self.scale, "refreshRate": 120.0, "disabled": False}]
 
     def layers(self):
+        if self.layer_scale is None:
+            return {"WL-1": {"levels": {}}}
         w, h = self.logical(self.layer_scale)
         return {"WL-1": {"levels": {
             "0": [{"namespace": "omarchy-background", "w": w, "h": h}],
@@ -94,6 +105,9 @@ class FakeSubprocess:
 
     def run(self, cmd, **kw):
         res = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[0].endswith("pgrep"):
+            n = self.comp.shell_procs
+            return types.SimpleNamespace(returncode=0 if n else 1, stdout=str(n) if n else "", stderr="")
         if len(cmd) > 2 and cmd[1] == "eval":
             if "hl.monitor" in cmd[2]:
                 self.comp.stale = None
@@ -105,7 +119,11 @@ class FakeSubprocess:
                 self.comp.evals.append(cmd[2])
         elif cmd[0].endswith("omarchy-restart-shell"):
             self.comp.restarts += 1
-            self.comp.layer_scale = self.comp.scale
+            if self.comp.crash_on_restart:
+                self.comp.shell_procs = 0
+                self.comp.layer_scale = None
+            elif not self.comp.restart_noop:
+                self.comp.layer_scale = self.comp.scale
         return res
 
 
@@ -124,13 +142,20 @@ def load(path, tmp, env):
     os.makedirs(os.path.join(tmp, "omarchy", "bin"), exist_ok=True)
     open(os.path.join(tmp, "omarchy", "bin", "omarchy-restart-shell"), "w").close()
     mod.OMARCHY = os.path.join(tmp, "omarchy")
+    mod.FAIL_PATH = os.path.join(tmp, "shell-restart-failed")
     return mod
 
 
-def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=(), reload_stale=False):
-    """events: [(t, text-or-None)] written to ui-scale at t (None removes the file)."""
+def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=(), reload_stale=False,
+        crash=False, noop=False, state_events=()):
+    """events: [(t, text-or-None)] written to ui-scale at t (None removes the file).
+
+    state_events: [(t, fn)] called with the fake compositor at t, for a rotation or a revived shell.
+    """
     tmp = tempfile.mkdtemp(prefix="f6-")
     comp = Comp(root, scale)
+    comp.crash_on_restart = crash
+    comp.restart_noop = noop
     env = {"OMDROID_SCALE_FOLLOW": "1" if follow else "0"}
     mod = load(path, tmp, env)
     pending = list(events)
@@ -153,7 +178,19 @@ def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=()
             comp.scale = start_scale        # monitors.lua re-applies the start-time scale
             if reload_stale:
                 comp.stale = (3200, 1970)   # ... and the start-time size
-    clock = Clock(end, on_tick)
+    states = list(state_events)
+
+    def on_tick_states(t):
+        while states and states[0][0] <= t:
+            states.pop(0)[1](comp)
+
+    inner = on_tick
+
+    def on_tick_all(t):
+        inner(t)
+        on_tick_states(t)
+
+    clock = Clock(end, on_tick_all)
     mod.time = clock
     mod.xroot = lambda: comp.root
     mod.signature = lambda: "sig"
@@ -165,6 +202,8 @@ def run(path, events, end, follow=True, root=(3200, 1971), scale=2, reload_at=()
     except Stop:
         pass
     log = open(mod.LOG_PATH).read() if os.path.exists(mod.LOG_PATH) else ""
+    comp.fail_path = mod.FAIL_PATH
+    comp.last_mod = mod
     return comp, log, os.path.exists(mod.MARKER)
 
 
@@ -223,6 +262,30 @@ def main():
     scales4 = [re.search(r"scale = ([0-9.]+)", e).group(1) for e in comp4.evals if "hl.monitor" in e]
     check("reload with a stale size: the size fit itself carries the wanted scale (never re-applies 2)",
           scales4 and set(scales4) == {"1"} and comp4.scale == 1, "evals=%s final=%g" % (scales4, comp4.scale), res, v)
+
+    # r11 S1: a restart that loses the shell must not be repeated. One attempt, the failure on disk,
+    # then nothing until the size changes again.
+    def rotate(c):
+        c.root = (2400, 1500)
+
+    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 80, crash=True, state_events=[(40.0, rotate)])
+    check("crash: one restart for the failing size, none after it",
+          comp.restarts == 2, "restarts=%d (expected 2: one for the dock, one for the later rotation)"
+          % comp.restarts, res, v)
+    check("crash: the log says the restart failed and that it will not retry",
+          "shell restart FAILED" in log and "not retrying" in log,
+          " | ".join([ln for ln in log.splitlines() if "FAILED" in ln][:2]), res, v)
+    check("crash: the failure is written where a later session can read it",
+          comp.fail_path and os.path.exists(comp.fail_path)
+          and "shell restart failed" in open(comp.fail_path).read(),
+          open(comp.fail_path).read() if comp.fail_path and os.path.exists(comp.fail_path) else "no file", res, v)
+    check("crash: the retry budget is not spent before the failure (no attempt 2/3)", 
+          "attempt 2/3" not in log, " | ".join([ln for ln in log.splitlines() if "attempt" in ln][:3]), res, v)
+
+    comp, log, _ = run(args.watch, [(0.0, "2\n"), (12.0, "1\n")], 80, noop=True)
+    check("unfit: layers that exist but never fit still use the retry cap, 3 actions (control for crash)",
+          comp.restarts == 3 and "giving up" in log and "shell restart FAILED" not in log,
+          "restarts=%d" % comp.restarts, res, v)
 
     failed = [n for n, ok in res if not ok]
     print("\n%d checks, %d failed" % (len(res), len(failed)))

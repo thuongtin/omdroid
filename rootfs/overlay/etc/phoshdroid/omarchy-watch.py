@@ -53,6 +53,9 @@ import time
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")
 MARKER = os.path.join(RUNTIME, "omarchy-ready")
 LOG_PATH = os.environ.get("OMARCHY_WATCH_LOG", "/tmp/omarchy-watch.log")
+# A restart that kills the shell instead of bringing it back leaves this behind, so the
+# failure outlives the log and the next session can report it.
+FAIL_PATH = os.path.join(os.path.expanduser("~"), ".local", "state", "omdroid", "shell-restart-failed")
 POLL = 0.25          # seconds between evaluations
 STABLE_S = 1.5       # a new monitor size must hold this long before we act
 
@@ -421,7 +424,12 @@ def switch_ui(mode, st=None):
     parts.append(act())
     took = settle()
     if took is None:
-        parts.append("layers still do not fit 8 s after the restart")
+        verdict, facts = shell_after_failure()
+        if verdict == "failed":
+            write_failure(facts)
+            parts.append("shell restart FAILED (%s), not retried" % facts)
+        else:
+            parts.append("layers still do not fit 8 s after the restart (%s)" % facts)
     else:
         parts.append("layers fit again %.1f s after the restart" % took)
     parts.append(reload_config(signature()))
@@ -481,6 +489,63 @@ def settle(timeout=8.0):
             return time.monotonic() - t0
         time.sleep(0.25)
     return None
+
+
+def shell_processes():
+    """How many Quickshell shell processes run, or None when that cannot be told.
+
+    `omarchy-launch-shell` runs `quickshell -n -p $OMARCHY_PATH/shell` in the background, so a
+    restart that leaves none at all has lost the shell; a restart that leaves one is a shell that
+    may still be drawing.
+    """
+    exe = shutil.which("pgrep")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-c", "-f", "quickshell .*-p "],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode == 1:
+        return 0
+    if r.returncode != 0:
+        return None
+    try:
+        return int((r.stdout or "").strip())
+    except ValueError:
+        return None
+
+
+def shell_after_failure():
+    """`(verdict, facts)` when a restart did not bring the layers back.
+
+    `failed` means the restart lost the shell (no shell layers at all, or no Quickshell process):
+    repeating it would repeat the crash, so the caller stops instead of using the retry budget.
+    `unfit` means the layers are there but do not fit yet, which is what the retry is for.
+    `unknown` is a reading that cannot decide either way; it is retried like `unfit`, the old
+    behaviour, and logged as such.
+    """
+    st = evaluate()
+    if st.get("missing"):
+        return "unknown", "no reading: " + st["missing"]
+    procs = shell_processes()
+    facts = "layers background=%s bar=%s quickshell=%s" % (
+        surface(st.get("bg")), surface(st.get("bar")),
+        "unknown" if procs is None else procs)
+    if (st.get("bg") is None and st.get("bar") is None) or procs == 0:
+        return "failed", facts
+    return "unfit", facts
+
+
+def write_failure(facts):
+    """Record a failed restart on disk (best effort, never fatal)."""
+    try:
+        os.makedirs(os.path.dirname(FAIL_PATH), exist_ok=True)
+        with open(FAIL_PATH, "w") as fh:
+            fh.write("%s shell restart failed, not retried: %s\n"
+                     % (time.strftime("%Y-%m-%d %H:%M:%S"), facts))
+    except OSError:
+        pass
 
 
 def main():
@@ -556,9 +621,15 @@ def main():
             PENDING_RESTART[:] = []
             log("ui switch to %s: queued shell restart: %s" % (queued, act()))
             took = settle()
-            log("ui switch to %s: %s" % (queued, "layers still do not fit 8 s after the restart"
-                                          if took is None else
-                                          "layers fit again %.1f s after the restart" % took))
+            if took is None:
+                verdict, facts = shell_after_failure()
+                if verdict == "failed":
+                    write_failure(facts)
+                log("ui switch to %s: %s" % (queued, "shell restart FAILED (%s), not retried" % facts
+                                              if verdict == "failed" else
+                                              "layers still do not fit 8 s after the restart (%s)" % facts))
+            else:
+                log("ui switch to %s: layers fit again %.1f s after the restart" % (queued, took))
             hot_until = time.monotonic() + HOT_S
             hypr_data = None
             continue
@@ -628,7 +699,20 @@ def main():
                             log("act: " + act())
                             took = settle()
                             if took is None:
-                                log("act: layers still do not fit 8 s after the restart")
+                                verdict, facts = shell_after_failure()
+                                if verdict == "failed":
+                                    # The restart lost the shell. A retry would repeat the crash
+                                    # (S1: a second stock restart leaves a black screen), so the
+                                    # budget ends here and the desktop is left alone until the
+                                    # size changes again or the user acts.
+                                    write_failure(facts)
+                                    log("act: shell restart FAILED (%s): not retrying, "
+                                        "the desktop is left for the next size change or user "
+                                        "action" % facts)
+                                    attempts = RETRY_CAP + 2
+                                else:
+                                    log("act: layers still do not fit 8 s after the restart (%s)"
+                                        % facts)
                             else:
                                 log("act: layers fit again %.1f s after the restart" % took)
                                 attempts = 0
