@@ -14,7 +14,11 @@ bad() { echo "FAIL  $1  -- $2"; fail=1; }
 check() { if eval "$2"; then ok "$1"; else bad "$1" "$2"; fi; }
 
 export HOME=$T/home OMDROID_COMPLETE_DIR=$D OMDROID_COMPLETE_BIN=$T/bin OMDROID_COMPLETE_OMARCHY_BIN=$T/omarchy-bin
+export OMDROID_COMPLETE_REAL_XTE=$T/no-such-xte OMDROID_COMPLETE_NVIM=no-such-nvim OMDROID_COMPLETE_NANO=bash
 export OMDROID_COMPLETE_LOG=$T/hook.log OMDROID_HOST_DIR=$T/host OMDROID_SESSION_WAIT_DS=8
+mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/extensions"
+printf -- '-- user looknfeel\nhl.config({ general = { gaps_in = 3 } })\n' > "$HOME/.config/hypr/looknfeel.lua"
+LOOK=$HOME/.config/hypr/looknfeel.lua; cp "$LOOK" "$T/look.orig"
 mkdir -p "$HOME/.config/omarchy/extensions" "$T/bin" "$T/omarchy-bin" "$T/host" "$T/stubs"
 # The dev box may itself run Omarchy: stub every command omdroid-session calls that could reach a
 # real desktop (window close, OSD, notification), and refuse to go on unless the stubs win in PATH.
@@ -31,7 +35,8 @@ for n in lock logout reboot shutdown; do
 done
 BIN=$T/bin
 FLAG=$HOME/.local/state/omarchy/indicators/stay-awake
-REC=$HOME/.local/state/omdroid/complete/stay-awake.ours
+STATE_DIR=$HOME/.local/state/omdroid/complete
+REC=$STATE_DIR/stay-awake.ours
 EXTF=$HOME/.config/omarchy/extensions/omarchy-menu.jsonc
 cp "$EXTF" "$T/ext.orig"
 
@@ -47,6 +52,30 @@ check "default: the stay-awake flag is created and recorded as ours" "[ -e $FLAG
 check "default: the menu block is in the extension" "grep -q 'omdroid:begin' $EXTF"
 hook OMDROID_X=1
 check "second run changes nothing (idempotent)" "[ \"\$(cat $REC)\" = created ] && [ \$(grep -c 'omdroid:begin' $EXTF) = 1 ]"
+
+# --- terminal shim, editor default, banners
+check "default: the xdg-terminal-exec shim is linked while no real one exists" "[ \"\$(readlink $BIN/xdg-terminal-exec)\" = $D/bin/xdg-terminal-exec ]"
+check "default: the default editor is nano (nvim missing), recorded" "[ \"\$(cat $HOME/.local/state/omarchy/defaults/editor)\" = nano ] && [ \"\$(cat $STATE_DIR/editor.ours)\" = created ]"
+check "default: the banner block is in looknfeel.lua, the user's lines untouched" "grep -q 'disable_hyprland_guiutils_check' $LOOK && grep -q 'gaps_in = 3' $LOOK && [ \$(grep -c 'omdroid complete >>>' $LOOK) = 1 ]"
+hook OMDROID_X=1
+check "second run: one banner block, one record" "[ \$(grep -c 'omdroid complete >>>' $LOOK) = 1 ]"
+hook OMDROID_COMPLETE_BANNERS=0
+check "BANNERS=0 removes the block and restores looknfeel.lua byte for byte" "cmp -s $LOOK $T/look.orig"
+hook OMDROID_COMPLETE_EDITOR=0
+hook OMDROID_COMPLETE_TERMINAL=0
+check "TERMINAL=0 removes the shim link" "[ ! -e $BIN/xdg-terminal-exec ]"
+hook OMDROID_COMPLETE_NVIM=bash
+check "nvim installed later: the editor file we created is taken away" "[ ! -e $HOME/.local/state/omarchy/defaults/editor ]"
+printf '#!/bin/bash\n: real\n' > "$T/real-xte"; chmod 755 "$T/real-xte"
+hook OMDROID_COMPLETE_REAL_XTE=$T/real-xte
+check "a real xdg-terminal-exec in the image wins: no shim link" "[ ! -e $BIN/xdg-terminal-exec ]"
+printf '#!/bin/bash\nprintf "%s|" "$@" > %s/foot-args\n' '%s' "$T" > "$T/stubs/foot"; chmod 755 "$T/stubs/foot"
+bash "$D/bin/xdg-terminal-exec" --app-id=org.omarchy.terminal --title=Omarchy --dir= -e bash -c 'echo hi'
+check "the shim maps app-id, title and the command onto foot (empty --dir ignored)" "[ \"\$(cat $T/foot-args)\" = '--app-id|org.omarchy.terminal|--title|Omarchy|bash|-c|echo hi|' ]"
+bash "$D/bin/xdg-terminal-exec" --dir="$T" btop
+check "the shim passes --dir and a bare command" "[ \"\$(cat $T/foot-args)\" = '--working-directory|$T|btop|' ]"
+hook OMDROID_X=1
+
 
 # --- switches
 hook OMDROID_COMPLETE_POWER=0

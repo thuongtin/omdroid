@@ -10,6 +10,10 @@
 #   OMDROID_COMPLETE_IDLE=guest  keep Omarchy's idle screensaver and idle lock on (default
 #                              android: Android owns the screen timeout and the lock)
 #   OMDROID_COMPLETE_MENU=0    leave the System menu as Omarchy ships it
+#   OMDROID_COMPLETE_TERMINAL=0  no xdg-terminal-exec shim (the image has none, so every
+#                              script that opens a terminal through it fails)
+#   OMDROID_COMPLETE_EDITOR=0  keep Omarchy default editor (nvim, which the image lacks)
+#   OMDROID_COMPLETE_BANNERS=0 keep Hyprland start-up warning banners
 # Every change is key-level and reversible; the state lives in ~/.local/state/omdroid/complete.
 D=${OMDROID_COMPLETE_DIR:-/etc/phoshdroid/complete}
 BIN=${OMDROID_COMPLETE_BIN:-/usr/local/bin}
@@ -25,7 +29,10 @@ all=${OMDROID_COMPLETE:-1}
 power=${OMDROID_COMPLETE_POWER:-1}
 idle=${OMDROID_COMPLETE_IDLE:-android}
 menu=${OMDROID_COMPLETE_MENU:-1}
-[ "$all" = 0 ] && { power=0; idle=guest; menu=0; }
+terminal=${OMDROID_COMPLETE_TERMINAL:-1}
+editor=${OMDROID_COMPLETE_EDITOR:-1}
+banners=${OMDROID_COMPLETE_BANNERS:-1}
+[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; }
 
 # --- power and session entries -------------------------------------------------
 # The omarchy-* names are links in /usr/local/bin to /usr/share/omarchy/bin (set at image
@@ -82,5 +89,41 @@ if [ "$menu" != 0 ]; then
     python3 "$D/omdroid-menu-ext.py" apply 2>&1 | tee -a "$LOG"
 else
     python3 "$D/omdroid-menu-ext.py" remove 2>&1 | tee -a "$LOG"
+fi
+
+# --- terminal shim, default editor, start-up banners --------------------------------
+# xdg-terminal-exec: only while no real one is installed.
+real_xte=${OMDROID_COMPLETE_REAL_XTE:-/usr/bin/xdg-terminal-exec}
+if [ "$terminal" != 0 ] && [ ! -x "$real_xte" ]; then
+    link_ours xdg-terminal-exec "$D/bin/xdg-terminal-exec"
+    say "terminal: xdg-terminal-exec runs foot"
+else
+    [ "$(readlink "$BIN/xdg-terminal-exec" 2> /dev/null)" = "$D/bin/xdg-terminal-exec" ] && rm -f "$BIN/xdg-terminal-exec"
+fi
+
+# Default editor: Omarchy launches nvim unless ~/.local/state/omarchy/defaults/editor names
+# another; the image has nano and no nvim. Written only when that file is absent, recorded,
+# and taken away again when it still says nano and nvim has appeared.
+edfile=$HOME/.local/state/omarchy/defaults/editor
+edours=$STATE/editor.ours
+nvim_cmd=${OMDROID_COMPLETE_NVIM:-nvim}
+nano_cmd=${OMDROID_COMPLETE_NANO:-nano}
+if [ "$editor" != 0 ] && ! command -v "$nvim_cmd" > /dev/null 2>&1 && command -v "$nano_cmd" > /dev/null 2>&1; then
+    if [ ! -e "$edfile" ] && [ ! -e "$edours" ]; then
+        mkdir -p "$(dirname "$edfile")" && echo nano > "$edfile" && echo created > "$edours"
+        say "editor: default editor nano (nvim is not installed)"
+    fi
+else
+    if [ "$(cat "$edours" 2> /dev/null)" = created ] && [ "$(cat "$edfile" 2> /dev/null)" = nano ]; then
+        rm -f "$edfile" "$edours"
+        say "editor: default editor file removed"
+    fi
+fi
+
+# Hyprland start-up banners: a marked block in the user's looknfeel.lua, before Hyprland starts.
+if [ "$banners" != 0 ]; then
+    python3 "$D/omdroid-hypr-block.py" apply 2>&1 | tee -a "$LOG"
+else
+    python3 "$D/omdroid-hypr-block.py" remove 2>&1 | tee -a "$LOG"
 fi
 exit 0
