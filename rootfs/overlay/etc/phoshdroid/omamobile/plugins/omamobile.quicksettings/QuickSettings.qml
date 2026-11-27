@@ -745,9 +745,10 @@ Item {
     root.dismiss()
   }
 
-  // One page at a time.
+  // One page at a time. Under proot the Android pages go through openAndroid, which dismisses
+  // the sheet first (a page opened under a live sheet on the built-in display is out of sight).
   function openPage(page) {
-    if (android.hosted && (page === "wifi" || page === "bluetooth")) { android.open(page); return }
+    if (android.hosted && (page === "wifi" || page === "bluetooth")) { root.openAndroid(page); return }
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()

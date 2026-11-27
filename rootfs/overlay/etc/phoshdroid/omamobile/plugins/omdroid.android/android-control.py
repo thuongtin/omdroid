@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Request a fixed Android Settings page through the app-private mailbox."""
 import os
 from pathlib import Path
@@ -15,9 +16,15 @@ def main():
     if not directory.is_dir():
         return 1
     temporary = directory / (uuid.uuid4().hex + ".new")
-    with temporary.open("x") as stream:
-        stream.write(sys.argv[1] + "\n")
-    os.replace(temporary, temporary.with_suffix(".request"))
+    try:
+        with temporary.open("x") as stream:
+            stream.write(sys.argv[1] + "\n")
+        os.replace(temporary, temporary.with_suffix(".request"))
+    except OSError:
+        # A write that failed between open and rename must not leave a .new file the host
+        # would never read (it only takes *.request) and never clear.
+        temporary.unlink(missing_ok=True)
+        return 3
     return 0
 
 
