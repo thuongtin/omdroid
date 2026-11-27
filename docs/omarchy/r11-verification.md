@@ -17,7 +17,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
 | V6 | Session end and the error screen (H10-H15) | FAIL (phase 3; counter-check queued as phase 7) | the service side works (`session ended exit=0 ui=shown`, exit 7 reported), but the screen that should follow is blank or stuck on "Starting desktop...", Android raised `Omdroid isn't responding` (ANR trace written 5.0 s after the session ended), no Start button was ever visible, and a launcher tap 90 s later did not bring the desktop back; V6.2 did not run (see "V6") |
-| V7 | Pinch and three-finger touch | PENDING | |
+| V7 | Pinch and three-finger touch | PARTIAL (phase 5 answered the first half; phase 8 queued for the Hyprland swipe) | pinch: both points reach a client, positions within 0.5 logical px, 0 cancels; three fingers: all three reach it, then HyperOS takes the gesture (split screen, then home) after ~160 ms; Hyprland swipe: not configured; scratch `verify/p5-multitouch.log` |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
 
 ## What changed
@@ -211,6 +211,43 @@ Observation, not a failure: every pacman transaction on the fresh guest prints `
   `/proc` and the log only for the first 8 s and touches the screen last. If the ANR appears there too, it is the product.
 - The H11 unit-tested parts hold on the device: the service clears `active`, reports the exit code, drops the notification
   and retries once only inside 30 s. What the unit tests could not see is the Android side, which is what failed.
+
+### V7, pinch and three-finger touch (phase 5, 02:32-02:36 UTC; **measured**, screenshots **viewed**, settings **read**)
+
+Instrument: Android's `uinput` with a synthetic type-B multi-touch screen (`verify-mkuinput.py`: N fingers moving in
+straight lines, 30 steps of 16 ms), and `touchlog` (R5 build, sha256 `68a58e97…`), a layer surface that prints every
+`wl_touch` event with surface-local coordinates. Calibration: a tap at screen (1600, 1000) logs (799.5, 499.5), expected
+(800, 500) (the constant -0.5 logical px of the X11 hop, R5 finding): the mapping is right. Hyprland: `touch: ["wl_touch"]`.
+
+| Gesture | Points that reached the client | Result |
+| --- | --- | --- |
+| pinch out (two fingers 1500 and 1700 moving apart by 400 px each) | ids 0 and 1, 31 motion events each, both down within 1 ms (`max_simultaneous=2`), id 0 (749.5 -> 549.5), id 1 (849.5 -> 1049.5), 0 cancels | **PASS**: both points, full path, positions within 0.5 logical px of the commanded ones |
+| pinch in (the reverse) | ids 0 and 1, 31 motion events each, 549.5 -> 749.5 and 1049.5 -> 849.5, 0 cancels | **PASS** |
+| three fingers sideways (800 px) | ids 0, 1, 2 down together (`max_simultaneous=3`) but only 9-10 motion events each (a third of the path, ending at +120 logical px of 400) and only one `up` (id 0, after 0.16 s); ids 1 and 2 never got an `up` until touchlog exited | **HyperOS took it, see below** |
+
+- **Why three fingers stop: the system gesture.** `adb shell settings list system` (**read**): `enable_three_gesture=1`,
+  `three_gesture_horizontal_ltr=split_ltr`, `three_gesture_horizontal_rtl=split_rtl`, `three_gesture_down=screen_shot`,
+  `three_gesture_long_press=partial_screen_shot`. The first synthetic swipe really entered **split screen**:
+  the screenshot after it (viewed) shows the Android home screen on the left half and Omdroid on the right half (a 1584 px
+  wide window; the touchlog surface was configured at 792x985 instead of 1600x985, which also shifted every later
+  coordinate), and the second swipe went to the Android home screen (`top=com.miui.home/.launcher.Launcher`, viewed). Any
+  three-finger gesture in the guest is eaten by HyperOS on this tablet unless the owner turns off Settings > Additional
+  settings > Gesture shortcuts > three-finger gestures, which I did not touch.
+- **Observation, not proven as a bug:** the system cancelled a three-finger gesture after 0.16 s and the guest saw an
+  `up` for one finger of three. Two touch points stayed "down" in the client until the client exited. Whether they stay
+  down in the compositor after that is not measured (the next touchlog run started in a different window size and its ids
+  do not match its commands). A real finger doing a system gesture would leave the same state if the cancel path of
+  Termux:X11 ends only one pointer.
+- **Hyprland's own touch workspace swipe: not configured.** `gestures:workspace_swipe_touch` reads false (set false);
+  `gestures:workspace_swipe` and `workspace_swipe_fingers` do not exist in this Hyprland (0.56.1, `no such option`);
+  `input:touchdevice:enabled` is true. The Omarchy config `/usr/share/omarchy/config/hypr/input.lua` carries the gesture
+  API only as comments (`-- hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })`, lines 53-57),
+  so nothing is bound.
+- **Invalid, not counted:** the V7.3 ("enable `workspace_swipe_touch`") and V7.4 (runtime `hl.gesture` bind, three fingers)
+  swipes ran while Omdroid was in split screen or the Android home screen was on top, so they say nothing about Hyprland.
+  `workspace_swipe_touch = true` alone binds no gesture in this version. Phase 8 binds a two-finger and a four-finger
+  workspace gesture at runtime (counts the system does not use), swipes each way from a cold start, and runs the two-finger
+  swipe with nothing bound as the control.
 
 ## V8, the owner-only checklist (do NOT attempt from an agent)
 
