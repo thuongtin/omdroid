@@ -9,9 +9,9 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
 | 2 | Quickshell fixes (through `mem/`) | PASS (memory), fidelity noted | `47e1aee`: wallpaper `sourceSize`: Quickshell wallpaper block 77.7 -> 26.3 MiB, Quickshell heap 143.2 -> 91.3 / 92.3 MB in both candidate arms (phase 2, below); picture unchanged to my eye, fine-detail energy 36 % lower (measured, below); `OMDROID_MEM_QML=0` restores the file |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PARTIAL: idle PSS and repaint diffs PASS, commit rhythm PENDING | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in both candidate arms (3 -> 2 `aquamarine-shm` mappings); forced-repaint diffs 0 on idle, window open, window close, toast fade, rotation, restore; `AQ_TRACE` commit rhythm and CPU re-measure in phase 3 |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS (cap log positive control in phase 4) | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted; forced-repaint diffs 0 on idle, window open, window close, toast fade, rotation, restore; cold start +0.3 s (inside the spread) |
 | 4 | Hyprland extras (logo, cursor, render options) | PENDING | image config already sets logo, splash, blur, shadows off (read) |
-| 5 | Software-GPU diet (`OMDROID_GPU=software`) | CODE COMMITTED, device PENDING | `70fef09`: `mem/soft-diet.py` (hyprctl eval, re-applied after `configreloaded`); the image config already has blur and shadows off (read), so the measurable part is animations: phase 3 decides whether more is needed |
+| 5 | Software-GPU diet (`OMDROID_GPU=software`) | FAIL as written (no-op); cause hunt in phase 4 | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without, idle Hyprland PSS 441.4 in both second arms. Typing costs 8 llvmpipe workers at 60-69 % each |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | PENDING | |
 
 ## Step 1: attribution on the R10 build (measured)
@@ -196,6 +196,64 @@ Cold start (one run each, `coldstart.sh`): C1 12.1 s hand-over / 11.6 s desktop,
 B2 11.0 / 10.5, C2 3.6 / 17.4. The C1 run is the first start after the install (overlay sync) and
 C2 is not explained by anything I changed (a hand-over at 3.6 s and a desktop at 17.4 s, with the
 same process set); phase 3 repeats the cold start in alternation.
+
+## Phase 3: ring load and commit rhythm, software-GPU diet (measured, tablet, 01:33-01:50, one session of arms)
+
+Same candidate APK as phase 2. Every CPU window is timed from the start of one snapshot to the start
+of the next (9.6-11.0 s typing, 10.4-10.6 s scrolling on kgsl, 60.5-60.7 s idle); typing is 20 x
+`input text abcde` 0.5 s apart into a full-screen `foot`; scrolling is `foot` printing `seq 1 60`.
+
+### Step 3 on kgsl (candidate C against R10 behaviour B, C B B C)
+
+| arm | typing session CPU % (app / Hyprland) | scrolling session CPU % (app / Hyprland) | cold start hand-over / desktop s |
+| --- | --- | --- | --- |
+| KC1 | **41.5** (13.7 / 22.5) | **161.7** (50.3 / 78.5) | 12.0 / 11.5 |
+| KB1 | 51.0 (17.0 / 29.0) | 164.9 (50.9 / 81.7) | 11.9 / 11.4 |
+| KB2 | 51.0 (17.5 / 28.2) | 167.2 (51.8 / 82.3) | 11.4 / 10.9 |
+| KC2 | **44.7** (15.0 / 24.5) | **160.5** (50.1 / 77.7) | 11.7 / 11.2 |
+
+Candidate minus R10: typing **-6.3 to -9.5 points of one core** (41.5-44.7 against 51.0), scrolling
+-3.2 to -6.7 (160.5-161.7 against 164.9-167.2). The ring of two costs no CPU; it saves some. Idle
+PSS is as in phase 2 (a 12.0 MB ring saving in Hyprland and in the app). Cold start: candidate 11.5 /
+11.5 / 11.2 s desktop (three starts, counting the trace arm), R10 11.4 / 11.1 / 10.9: **+0.3 s**,
+inside the 0.5 s spread of each arm. The 17.4 s start of phase 2 (C2) did not repeat in 11 starts.
+
+**Commit rhythm** (`AQ_TRACE`, `/etc/phoshdroid/trace`, Hyprland log lines counted between two
+line-count reads about 10 s apart; the window length is not timed, so read ratios as approximate):
+
+| arm | idle: commits / scheduleFrame | scrolling: commits / scheduleFrame | whole-surface commits | ring exhausted |
+| --- | --- | --- | --- | --- |
+| TC candidate (ring 2) | 604 / 1210 | 375 / 1228 | 0 | 0 |
+| TB R10 (ring 3) | 610 / 1220 | 337 / 1159 | 0 | 0 |
+
+The idle rhythm is the same to 1 %. While scrolling the candidate commits 11 % more, not fewer: the
+two-buffer ring never starved the frame loop in any window, in the software typing window either (239
+commits, 0 whole-surface, 0 exhausted). The exhausted count is the trace line
+`Swapchain: all buffers are still owned by the backend` (read: `Swapchain.cpp` `next()`); it has no
+positive control from this phase (phase 4 greps the `capping a Wayland swapchain` debug line from the
+same log to prove the log level shows the ring change).
+
+### Step 5: software GPU (`gpu_mode=software`, llvmpipe), diet D against no diet N (D N N D)
+
+| arm | idle PSS MB (SwapPss 0.2) | Hyprland idle PSS | typing 1 Hyprland CPU % | typing 2 Hyprland CPU % | cold start s (hand-over / desktop) |
+| --- | --- | --- | --- | --- | --- |
+| D1 | 889.4 | 435.4 | 498.1 | 448.2 | 16.0 / 15.5 |
+| N1 | 914.9 | 452.5 | 520.3 | 496.5 | 15.5 / 14.9 |
+| N2 | 891.0 | 441.4 | 508.6 | 473.9 | 16.8 / 16.2 |
+| D2 | 897.6 | 441.4 | 460.9 | 493.3 | 15.5 / 15.0 |
+
+**The diet does nothing in this build, so step 5 as written FAILS.** Read-back through
+`hyprctl getoption` in every arm, diet and no diet: `animations:enabled`, `decoration:blur:enabled`
+and `decoration:shadow:enabled` all read `bool: false`. The image config has blur and shadow off
+(read: `default/hypr/looknfeel.lua`) and the mobile UI turns animations off (`omdroid-ui.sh`
+looknfeel block), so there was nothing to switch off. Hyprland typing CPU: diet 448-498 (mean 475),
+no diet 474-520 (mean 500), ranges overlapping, and idle Hyprland PSS is 441.4 in both second arms.
+The helper itself works (log: `hyprctl eval rc=0 ok`, once after one refused connect in D1).
+Typing needs about **5 cores** of the 8: `thdiff.py` over Hyprland's 24 threads shows 8 `llvmpipe-N`
+workers at 60-69 % each (484-532 % in all) and the main thread out of the top six. The cost is
+rasterising, not blur or animation: a full-screen `foot` (3200 px wide, I looked at `p3-N1-foot.png`)
+is redrawn through llvmpipe. Software mode idle is 889-915 MB PSS, Hyprland 435-452 MB, against 190-200
+MB on kgsl.
 
 ## What changed
 
