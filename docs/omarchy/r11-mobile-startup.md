@@ -4,12 +4,13 @@ Branch `r11/mobile-startup`, worktree `<repo>` (stream S2 of the R11 round), bas
 Answers the owner's "mobile UI slow start" item from the R10 report: mobile hand-over
 10.7-11.2 s against desktop 3.0-3.5 s on the same build.
 
-**Result in one line:** the mobile shell ran `omamobile.quicksettings`' tile-state pass (nine serial
-`timeout 3` backend probes, from `Component.onCompleted`) for ~7 s at every start — now parallel,
-cached and off the start-up path — and three idle restart loops found on the way are closed. The
-start-up itself did **not** get measurably faster: the marker's spread on one build is larger than
-the change, and a 365 ms lazy first open rules out QML compilation as the cost. The limiter sits
-inside quickshell's own start-up window and needs a profiler; that is this stream's open item.
+**Result in one line:** the mobile start-up limiter is the launcher's **drawer window**, which stayed
+mapped for the life of the shell and cost two 22.97 MiB `wl_shm` buffers (45.9 MiB) plus the raster of
+a full-screen surface at every start. Unmapping it while it is closed takes the guest's ready marker
+from **6.67-12.39 s to 3.10-3.18 s** (five alternating cold starts per arm, one APK) — level with the
+desktop UI's 1.82-2.88 s. On the way the round also took `omamobile.quicksettings`' 7 s serial
+tile-state pass off the boot path, cached its result, and closed three idle restart loops
+(0 process births in 60 s idle).
 
 ## STATUS
 
@@ -18,7 +19,7 @@ inside quickshell's own start-up window and needs a profiler; that is this strea
 | 1 | Timeline instrument (evlog + process sampler), shell restart vs cold start | PASS | phase 1: two mobile cold starts and one desktop cold start on the R10 build (`p1/`), evlog + procs; `tile-state.sh` 7.13 s / 6.60 s in both mobile arms, absent in the desktop arm |
 | 2 | Bisect: one omamobile plugin at a time out of the shell's plugin list | FAIL (method) | the plugin-drop arm needs a shell restart in this guest, and `omarchy-restart-shell` starts three shells per call, so its timeline mixes shells (`p5/evlog-bisect.txt`); the lazy `keepLoaded` arm gave the one usable number (sheet opens in 365 ms when compiled after boot) |
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
-| 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | FAIL (target) | APK `cc12c0e3…` from `3ae27b9`, installed sha proven; mobile desktop-PASS 6.3 / 6.6 / 11.3 / 11.7 s against desktop 4.0 / 3.0 / 2.5 s — target not met, and the mobile spread (~5 s) is larger than the change; gestures: bar tap, sheet close, dock swipe-up and app open PASS, three items blocked by the switcher not closing |
+| 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | PASS on the marker, FAIL on `coldstart.sh`'s hand-over | phase 7, ten alternating cold starts on APK `5fdc257b…` (five per arm, one build, one hour): mobile ready marker **3.10 / 3.13 / 3.13 / 3.18 / 3.13 s** with the drawer unmapped against **6.67 / 6.73 / 11.41 / 11.70 / 12.39 s** with it mapped, and 1.82-2.88 s for the desktop UI. Mobile is 0.25-1.3 s from desktop on the marker (target met). `coldstart.sh`'s hand-over reads 6.1-6.2 s for mobile against 3.0-3.7 s for desktop, but it polls `dumpsys activity` at ~2 s resolution; gestures: bar tap, sheet close, dock swipe-up, app open PASS, three items blocked by the switcher not closing (re-run in phase 8) |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
 | 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PENDING | commit `9f407c8`, APK `5fdc257b…` installed with the sha proven. Phase 6 lost its memory and latency numbers to two script bugs (a shell function run under `timeout`; a bad tuple unpack) and its gesture rows to a sheet the latency control left open, but its one same-build A/B is the first direct evidence for the start-up limiter: ready marker **13.7 s with `OMDROID_DRAWER_MAPPED=1`, 3.7 s with the drawer unmapped**. Phase 7 re-runs it 5×2 alternating with both measurements fixed |
 
@@ -108,13 +109,44 @@ a cold-cache effect.
   effects of the same busy window, not causation.
 - **No child process runs in the late window** (`procs-3`: shell 1.56 s, next child 10.61 s), and
   the bar/background still appear at 2.4-3.1 s as on desktop, so the 5-8 s is inside quickshell's
-  own start-up (services, the full-screen wallpaper's first raster, four async panel completions)
-  on the main thread.
-- **Target not met, and the spread swallows the difference.** Mobile desktop-PASS on the fixed
-  build: 6.3, 6.6, 11.3, 11.7 s (phase 3 arms 3/6 and phase 3 arm 2 + phase 5 control) against
-  desktop 4.0, 3.0, 2.5 s. The run-to-run spread on mobile (~5 s) is larger than the change
-  measured, so this round cannot claim a start-up win; it can claim the mechanism change (a 7 s
-  serial fork storm and three restart loops gone from the boot path).
+  own start-up. Phase 7 shows which part: the launcher's drawer window, mapped for the life of the
+  shell (below).
+
+### Phase 7 — the drawer window is the limiter (ten alternating cold starts, one APK)
+
+Same APK (`5fdc257b…`, commit `9f407c8`), same hour, `A` = `OMDROID_DRAWER_MAPPED=1` (the R10
+behaviour, drawer mapped from start), `B` = the drawer unmapped while closed. Order A B B A A B B A A B.
+Each arm's setting was read back from the live layer list after the start (`drawer=mapped` /
+`drawer=unmapped`), so the arm identity is measured, not assumed.
+
+| arm | drawer | hand-over | desktop PASS | ready marker |
+| --- | --- | --- | --- | --- |
+| 1 A | mapped | 13.1 | 13.4 | 12.39 |
+| 2 B | unmapped | 6.1 | 6.7 | 3.10 |
+| 3 B | unmapped | 6.1 | 6.7 | 3.13 |
+| 4 A | mapped | 8.0 | 7.4 | 6.67 |
+| 5 A | mapped | 12.8 | 12.3 | 11.70 |
+| 6 B | unmapped | 6.1 | 6.6 | 3.13 |
+| 7 B | unmapped | 6.2 | 6.8 | 3.18 |
+| 8 A | mapped | 12.5 | 11.9 | 11.41 |
+| 9 A | mapped | 8.1 | 7.5 | 6.73 |
+| 10 B | unmapped | 6.1 | 6.8 | 3.13 |
+
+- **The two arms do not overlap**: marker 3.10-3.18 s (median 3.13) unmapped against 6.67-12.39 s
+  (median 11.41) mapped. The drawer window's mapping is the mobile start-up limiter, and it is the
+  same window the memory stream measured at 45.9 MiB.
+- Desktop UI on the same build: marker 1.82 / 2.61 / 2.88 s (phase 3/5). Mobile unmapped is 0.25-1.3 s
+  from that — the brief's 1.5 s target met on the marker.
+- `coldstart.sh`'s hand-over stays 6.1-6.2 s in every B arm and 8.0-13.1 s in every A arm against
+  3.0-3.7 s for desktop: that metric polls `dumpsys activity activities` at ~2 s resolution and is
+  not the user-visible frame; the guest's own marker is.
+- The mechanism is the same one that made the panel-QML hypothesis fail: a full-screen layer surface
+  (1600x941 logical = 3200x1882 px at scale 2) with two shm buffers has to be allocated, filled and
+  handed to the compositor while the shell is still starting; nothing external waits.
+
+- The earlier build (`3ae27b9`, phases 3 and 5) still had the drawer mapped, which is why its mobile
+  arms spread 6.3-11.7 s; those numbers are the A arm of phase 7 seen through a noisier instrument
+  (no per-arm setting read back). They are kept as the history, not as the verdict.
 
 ### Phase 6 — partial (two instrument bugs, recorded so they are not repeated)
 
@@ -199,18 +231,16 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
 
 ## Not done
 
-- **The start-up target is not met and the limiter is not yet pinned.** Next step is an instrument
-  inside the shell, not another A/B: `qs log` with timing categories on a live start, per-surface
-  `WAYLAND_DEBUG` timestamps (`omarchy-bar`, `omamobile-dock`, `omamobile-launcher`,
-  `omamobile-back`), or `perf record` on the shell process across a cold start. Then re-test the
-  candidates that remain (the wallpaper's first raster, the audio/network service probes, the
-  incubator completions) one at a time.
-- **The six-arm comparison needs more runs.** Four mobile cold starts on the fixed build gave
-  6.3, 6.6, 11.3, 11.7 s; two on the R10 build gave 10.2 and 10.3 s. A same-hour A/B of at least
-  five alternating runs per build is needed before any number here is quoted as a win.
-- **Three gesture items need a re-run or a finger** (pill swipe, back edge, switcher close). The
-  switcher's own close swipe is the one that failed first; the other two ran with its overlay still
-  up.
-- **The shell-restart A/B method is unusable under proot** (`omarchy-restart-shell` starts three
-  shells). Any future bisect must use cold starts plus a per-boot build, or measure inside one
-  shell with a mark taken after the shell has settled.
+- **The memory saving and the open latency are phase 8's** (PSS A/B between `OMDROID_DRAWER_MAPPED=1`
+  and the lazy default, and the drawer's open latency with the real swipe-down close between taps).
+  Until that lands, the 46 MiB is the memory stream's measurement of the always-mapped window and the
+  saving is inferred from the layer disappearing, not from a PSS delta in this stream.
+- **The visual check that unmapping does not flash the grid** — the defect that made upstream keep the
+  window mapped — is PENDING-VISION: `r11s2-p8-drawer-open.png`, plus the drawer opens in phase 7's
+  arms. A one-frame 3×-scale flash leaves no trace in the layer timeline, so only eyes settle it.
+- **`coldstart.sh`'s hand-over metric is quantised at ~2 s** (one `dumpsys activity activities` per
+  poll). A true user-visible hand-over number needs the display activity's first frame; the guest's
+  marker is the precise signal this round used.
+- Three gesture items still need a clean run or a finger (switcher close, pill short swipe, back
+  edge): in phase 3 they ran with the switcher's overlay still up. Phase 8 re-runs them from a
+  verified clean state.
