@@ -4,19 +4,21 @@ Branch `r11/mobile-startup`, worktree `<repo>` (stream S2 of the R11 round), bas
 Answers the owner's "mobile UI slow start" item from the R10 report: mobile hand-over
 10.7-11.2 s against desktop 3.0-3.5 s on the same build.
 
-**Result in one line:** the mobile shell was waiting ~7 s at every start for
-`omamobile.quicksettings`' tile-state pass (nine serial `timeout 3` backend probes), which ran
-from `Component.onCompleted`; the pass is now parallel, cached, and off the start-up path, and
-the three idle restart loops the same instrument found are closed.
+**Result in one line:** the mobile shell ran `omamobile.quicksettings`' tile-state pass (nine serial
+`timeout 3` backend probes, from `Component.onCompleted`) for ~7 s at every start — now parallel,
+cached and off the start-up path — and three idle restart loops found on the way are closed. The
+start-up itself did **not** get measurably faster: the marker's spread on one build is larger than
+the change, and a 365 ms lazy first open rules out QML compilation as the cost. The limiter sits
+inside quickshell's own start-up window and needs a profiler; that is this stream's open item.
 
 ## STATUS
 
 | # | Step | State | Proof |
 | --- | --- | --- | --- |
 | 1 | Timeline instrument (evlog + process sampler), shell restart vs cold start | PASS | phase 1: two mobile cold starts and one desktop cold start on the R10 build (`p1/`), evlog + procs; `tile-state.sh` 7.13 s / 6.60 s in both mobile arms, absent in the desktop arm |
-| 2 | Bisect: one omamobile plugin at a time out of the shell's plugin list | PARTIAL | phase 3's arm read a stale evlog (no session had started since the instruments were pushed); re-run in phase 5 after an install + cold start (`p5/plugins-bisect.txt`, `p5/evlog-bisect.txt`) |
+| 2 | Bisect: one omamobile plugin at a time out of the shell's plugin list | FAIL (method) | the plugin-drop arm needs a shell restart in this guest, and `omarchy-restart-shell` starts three shells per call, so its timeline mixes shells (`p5/evlog-bisect.txt`); the lazy `keepLoaded` arm gave the one usable number (sheet opens in 365 ms when compiled after boot) |
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
-| 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | PARTIAL | APK `cc12c0e3…` from `3ae27b9`, installed sha proven; mobile desktop-PASS 11.3 / 6.3 / 6.6 s against desktop 4.0 / 3.0 / 2.5 s — **the 1.5 s target is not met** (~3 s gap, down from ~7 s); gestures: bar tap PASS, dock swipe-up PASS, three items not reproduced by injection (below) |
+| 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | FAIL (target) | APK `cc12c0e3…` from `3ae27b9`, installed sha proven; mobile desktop-PASS 6.3 / 6.6 / 11.3 / 11.7 s against desktop 4.0 / 3.0 / 2.5 s — target not met, and the mobile spread (~5 s) is larger than the change; gestures: bar tap, sheet close, dock swipe-up and app open PASS, three items blocked by the switcher not closing |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
 
 ## What changed
@@ -93,21 +95,21 @@ a cold-cache effect.
 - **The pass is off the start-up path.** In every mobile arm `tile-state.sh` starts only with
   the 8 s timer, long after the layers are up (`procs-2`: shell 1.66 s, first `tile-state.sh`
   11.08 s) and takes 0.11 s instead of 6.6-7.1 s, so the parallel rewrite works too.
-- **The residual is inside quickshell, not an external wait.** No child process runs between the
-  shell's start and the late layers (`procs-3`: shell 1.56 s, next child 10.61 s), and the bar
-  and background still appear at 2.4-2.8 s exactly as on desktop. What then takes 3-5 s is
-  quickshell loading/compiling the four `keepLoaded` panels and painting their first frames
-  (QuickSettings.qml 2139 lines + WifiPanel 900 + BluetoothPanel 1098, Launcher.qml 1348,
-  Back.qml 220, Switcher.qml 725). The image ships no `qmlcachegen` (census of `/usr/lib/qt6/bin`),
-  so the shell compiles QML from source at each start; whether Qt's own disk cache is additionally
-  in play is not established — the first start after the install was 4-5 s slower than the next two
-  on identical files.
-- **Target not met.** Mobile desktop-PASS 6.3 and 6.6 s against desktop 3.0, 3.6, 2.5 s: a ~3 s
-  gap where the brief allows 1.5 s, down from ~7 s on the R10 build. Arm 2 (11.3 s) is the first
-  mobile start after the install and is out of family with arms 3 and 6 on the same files; it is
-  recorded as variance, not attributed.
-- Phase 5 measures the two ways out (a plugin-drop bisect and lazy `keepLoaded`), on the same
-  build, and reports the sheet's first-open cost for the lazy variant.
+- **The pass is off the start-up path, but it was not the limiter.** In every mobile arm
+  `tile-state.sh` now starts only with the 8 s timer (`procs-2`: shell 1.66 s, first
+  `tile-state.sh` 11.08 s) and takes 0.11 s instead of 6.6-7.1 s. **The marker did not follow:**
+  mobile marker 9.80 / 9.26 s on the R10 build against 7.81 / 8.13 / 10.37 / 10.87 s on the fixed
+  build (mean 9.5 vs 9.3). Phase 1's "layers map when the pass exits" was a correlation between two
+  effects of the same busy window, not causation.
+- **No child process runs in the late window** (`procs-3`: shell 1.56 s, next child 10.61 s), and
+  the bar/background still appear at 2.4-3.1 s as on desktop, so the 5-8 s is inside quickshell's
+  own start-up (services, the full-screen wallpaper's first raster, four async panel completions)
+  on the main thread.
+- **Target not met, and the spread swallows the difference.** Mobile desktop-PASS on the fixed
+  build: 6.3, 6.6, 11.3, 11.7 s (phase 3 arms 3/6 and phase 3 arm 2 + phase 5 control) against
+  desktop 4.0, 3.0, 2.5 s. The run-to-run spread on mobile (~5 s) is larger than the change
+  measured, so this round cannot claim a start-up win; it can claim the mechanism change (a 7 s
+  serial fork storm and three restart loops gone from the boot path).
 
 ### Gestures, mobile arm of phase 3 (direct touch, quick swipes, `<adb serial>`)
 
@@ -141,6 +143,25 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
 - Resident helpers: `fit-x11.py` 0.2 % CPU (etimes 124 s), `omarchy-watch.py` 0.6 % (`idle-ps.txt`).
   Nothing else in the omamobile family stays alive.
 
+### Phase 5 — the two attribution attempts (same APK, `<scratch>/p5/`)
+
+- **The restart-based arms are unusable.** `omarchy-restart-shell` under proot starts more than one
+  shell (R5 and R10 both recorded three launches per call), and the segment boundary is a mark file
+  touched just before the command, so the timeline contains layers opening at mark+0.10 s — not a
+  fresh shell — and mixes two or three shells. The plugin-drop bisect and the lazy `keepLoaded` A/B
+  are recorded (`evlog-bisect.txt`, `evlog-lazy.txt`) and not interpreted.
+- **One solid datum came out of the lazy arm:** with `omamobile.quicksettings` and
+  `omamobile.switcher` at `keepLoaded: false`, the first bar tap opened the sheet in **365 ms**
+  (`first bar tap with lazy quicksettings: 365 ms`, layer list includes `omamobile-quicksettings`).
+  Loading QuickSettings.qml (2139 lines + its two panels) on demand therefore costs ~0.4 s, so QML
+  compilation is **not** what makes a mobile start take 5-11 s.
+- The same phase's control cold start, identical build and files, marked ready at **10.87 s** against
+  7.81 and 8.13 s in phase 3: the spread is real and is not a build difference.
+- Consequence: the limiter is inside quickshell's start-up window (service init, the full-screen
+  wallpaper's first raster, the async panel completions on the main thread), not the plugin set, its
+  QML size, or an external child. Pinning it needs an instrument this stream did not build: `qs log`
+  with timing categories, per-surface `WAYLAND_DEBUG` timestamps, or `perf` on the shell process.
+
 ## Switches
 
 - `OMDROID_QS_PROBE_AT_LOAD=1` in `~/.config/omdroid/session.env` → the probe runs at load again
@@ -156,3 +177,19 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
   slowest probe (3 s), not by nine serial ones.
 
 ## Not done
+
+- **The start-up target is not met and the limiter is not yet pinned.** Next step is an instrument
+  inside the shell, not another A/B: `qs log` with timing categories on a live start, per-surface
+  `WAYLAND_DEBUG` timestamps (`omarchy-bar`, `omamobile-dock`, `omamobile-launcher`,
+  `omamobile-back`), or `perf record` on the shell process across a cold start. Then re-test the
+  candidates that remain (the wallpaper's first raster, the audio/network service probes, the
+  incubator completions) one at a time.
+- **The six-arm comparison needs more runs.** Four mobile cold starts on the fixed build gave
+  6.3, 6.6, 11.3, 11.7 s; two on the R10 build gave 10.2 and 10.3 s. A same-hour A/B of at least
+  five alternating runs per build is needed before any number here is quoted as a win.
+- **Three gesture items need a re-run or a finger** (pill swipe, back edge, switcher close). The
+  switcher's own close swipe is the one that failed first; the other two ran with its overlay still
+  up.
+- **The shell-restart A/B method is unusable under proot** (`omarchy-restart-shell` starts three
+  shells). Any future bisect must use cold starts plus a per-boot build, or measure inside one
+  shell with a mark taken after the shell has settled.
