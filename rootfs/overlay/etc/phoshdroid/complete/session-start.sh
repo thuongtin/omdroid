@@ -16,6 +16,8 @@
 #   OMDROID_COMPLETE_BANNERS=0 keep Hyprland start-up warning banners
 #   OMDROID_COMPLETE_CLIPBOARD=0  no clipboard bridge between the guest Wayland
 #                              clipboard and the X display Android talks to
+#   OMDROID_COMPLETE_BROWSER=0 keep the image's brave launcher (which aborts here: the
+#                              sandbox helper cannot be root-owned 4755 inside proot)
 # Every change is key-level and reversible; the state lives in ~/.local/state/omdroid/complete.
 D=${OMDROID_COMPLETE_DIR:-/etc/phoshdroid/complete}
 BIN=${OMDROID_COMPLETE_BIN:-/usr/local/bin}
@@ -35,7 +37,8 @@ terminal=${OMDROID_COMPLETE_TERMINAL:-1}
 editor=${OMDROID_COMPLETE_EDITOR:-1}
 banners=${OMDROID_COMPLETE_BANNERS:-1}
 clipboard=${OMDROID_COMPLETE_CLIPBOARD:-1}
-[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; clipboard=0; }
+browser=${OMDROID_COMPLETE_BROWSER:-1}
+[ "$all" = 0 ] && { power=0; idle=guest; menu=0; terminal=0; editor=0; banners=0; clipboard=0; browser=0; }
 
 # --- power and session entries -------------------------------------------------
 # The omarchy-* names are links in /usr/local/bin to /usr/share/omarchy/bin (set at image
@@ -169,6 +172,21 @@ if [ "$clipboard" != 0 ]; then
 else
     stop_bridge
     say "clipboard: bridge off (switch)"
+fi
+
+# --- the browser ---------------------------------------------------------------------
+# A bare `brave` aborts here: its setuid sandbox helper cannot be root-owned mode 4755
+# inside proot, so it exits before a window exists and the next launch says it quit
+# unexpectedly. The image's Chromium is launched with the sandbox off for the same
+# reason (omarchy-launch-browser's proot branch). This link gives Brave those flags
+# from every entry point - a desktop entry's `Exec=brave %U`, the menu, a terminal -
+# because /usr/local/bin comes before /usr/bin in the session PATH.
+if [ "$browser" != 0 ]; then
+    link_ours brave "$D/bin/brave"
+    say "browser: brave launches with the sandbox off (proot)"
+else
+    [ "$(readlink "$BIN/brave" 2> /dev/null)" = "$D/bin/brave" ] && rm -f "$BIN/brave"
+    say "browser: the image brave kept (switch)"
 fi
 
 exit 0

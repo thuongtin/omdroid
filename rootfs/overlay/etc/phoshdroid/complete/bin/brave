@@ -1,0 +1,19 @@
+#!/bin/bash
+# Brave under proot: the sandbox helper cannot be configured, so run it the way the
+# session runs Chromium (omarchy-launch-browser's OMDROID/proot branch).
+#
+# Measured on the tablet, 2026-11-27, a bare `brave`:
+#   FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:172]
+#   The SUID sandbox helper binary was found, but is not configured correctly.
+#   ... make sure that /opt/brave-bin/chrome-sandbox is owned by root and has mode 4755.
+# It aborts before a window exists, and the next launch then reports that the
+# browser quit unexpectedly. Inside proot nothing can be root-owned mode 4755, so
+# the sandbox is off by design here, the same way Chromium is launched.
+#
+# This file is linked into /usr/local/bin (before /usr/bin in the session PATH), so
+# a desktop entry's `Exec=brave %U`, the menu and a plain `brave` all get the flags.
+exec /usr/bin/brave \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --password-store=basic \
+    "$@"

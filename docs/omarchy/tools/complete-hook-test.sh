@@ -154,6 +154,12 @@ check "clipboard: the switch off stops it" "grep -q 'clipboard: bridge off' $T/h
 tries=0; while kill -0 "$cbpid" 2> /dev/null && [ $tries -lt 20 ]; do sleep 0.1; tries=$((tries+1)); done
 check "clipboard: the process is gone after the switch off" "! kill -0 $cbpid 2> /dev/null"
 
+# --- the browser: the link that gives brave its proot flags
+OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=1 bash "$D/session-start.sh" > /dev/null 2>&1
+check "browser: the switch on links brave to the shim" "[ \"\$(readlink $T/bin/brave)\" = \"$D/bin/brave\" ] && [ -x $D/bin/brave ]"
+OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=0 bash "$D/session-start.sh" > /dev/null 2>&1
+check "browser: the switch off removes the link" "[ ! -e $T/bin/brave ]"
+
 rm -rf "$T"
 [ $fail = 0 ] && echo "all passed" || echo FAILED
 exit $fail
