@@ -426,13 +426,35 @@ printed no reinstall (read from the log; my own sha256 line in the script failed
 | R10 APK, original QML, restart 1 | rc 1, "Omarchy shell did not become ready after restart." | **intact desktop**: wallpaper, bar 09:47, search bar (`r8-R-1`) | 0 |
 | R10 APK, original QML, restart 2 | rc 1, same message | black screen with the cursor, no dialog, a defunct `quickshell` in the process list (`r8-R-2`) | 0 |
 
-Crash report of the candidate (`0d1z4l5pt`): the log ends "Exiting due to IPC request." (the old instance being stopped
-by `quickshell kill`), i.e. the crash is on the way out of the instance that the restart kills, not in the new one. The
-report headers I printed carry no backtrace section I could read; phase 9 prints the body. On the R10 control the restart
-also fails, differently: the shell does not answer the ping within the script's 2 s (20 x 0.1 s) and the script exits 1
-although a desktop comes up (restart 1). So the stock restart is unreliable on the base as well; the crash dialog is
-the candidate-only part of the evidence so far (2 of 2 against 0 of 2, n is small). The candidate differs from the control
-in the patched `Background.qml` (`sourceSize`) and in the ring of 2; phase 9 splits them.
+Crash report of the candidate (`0d1z4l5pt`, and `dr5hyn5pt` in phase 9): the stack is
+`__dynamic_cast` inside `QQmlObjectCreator::finalize` -> `QQmlIncubatorPrivate::incubate` -> the event loop,
+i.e. a crash while the **starting** instance creates its QML objects, not in the instance being killed. Every
+crash report carries the same frames. The restart script also fails on its own terms in every arm: it waits
+20 x 0.1 s for `omarchy shell ping` and exits 1 when a slow start misses that window (R10 restart 1 above),
+and in some arms the new shell never appears at all (phase 9 arm M restart 2: no shell surface).
+
+### Phase 9: the crash is not this stream's change (measured, tablet, 09:58-10:05)
+
+At the start the installed sha256 read `bef783d7...`, exactly `R10_SHA` from the phase library, so phase 8's
+control really ran on the R10 integration APK. Then the candidate APK, four arms, two manual restarts each
+(crash folders before each arm: 3):
+
+| arm | session.env | restart 1 | restart 2 | new crash folders |
+| --- | --- | --- | --- | --- |
+| Q1 | none (patched QML, ring 2) | rc 0, no crash, bar missing | rc 0, full layers | 0 |
+| M | `OMDROID_MEM_QML=0` (original QML) | rc 1 (ping missed) but a desktop | rc 0 but **no shell surface** | 0 |
+| A | `AQ_WAYLAND_SWAPCHAIN=3` (ring 3, patched QML) | rc 0, no crash, bar missing | rc 1 but a desktop | 0 |
+| Q2 | none (same as Q1) | rc 0 but **new crash folder** `dr5hyn5pt` | rc 1 but a desktop | 1 |
+
+**A crash folder from 00:45:36 exists in the guest.** Phase 1 started at 00:46:32, the candidate APK was built at
+00:54:08 and first installed at 01:00:52, so that crash happened before this stream touched the tablet, on the
+build the owner already had. Its report has the same section structure; I did not print its stack. So the
+Quickshell crash on a shell restart **predates this stream** and is not caused by the `mem/` files or the ring
+cap. It is also not reproducible on demand: 3 crashes in 12 candidate restarts (phases 6, 7, 9) and 0 in 2 on the
+R10 APK. It is a QML object-creation crash in the restarted instance, and both the patched and the original
+`Background.qml` produced it (Q2 patched, crash; M original, no crash folder but a dead shell), so the QML patch is
+not implicated by this evidence. Left open for whoever owns the shell's start (S4's `omarchy-watch.py` restarts
+the shell on every size change; upstream's `omarchy-restart-shell` is what fails).
 
 ## What changed
 
@@ -450,16 +472,62 @@ in the patched `Background.qml` (`sourceSize`) and in the ring of 2; phase 9 spl
 
 ## Host proof
 
+- Gates: `bash -n` on every changed shell script (`start.sh`, `mem/session-start.sh`, `mem/qml-apply.sh`) before each
+  commit; `python3 -m py_compile` on the one Python file written (`soft-diet.py`, since reverted); no Kotlin file was
+  touched, so `:app:test` was not required for this stream's changes. The candidate APK built with
+  `build-chain.sh --no-repack`-equivalent (`assembleDebug`, `BUILD SUCCESSFUL in 1m 6s`, `<scratch>/mem/logs/apk-gradle.log`);
+  no `:app:test` task ran there, and the APK carries sha256 `4e89a89b...`, 1,124,738,127 B.
+- aquamarine 0004: built in the arm64 container (`<scratch>/mem/logs/aq-build.log`, `BUILDDONE rc=0`); ABI comparison
+  printed identical SONAME, identical NEEDED, no consumer symbol missing; library sha256 `5e8bbd35...`, 1,775,888 B.
+- Leak scan (`git diff --cached | grep -nE '/home/phil|\.hermes|192\.168\.|100\.[0-9]+\.[0-9]+\.[0-9]+|72c03583|SM[-_]F9'`)
+  run before every commit; it printed nothing each time.
+
 ## Device proof
 
-## Switches
+Nine phases on the tablet, each under `<scratch>/omarchy/r11/tablet.lock` with the phase library restoring the owner
+state and reinstalling the R10 APK (every phase log ends `PHASE-END` after `probe after restore: VERDICT: PASS`):
+phase 1 attribution (00:46), phase 2 candidate against R10, C1 B1 B2 C2 (01:00-01:10), phase 3 ring load and the
+software diet (01:33-01:50), phase 4 software levers (02:16-02:25), phase 5 trace and forced repaint (02:48-03:00),
+phase 6 software cost against pixels and the restart arm (08:07-08:19), phase 7 rotation round trips, manual restart
+and the busy-state repeat (08:52-09:07), phase 8 the R10 restart control (09:46-09:48), phase 9 the crash split
+(09:58-10:05). Logs: `<scratch>/mem/phase{1..9}.log`.
 
-| Change | Switch | Off value |
+Session PSS, idle, same hour, same tablet (measured, PSS including SwapPss; SwapPss 0.2 MB in every arm):
+
+| arm | idle session PSS | idle CPU |
 | --- | --- | --- |
-| aquamarine ring of two | `AQ_WAYLAND_SWAPCHAIN` (`session.env`) | `3` |
-| every change of `mem/` | `OMDROID_MEM` | `0` |
-| Quickshell file patches | `OMDROID_MEM_QML` | `0` |
+| R10 behaviour (B1, B2) | 683.8 / 689.3 MB | 12.1-12.5 % |
+| candidate (C1, C2) | 630.6 / 610.7 MB | 12.1-12.5 % |
 
 ## Risks
 
+- **A candidate session leaves the patched `Background.qml` in the owner's guest.** The R10 `start.sh` has no
+  per-feature hook, so `OMDROID_MEM_QML=0` is never run and `qml-apply.sh` never restores the original: after the
+  phase 7 session the guest still had `wallpaperPixels` in that file. I put it back by hand in phase 8 and phase 9's
+  exit trap does the same. The merged R11 `start.sh` runs the hook on every start, so this cannot happen there; it is
+  a hazard of testing the candidate APK on a tablet that then runs the R10 build.
+- **Wallpaper fine detail is 36 % lower** (Laplacian variance 74 against 117; mean error against a Lanczos ground truth
+  0.90 against 0.92; 1:1 crops indistinguishable to my eye). `OMDROID_MEM_QML=0` restores the file exactly.
+- **The intermittent software-mode busy state is unexplained.** It hit 4 of 4 sessions in phase 5 and 0 of 3 in
+  phases 6 and 7. If it comes back on a user's device, software mode can pin every llvmpipe worker at a full core
+  each; nothing in this stream prevents it.
+- **Software mode's real lever is not shipped**: a quarter of the pixels types at 147 % instead of 455 % and saves
+  400 MB of session PSS, but the X-server surface size is a host change (outside this row).
+- **Step 3's correctness evidence is before/after frames**, not a working repaint control: no instrument in this
+  stream could force a repaint (0 damaged commits of 256 and 233). A stale-pixel regression that does not move the
+  frame-to-frame picture would not be caught here.
+- The Quickshell crash on a manual restart predates this stream and is not reproducible on demand; it is left open.
+
 ## What was not done
+
+- Step 6 (`TERMUX_X11_FORCE_FLIP=1`) was not run: read only, `loriePresentFlip` returns FALSE for cage's imported
+  buffers before the flag is tested (`termux-x11/app/src/main/cpp/lorie/InitOutput.c:799-803`).
+- The software-mode resolution lever (a smaller X-root surface) is measured, not built: `DisplayGeometry`/the host's
+  surface size are outside this stream's files.
+- `LP_NUM_THREADS` and `debug.vfr` are measured and **not shipped** (a 1.7-3 commits/s desktop, and the lost-last-frame
+  risk respectively).
+- The busy state was not traced to a cause, and the manual-restart crash was not bisected beyond the four arms of
+  phase 9 (12 restarts in total is too few for a QML-creation crash that fires about one restart in four).
+- `dumpsys meminfo` (TOTAL/Graphics) was taken in phase 2 only; later phases used the smaps roll-up alone.
+- The Quickshell `wl_shm` buffer swing of about ±23 MB between sessions is not explained (UNVERIFIED: one extra
+  drawer buffer, size fits, not proven).
