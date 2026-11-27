@@ -479,8 +479,9 @@ the shell on every size change; upstream's `omarchy-restart-shell` is what fails
   no `:app:test` task ran there, and the APK carries sha256 `4e89a89b...`, 1,124,738,127 B.
 - aquamarine 0004: built in the arm64 container (`<scratch>/mem/logs/aq-build.log`, `BUILDDONE rc=0`); ABI comparison
   printed identical SONAME, identical NEEDED, no consumer symbol missing; library sha256 `5e8bbd35...`, 1,775,888 B.
-- Leak scan (`git diff --cached | grep -nE '/home/phil|\.hermes|192\.168\.|100\.[0-9]+\.[0-9]+\.[0-9]+|72c03583|SM[-_]F9'`)
-  run before every commit; it printed nothing each time.
+- Leak scan (the COMMON.md pattern: build-machine paths, scratch paths, addresses, the adb serial, phone models) run
+  before every commit; it printed nothing each time (this line spells the pattern out only as a description so that the
+  scan does not match this file).
 
 ## Device proof
 
