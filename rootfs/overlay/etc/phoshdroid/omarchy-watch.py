@@ -705,8 +705,13 @@ def main():
             attempts = 0
             fits = 0
             scale_fits = 0
-            EXHAUSTED[:] = []
-            exhausted_logged = False
+            # A new size is a new attempt, but an exhaustion recorded FOR this size stands: the
+            # ui-switch failure and the size change land in the same pass, and clearing it here
+            # let a second restart run for the size the guard had just left alone (phase 11,
+            # undock 1). Only a different size clears it.
+            if EXHAUSTED and EXHAUSTED[0] != key:
+                EXHAUSTED[:] = []
+                exhausted_logged = False
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
