@@ -1,7 +1,7 @@
 # r12: the extra-key bar is summoned, not restored
 
 Termux:X11's extra-key bar (the "X11 footer") now starts hidden in every session and is summoned by
-a small floating keyboard button in the bottom-left corner of the X view; tapping the same button
+a small floating keyboard button in the bottom-right corner of the X view; tapping the same button
 hides it again. The bar is an overlay: with Termux:X11's `adjustHeightForEK` preference off (the
 default, and the only value this app writes), showing it draws the keys over the bottom of the
 desktop instead of shrinking it. The X root is the full window on every display and the host
@@ -19,8 +19,9 @@ reserves no bottom gap.
   `toggleExtraKeys(false, false)`, `onResume`, `onConfigurationChanged`,
   `onPreferencesChangedCallback` (the preference listener) and `clientConnectedStateChanged` — now
   goes through that field.
-- New `@+id/extra_keys_button`: a 36 dp `ImageButton` in the root `FrameLayout`, bottom-left
-  (`layout_gravity="bottom|start"`, 4 dp margins), a translucent dark circle
+- New `@+id/extra_keys_button`: a 36 dp `ImageButton` in the root `FrameLayout`, bottom-right
+  (`layout_gravity="bottom|end"`, 4 dp end/bottom margins; the mobile UI's dock puts its search
+  icon in the bottom-left corner, so the right end is the free one), a translucent dark circle
   (`drawable/extra_keys_button_bg.xml`) with a keyboard glyph drawn as a vector
   (`drawable/ic_extra_keys.xml`, no binary asset), content description `Show or hide the key bar`.
   It calls `toggleExtraKeys()`, so the same button shows and hides the bar. Its visibility follows

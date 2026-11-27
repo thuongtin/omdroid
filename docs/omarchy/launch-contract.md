@@ -171,7 +171,7 @@ running, the host re-launches the same `singleTask` activity with that display i
 activity can be created, and the X root follows the surface the view lands on.
 
 **Keyboard, mouse, bar.** The extra-key bar is hidden in every session until the user summons it
-with Termux:X11's floating keyboard button, bottom-left (r12): the bar is an overlay drawn over the
+with Termux:X11's floating keyboard button, bottom-right (r12): the bar is an overlay drawn over the
 X view, so it never changes the X root and no display reserves space for it. Docked, the X activity
 asks for Android 16.1's keyboard capture — `<uses-permission android:name="android.permission.CAPTURE_KEYBOARD"/>`
 plus `LayoutParams.setKeyboardCaptureEnabled(true)` by reflection, because neither is in the
