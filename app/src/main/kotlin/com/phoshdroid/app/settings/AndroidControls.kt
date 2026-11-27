@@ -172,6 +172,10 @@ class AndroidControls(
 
     private fun register() {
         if (registered) return
+        // Marked before the first listener attaches: a step that throws halfway must not leave the
+        // listeners already attached for the life of the process. Every unregister() call below is
+        // tolerant of a listener that was never attached.
+        registered = true
         val filter =
             IntentFilter().apply {
                 addAction(Intent.ACTION_BATTERY_CHANGED)
@@ -191,7 +195,6 @@ class AndroidControls(
             }
             context.getSystemService(ConnectivityManager::class.java)
                 ?.registerNetworkCallback(NetworkRequest.Builder().build(), networkCallback)
-            registered = true
         } catch (error: Exception) {
             warn("Android controls: could not register the state listeners", error)
         }
