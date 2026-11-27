@@ -56,6 +56,10 @@ LOG_PATH = os.environ.get("OMARCHY_WATCH_LOG", "/tmp/omarchy-watch.log")
 # A restart that kills the shell instead of bringing it back leaves this behind, so the
 # failure outlives the log and the next session can report it.
 FAIL_PATH = os.path.join(os.path.expanduser("~"), ".local", "state", "omdroid", "shell-restart-failed")
+# How long one recovery launch gets to bring the layers back before this size is left alone.
+RECOVER_WAIT = 10.0
+# The monitor size whose actions are spent after a lost shell: one-shot, cleared by a new size.
+EXHAUSTED = []
 POLL = 0.25          # seconds between evaluations
 STABLE_S = 1.5       # a new monitor size must hold this long before we act
 
@@ -427,7 +431,10 @@ def switch_ui(mode, st=None):
         verdict, facts = shell_after_failure()
         if verdict == "failed":
             write_failure(facts)
-            parts.append("shell restart FAILED (%s), not retried" % facts)
+            ok, line = recover(st)
+            parts.append("shell restart FAILED (%s), not retried; %s" % (facts, line))
+            if not ok:
+                mark_exhausted(st)
         else:
             parts.append("layers still do not fit 8 s after the restart (%s)" % facts)
     else:
@@ -548,6 +555,58 @@ def write_failure(facts):
         pass
 
 
+def launch_shell():
+    """A FRESH shell launch: `omarchy-launch-shell`, never `omarchy-restart-shell`.
+
+    The restart is the call that lost the shell (r11 phases 9 and 10: the second restart of a
+    dock or undock cycle left no shell at all), so running it again is exactly the retry the guard
+    forbids. `omarchy-launch-shell` only starts one, and it returns once the shell answers.
+    """
+    exe = os.path.join(OMARCHY, "bin", "omarchy-launch-shell")
+    if not os.path.exists(exe):
+        return "omarchy-launch-shell missing"
+    env = dict(os.environ)
+    env.setdefault("OMARCHY_PATH", OMARCHY)
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=60, env=env)
+        return "omarchy-launch-shell rc=%d" % r.returncode
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "omarchy-launch-shell failed: %s" % e
+
+
+def recover(st):
+    """The ONE recovery launch a lost shell authorises. Returns `(ok, one line)`.
+
+    Called only after `shell_after_failure()` said `failed` and the marker was written. A second
+    launch is never attempted: if the layers are not back within RECOVER_WAIT the caller marks the
+    size exhausted and nothing more is done for it until the size changes or the user acts.
+    """
+    key = tuple(st.get("mon") or ())
+    time.sleep(2)
+    log("recovery: one fresh shell launch after the failed restart (%s)" % launch_shell())
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < RECOVER_WAIT:
+        time.sleep(0.5)
+        now = evaluate()
+        if not now.get("missing") and now.get("layers_ok"):
+            took = time.monotonic() - t0
+            log("recovery: recovered after one fresh launch %.1f s" % took)
+            return True, "recovered after one fresh launch %.1f s" % took
+    now = evaluate()
+    procs = shell_processes()
+    facts = "layers background=%s bar=%s quickshell=%s" % (
+        surface(now.get("bg")), surface(now.get("bar")), "unknown" if procs is None else procs)
+    write_failure(facts)
+    log("recovery: the fresh launch did not bring the layers back (%s): %dx%d is left alone, "
+        "no further actions" % (facts, key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
+    return False, "recovery launch did not bring the layers back (%s), no further actions" % facts
+
+
+def mark_exhausted(st):
+    """No more actions for this monitor size until it changes."""
+    EXHAUSTED[:] = [tuple(st.get("mon") or ())]
+
+
 def main():
     last_ui = ui_mode()
     log("start pid=%d runtime=%s act=%s ui=%s heartbeat=%.1fs legacy=%s" %
@@ -555,6 +614,7 @@ def main():
          "on" if LEGACY else "off"))
     ready = False
     last_missing = None
+    exhausted_logged = False
     last_key = None
     size_since = time.monotonic()
     attempts = 0
@@ -625,9 +685,14 @@ def main():
                 verdict, facts = shell_after_failure()
                 if verdict == "failed":
                     write_failure(facts)
-                log("ui switch to %s: %s" % (queued, "shell restart FAILED (%s), not retried" % facts
-                                              if verdict == "failed" else
-                                              "layers still do not fit 8 s after the restart (%s)" % facts))
+                    ok, line = recover(st)
+                    if not ok:
+                        mark_exhausted(st)
+                    log("ui switch to %s: shell restart FAILED (%s), not retried; %s"
+                        % (queued, facts, line))
+                else:
+                    log("ui switch to %s: layers still do not fit 8 s after the restart (%s)"
+                        % (queued, facts))
             else:
                 log("ui switch to %s: layers fit again %.1f s after the restart" % (queued, took))
             hot_until = time.monotonic() + HOT_S
@@ -640,6 +705,8 @@ def main():
             attempts = 0
             fits = 0
             scale_fits = 0
+            EXHAUSTED[:] = []
+            exhausted_logged = False
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
@@ -677,6 +744,13 @@ def main():
                 size_since = time.monotonic()
                 hot_until = size_since + HOT_S
                 hypr_data = None
+        elif not st["layers_ok"] and EXHAUSTED and EXHAUSTED[0] == key:
+            # A restart lost the shell for this size and the one recovery launch did not bring it
+            # back. Nothing more is done here: another restart is the retry the guard forbids.
+            if not exhausted_logged:
+                log("layers do not fit %dx%d: this size is left alone after a lost shell "
+                    "(no further actions; a new size or the user is the way back)" % key)
+                exhausted_logged = True
         elif not st["layers_ok"]:
             if stable >= STABLE_S:
                 if attempts < RETRY_CAP:
@@ -701,15 +775,20 @@ def main():
                             if took is None:
                                 verdict, facts = shell_after_failure()
                                 if verdict == "failed":
-                                    # The restart lost the shell. A retry would repeat the crash
-                                    # (S1: a second stock restart leaves a black screen), so the
-                                    # budget ends here and the desktop is left alone until the
-                                    # size changes again or the user acts.
+                                    # The restart lost the shell. The failing call is NEVER retried
+                                    # (S1: a second stock restart leaves a black screen); exactly one
+                                    # fresh launch follows, and if that does not bring the layers
+                                    # back the size is exhausted.
                                     write_failure(facts)
-                                    log("act: shell restart FAILED (%s): not retrying, "
-                                        "the desktop is left for the next size change or user "
-                                        "action" % facts)
-                                    attempts = RETRY_CAP + 2
+                                    log("act: shell restart FAILED (%s): not retrying" % facts)
+                                    ok, line = recover(st)
+                                    log("act: %s" % line)
+                                    if ok:
+                                        attempts = 0
+                                    else:
+                                        attempts = RETRY_CAP + 2
+                                        mark_exhausted(st)
+                                        exhausted_logged = True
                                 else:
                                     log("act: layers still do not fit 8 s after the restart (%s)"
                                         % facts)
