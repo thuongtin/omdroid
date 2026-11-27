@@ -8,8 +8,8 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | # | Step | Status | Proof |
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
-| 2 | Quickshell fixes (through `mem/`) | CODE COMMITTED, device PENDING | `47e1aee`: wallpaper `sourceSize` patch via `mem/qml-apply.sh` (dry run on a copy of the image shell dir: patched, idempotent, `OMDROID_MEM_QML=0` restores byte-identical); expected saving about 53 MiB; phase 2 measures it |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | CODE COMMITTED, device PENDING | `f97dda7`: patch 0004, library built (ABI OK: SONAME and NEEDED identical, 0 consumer symbols missing, GLIBC 2.38), sha256 `5e8bbd35...`; device A/B and correctness diffs run in phase 2 |
+| 2 | Quickshell fixes (through `mem/`) | PASS (memory), fidelity noted | `47e1aee`: wallpaper `sourceSize`: Quickshell wallpaper block 77.7 -> 26.3 MiB, Quickshell heap 143.2 -> 91.3 / 92.3 MB in both candidate arms (phase 2, below); picture unchanged to my eye, fine-detail energy 36 % lower (measured, below); `OMDROID_MEM_QML=0` restores the file |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PARTIAL: idle PSS and repaint diffs PASS, commit rhythm PENDING | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in both candidate arms (3 -> 2 `aquamarine-shm` mappings); forced-repaint diffs 0 on idle, window open, window close, toast fade, rotation, restore; `AQ_TRACE` commit rhythm and CPU re-measure in phase 3 |
 | 4 | Hyprland extras (logo, cursor, render options) | PENDING | image config already sets logo, splash, blur, shadows off (read) |
 | 5 | Software-GPU diet (`OMDROID_GPU=software`) | CODE COMMITTED, device PENDING | `70fef09`: `mem/soft-diet.py` (hyprctl eval, re-applied after `configreloaded`); the image config already has blur and shadows off (read), so the measurable part is animations: phase 3 decides whether more is needed |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | PENDING | |
@@ -109,6 +109,93 @@ Every full-frame buffer in the session: 72.2 + 24.1 + 24.1 + 24.2 + 24.1 (backgr
 | full-screen mobile layers mapped while invisible, double-buffered | **partly**: the drawer holds two 22.97 MiB buffers (45.9 MiB, 11.5 MiB of PSS per side) and stays mapped by design (S2's tree); the back edges are 77 px strips, so not an issue |
 | CJK font faces | **refuted**: font files are 0.6-1.0 MB PSS in every process |
 | software scene graph (`QT_QUICK_BACKEND=software`) | **real but not separable**: it is why the shell has `wayland-shm` buffers instead of GPU ones; both branches of `omarchy-launch-shell` set it (read) |
+
+## Phase 2: candidate against the R10 behaviour, same hour (measured)
+
+Candidate APK `omdroid-mem-47e1aee.apk` (sha256 `4e89a89b...`, built from `47e1aee`), installed over
+the R10 build on the tablet; arm C = as shipped, arm B = the R10 behaviour through the switches
+(`OMDROID_MEM=0`, `AQ_WAYLAND_SWAPCHAIN=3`). Order C1, B1, B2, C2, 01:01-01:10 on one clock. Every
+arm: cold start, 30 s settle, two `smaps_rollup` snapshots 60 s apart (median and range of the two).
+Arm identity read back from the process in each arm: Hyprland environment, `aquamarine-shm`
+mapping count (3 in B, 2 in C), `Background.qml` carrying `wallpaperPixels` (4 lines in C, 0 in B),
+`session.env`.
+
+| arm | session PSS MB (range) | SwapPss MB | app | Hyprland | Quickshell | idle CPU % of one core | `dumpsys meminfo` app TOTAL PSS / Graphics MB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C1 | **630.6** (630-631) | 0.2 | 172.1 | 188.4 | 214.2 | 12.5 | 275.4 / 128.8 |
+| B1 | **683.8** (683-684) | 0.2 | 184.2 | 200.3 | 243.4 | 12.5 | 287.5 / 128.9 |
+| B2 | **689.3** (686-693) | 0.2 | 183.6 | 206.1 | 243.6 | 12.1 | 273.7 / 115.7 |
+| C2 | **610.7** (609-612) | 0.2 | 170.6 | 178.5 | 205.7 | 12.2 | 261.6 / 116.0 |
+
+**Saving, candidate minus R10: C 610.7-630.6 MB against B 683.8-689.3 MB, so -53.2 MB (C1 - B1) and
+-78.6 MB (C2 - B2); the ranges do not overlap.** Idle CPU is unchanged (12.1-12.5 % in every arm).
+
+Where it comes from (PSS per class, `mem-attrib.py` over the per-mapping dumps of each arm):
+
+| part | B1 | B2 | C1 | C2 | candidate minus R10 |
+| --- | --- | --- | --- | --- | --- |
+| Hyprland `aquamarine-shm` (frame buffers) | 36.1 | 36.1 | 24.1 | 24.1 | **-12.0** (3 -> 2 buffers) |
+| app `aquamarine-shm` | 36.1 | 36.1 | 24.1 | 24.1 | **-12.0** |
+| Quickshell heap and anon (the wallpaper decode) | 143.2 | 143.3 | 91.3 | 92.3 | **-51.9 / -51.0**; the block itself 77.7 -> 26.3 MiB (-51.4) |
+| Quickshell + Hyprland `memfd` `wayland-shm` (layer buffers) | 82.8 | 82.8 | 105.8 | 82.9 | **+23.0 in C1, 0 in C2** |
+| Hyprland heap, libs, GPU; app heap, ashmem, kgsl | unchanged to 0.5 MB | | | | 0 |
+
+The deterministic saving is therefore **75.4 MB** (24.0 ring + 51.4 wallpaper). The -53.2 pair is
+that minus one extra 23.0 MiB `wl_shm` buffer that Quickshell's layer held in session C1 (estimated,
+not isolated: the buffer count of a Qt layer surface depends on the order buffers are released, so it
+can change from session to session; the size equals one drawer buffer). That variance is not ours: it is
+in the shell's own tree (S2's omamobile launcher and the stock background), so the parent should
+expect +-23 MB around the saving until the shell's buffer count is pinned. The remaining -3 MB in
+C2 - B2 is spread over small classes.
+
+The 52 MiB Hyprland anonymous block is **not** the ring: it reads 52.2 / 52.2 (B) and 51.6 / 52.5
+(C), so step 3 does not touch it (attribution is open, step 4).
+
+### Correctness (measured, forced-repaint method of `damage-and-frame-pacing.md`; candidate arm)
+
+Each scenario: settle 3 s, screenshot, re-assert `debug.vfr = false` (a full repaint), settle 3 s,
+screenshot, `scrdiff.py`.
+
+| scenario | changed pixels | max diff |
+| --- | --- | --- |
+| idle | 0 | 0 |
+| `foot` window opened | 0 | 0 |
+| `foot` window closed | 0 | 0 |
+| toast faded (6 s after a `notify-send`) | 0 | 0 |
+| rotated (`screen.sh rot 0`) | 0 | 0 |
+| rotation reset | 0 | 0 |
+
+Positive controls (host-side, on the same shots): the toast really drew (my own look at
+`toast-up.png`: a framed popup "r11-toast / toast fade check" at the top right, and 168,813 px differ
+from the faded frame); `scrdiff` reads 5,809,341 changed pixels between the idle shot and the
+`foot`-open shot, so the instrument sees a window; two sessions of the same build differ by 343 px,
+all in the clock (bbox 141-161 x 29-58). The clock is the only changed region in the repaint diffs
+too, and none showed it changing.
+
+### Wallpaper fidelity (measured and looked at)
+
+My own look at 800 px thumbnails (`p2-C2.png`, `p2-B2.png`): the same wallpaper, bar and key row, no
+black band; at 1:1 on the deer and ridge crop I cannot tell the two apart. Measured, on the
+wallpaper area of the same screenshots: the candidate differs from the original decode by a mean of
+0.52 levels (99th percentile 5), 0.44 % of pixels differ by more than 8 levels. The fine-detail
+energy is lower: Laplacian variance 74.4 against 117.1 (mean horizontal gradient 0.747 against
+0.846). Against a reference built from the source image (centre-cropped, PIL Lanczos / box / triangle
+filters) the original decode reads like an area-filtered downscale (117 against 107 / 116) and the
+candidate is softer, close to a triangle filter (54), but its mean error against the Lanczos
+reference is the same as the original's (0.90 against 0.92). Trade-off: a slightly softer wallpaper
+for 51 MiB. `OMDROID_MEM_QML=0` puts the original file back.
+
+### Load (measured, one sample per arm, interval ASSUMED: re-measured with timed windows in phase 3)
+
+Typing (20 x `input text abcde`, 0.5 s apart) and a scrolling `foot`, CPU % of one core, B1 then C2:
+typing app 16.5 / 13.5, Hyprland 27.4 / 22.9, session 48.8 / 41.3; scrolling app 54.6 / 52.1,
+Hyprland 87.3 / 82.3, session 175.2 / 169.0. The candidate is not worse in any component, but the
+windows were timed as 12 s and 10 s by assumption and each arm has one sample: relative only.
+
+Cold start (one run each, `coldstart.sh`): C1 12.1 s hand-over / 11.6 s desktop, B1 10.8 / 10.2,
+B2 11.0 / 10.5, C2 3.6 / 17.4. The C1 run is the first start after the install (overlay sync) and
+C2 is not explained by anything I changed (a hand-over at 3.6 s and a desktop at 17.4 s, with the
+same process set); phase 3 repeats the cold start in alternation.
 
 ## What changed
 
