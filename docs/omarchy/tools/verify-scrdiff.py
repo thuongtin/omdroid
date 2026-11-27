@@ -9,7 +9,7 @@ Prints one line:
   changed=N changed_gt8=N max_diff=N bbox=x0,y0,x1,y1 outside_clock=N bbox_outside=x0,y0,x1,y1 verdict=V
 verdict is ZERO (identical), CLOCK_ONLY (every changed pixel lies inside the clock box) or
 CHANGED (look at the crop). The default clock box is the mobile bar's left end (x 141-160,
-y 29-58 on the 3200 px tablet, padded); pass --clock for the desktop bar. With --crop and any
+y 29-58 on the 3200 px tablet, padded to x 110-175 so a two-digit change like 08:29 -> 08:30 stays inside; the unread badge beside it, x 184-236, is NOT excluded); pass --clock for the desktop bar. With --crop and any
 change, writes before | after | diff of the bounding box (padded, up to 4x) so a reviewer can
 look at it; with no change it writes nothing.
 """
@@ -33,7 +33,7 @@ def fmt(b):
 def main():
     args = sys.argv[1:]
     crop = None
-    clock = (130, 20, 180, 70)
+    clock = (110, 20, 175, 70)
     pos = []
     i = 0
     while i < len(args):

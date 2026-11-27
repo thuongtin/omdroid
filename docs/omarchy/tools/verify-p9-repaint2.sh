@@ -32,7 +32,9 @@ gpush_to "$VT/verify-scroll.sh" /home/omarchy/.cache/verify-scroll.sh
 shot() { "$TOOLS/shot.sh" "$1" > /dev/null 2>&1; }
 verdict_of() { sed -n 's/.*verdict=\([A-Z_]*\).*/\1/p'; }
 sdiff() { # $1 row name, $2 and $3 shot names: prints the row, remembers the verdict
-    local r; r=$(python3 "$VTOOLS/verify-scrdiff.py" "$OMARCHY_SHOTS/$2.png" "$OMARCHY_SHOTS/$3.png" --crop "$PHASE_OUT/crops/$1.png" | head -1)
+    local r tmp; tmp=$(mktemp)
+    python3 "$VTOOLS/verify-scrdiff.py" "$OMARCHY_SHOTS/$2.png" "$OMARCHY_SHOTS/$3.png" --crop "$PHASE_OUT/crops/$1.png" > "$tmp" 2>&1
+    r=$(head -1 "$tmp"); rm -f "$tmp"
     echo "  $1: $r"
     printf '%s\t%s\n' "$1" "$r" >> "$PHASE_OUT/diffs.tsv"
     LAST_VERDICT=$(echo "$r" | verdict_of)
@@ -69,7 +71,7 @@ try_force() { # $1 name, $2 function: one corruption cycle; sets TRY_OK=1 when t
     [ -n "$TRACE" ] && cb=$(hlog_counts "$off") || cb="trace off"
     shot "$name-s2"
     sdiff "$name-ctl2-bare-reassert-painted-vs-after" "$name-s1" "$name-s2"; local c2=$LAST_VERDICT
-    phase_log "$name: bare vfr=false re-assert: commits [$cb]; remnant $([ "$c2" = ZERO ] && echo STILL THERE '(the step repaints nothing)' || echo "changed: $c2")"
+    phase_log "$name: bare vfr=false re-assert: commits [$cb]; remnant $([ "$c2" = ZERO ] || [ "$c2" = CLOCK_ONLY ] && echo "STILL THERE (the step repaints nothing)" || echo "changed: $c2")"
     [ -n "$TRACE" ] && off=$(hlog_size)
     $fn
     sleep 1.5
@@ -77,7 +79,8 @@ try_force() { # $1 name, $2 function: one corruption cycle; sets TRY_OK=1 when t
     shot "$name-s3"
     sdiff "$name-forced-vs-clean" "$name-s0" "$name-s3"; local c3=$LAST_VERDICT
     phase_log "$name: forcing step $fn: commits [$cs]; screen vs the clean frame: $c3; $(dt_readback)"
-    if [ "$c1" = CHANGED ] && [ "$c2" = ZERO ] && { [ "$c3" = ZERO ] || [ "$c3" = CLOCK_ONLY ]; }; then TRY_OK=1; fi
+    # the bar clock may turn over between two shots, so CLOCK_ONLY counts as "nothing but the clock"
+    if [ "$c1" = CHANGED ] && { [ "$c2" = ZERO ] || [ "$c2" = CLOCK_ONLY ]; } && { [ "$c3" = ZERO ] || [ "$c3" = CLOCK_ONLY ]; }; then TRY_OK=1; fi
 }
 
 # ---------------------------------------------------------------- session 1: prove the forcing step with the trace
@@ -113,6 +116,15 @@ if [ "$FORCE" != none ]; then
     phase_log "controls repeated in the scenario session: TRY_OK=$TRY_OK"
 fi
 
+wait_probe() { # $1 label: poll probe.sh every 2 s (max 40 s) and say when the desktop was whole again
+    local t0 i v; t0=$(date +%s)
+    sleep 6
+    for i in $(seq 1 17); do
+        v=$(probe_q); case "$v" in *PASS*) break ;; esac; sleep 2
+    done
+    phase_log "$1: $v after $(( $(date +%s) - t0 )) s, app pid $(app_pid)"
+    sleep 2
+}
 time_left() { [ "$(date +%s)" -lt "$DEADLINE" ]; }
 cmp3() { # $1 name, $2 the frame taken before the event (or "-"): after-event frame, forced frame, three diffs
     local n=$1 p=$2
@@ -163,12 +175,12 @@ for i in 1 2 3; do
     shot "rot-$i-P"
     hcq '/dispatch hl.dsp.exec_cmd("foot")' > /dev/null; sleep 4
     "$TOOLS/screen.sh" rot 0 2>&1 | grep -E 'cur=' | head -1
-    sleep 10; phase_log "after rotate: $(probe_q) app pid $(app_pid)"
+    wait_probe "after rotate"
     cmp3 "rot-$i-portrait-open" -
     gx 'pkill -x foot; echo foot closed' > /dev/null; sleep 1.5
     cmp3 "rot-$i-portrait-closed" -
     "$TOOLS/screen.sh" rot 1 2>&1 | grep -E 'cur=' | head -1
-    sleep 10; phase_log "after rotate back: $(probe_q) app pid $(app_pid)"
+    wait_probe "after rotate back"
     cmp3 "rot-$i-landscape" "rot-$i-P"
 done
 phase_log "damage_tracking at the end: $(dt_readback)"
