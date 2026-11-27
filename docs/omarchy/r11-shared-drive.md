@@ -164,7 +164,12 @@ folder from phase 4 and opened **inside** it:
 - The read tap itself missed: opening the roots drawer moved the picker to "Recent", so the file row
   was gone by the time the tap landed. Phase 6 taps the row before touching the drawer.
 
-**Phase 6:** appended when it has run (the row tap / the picker's preview action, i.e. `openDocument`).
+**Phase 6** (same APK; `<scratch>/share/phase6/step5e.txt`): another attempt at the read tap, and it
+failed for a UI reason, not a provider one: the picker reopened on "Recent" (the previous phase left
+it there), the drawer toggle tap at the hamburger did not open the drawer in this run, and the
+provider log stayed **empty** - nothing asked it for anything. `openDocument` is still the one
+provider method not observed on the device. Phase 7 is the last attempt: it seeds the picker with our
+document URI as the intent's data, and falls back to a swipe-opened drawer.
 
 ## Switches
 
