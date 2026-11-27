@@ -56,6 +56,8 @@ still open. The host does not kill or restart the session because the display si
 user chose one. Fractional scales are out of scope until the guest round reports which values
 this Hyprland build accepts.
 
+**The live scale (R11)** is a separate host-owned file; see section 12.
+
 ## 5. Session start, in order
 
 1. Host: wipe `<prefix>/tmp/omarchy-runtime/` (it is `XDG_RUNTIME_DIR`: nothing in it is meant to
@@ -329,3 +331,64 @@ manifest declaration follows the platform's custom-provider page
 (`developer.android.com/guide/topics/providers/create-document-provider`): `exported="true"`,
 `grantUriPermissions="true"`, `android:permission="android.permission.MANAGE_DOCUMENTS"` and the
 `android.content.action.DOCUMENTS_PROVIDER` intent filter.
+
+## 11. Session requests (guest -> host)
+
+The guest cannot end, restart or leave its own session in a way the host understands, and it cannot
+reach Android at all, so Omarchy's Logout, Reboot, Shutdown, Suspend and Lock (all of which need
+systemd or `uwsm`, absent here) are mapped onto one request channel.
+
+- **Request.** `omdroid-session <stop|restart|shutdown|home>` (guest `/etc/phoshdroid/complete/bin`,
+  linked as `/usr/local/bin/omdroid-session`) writes one line, `<action> <unix-seconds>`, to
+  `/tmp/omdroid-host/request` (host `<prefix>/tmp/omdroid-host/request`) by temp name plus rename. For
+  `stop`, `restart` and `shutdown` it first closes the windows (`omarchy-hyprland-window-close-all`, as
+  Omarchy does) and shows an OSD.
+- **Host.** `ProotService` watches the directory (`FileObserver`, no polling), reads the file, deletes it
+  (the guest waits up to 4 s for that: the acknowledgement; when it stays, the guest posts a critical
+  notification and exits 1, so nothing fails silently) and acts. `SessionRequest.parse` drops an unknown
+  action and any stamp more than 30 s from the host clock, so a leftover file cannot end a new session.
+  A request is ignored when no session is running.
+- **Actions.** `stop` (Logout): end the guest, show the session-ended screen (exit 0). `restart`
+  (Reboot): end the guest, then the launcher starts a fresh session (`session_restart` extra, the START
+  path of `LaunchDecision`). `shutdown`: end the guest and remove the app's tasks and process (the X
+  server lives in it). `home` (Suspend, Lock): the Android home screen comes up, the session keeps
+  running; Android owns locking and sleeping. None of them retries (`SessionExit.shouldRetry` is not
+  consulted for a requested end). The guest ends itself once the host has acknowledged: `omdroid-session` calls Hyprland's exit dispatcher (`hyprctl dispatch 'hl.dsp.exit()'`; the orderly path; SIGTERM only when that fails. Hyprland also segfaults at exit now and then on either path, which the launcher reports as exit 139 on an exit from inside, see `r11-completeness.md`) and tells the fake-root broker's python program to end, and proot exits by itself. The host waits 10 s for the guest process to die, and only then signals it (SIGTERM, then SIGKILL, 3 s each): on the device a signal to the session proot did not end the guest, and the broker proot outlived SIGKILL. A request is finished exactly once, by the monitor thread or by the request thread, whichever sees the exit first. `OMDROID_SESSION_END=term` (session.env) skips the dispatcher. Log lines (tag `Phoshdroid`): `session: request <ACTION>`,
+  `session: request <ACTION>: guest process ended by itself|after SIGTERM|after SIGKILL`, `session: root-broker stopped (<outcome>)` or `session: root-broker still alive after SIGKILL`, `launch: session ended by request
+  <ACTION>`, `launch: restart requested by the guest`; guest `/tmp/omdroid-session.log`: time, action,
+  acknowledgement delay, taken yes/no.
+- **Wrappers.** `/usr/local/bin/omarchy-system-{lock,logout,reboot,shutdown}` and `systemctl`
+  (`suspend|hibernate` -> home, `poweroff|halt` -> shutdown, `reboot` -> restart; every other verb goes to
+  `/usr/bin/systemctl`) are linked by `complete/session-start.sh` every session start.
+- **Menu.** The hook writes a marked block into `~/.config/omarchy/extensions/omarchy-menu.jsonc`: System
+  shows Back to Android, Logout, Restart, Shutdown; Lock, Screensaver and Hibernate are hidden (the menu
+  skips `when:` guards under proot, so a row can only be removed by giving it no action).
+- **Idle.** Android owns locking and the screen timeout: the hook creates Omarchy's own stay-awake flag
+  once (`~/.local/state/omarchy/indicators/stay-awake`, recorded in `~/.local/state/omdroid/complete`).
+- **Switches** (`~/.config/omdroid/session.env`): `OMDROID_COMPLETE=0` (everything off), `_POWER=0`,
+  `_IDLE=guest`, `_MENU=0`, `_TERMINAL=0`, `_EDITOR=0`, `_BANNERS=0`.
+
+## 12. The live UI scale (host -> guest)
+
+`OMARCHY_SCALE` is the scale at session start only. The scale for the
+display the desktop is on now is the host-owned file `~/.config/omdroid/ui-scale` in the guest
+(`<rootfs>/home/omarchy/.config/omdroid/ui-scale`): one line, `1` or `2`, written atomically next to
+the `ui` mode file. The host resolves it the same way as the start-time value, for the TARGET display
+(`UiScale.forDisplay`: the user's `ui_scale` setting wins, else `auto` from that display's own density
+and shorter edge) and writes it before every session start and on every dock change, before the mode
+file. `omarchy-watch.py` reads it every poll; while the monitor's scale differs it applies the file's
+value with the runtime `hl.monitor` rule it already uses for the size (plus `GDK_SCALE`), and the
+layer remedy restarts only the shell. Every size fit carries the wanted scale: a config reload puts
+the start-time scale back (`monitors.lua`), and a fit that kept the reverted scale would leave the
+docked desktop at scale 2 until the next poll. A missing file, or any value other than `1` or `2`,
+changes nothing (an older host keeps the start-time scale). `OMDROID_SCALE_FOLLOW=0` in
+`~/.config/omdroid/session.env` turns the guest side off. The restart itself is the stock `omarchy-restart-shell`, called from
+`act()` with a rate limit (6 per rolling minute, 2 s apart); S1 measured that calling it twice from
+a live session can leave a black screen on both builds, so the watcher does not amplify it: after a
+restart the layers that are missing altogether, or no Quickshell process, mean the restart LOST the
+shell (`act: shell restart FAILED (...): not retrying`), which writes
+`~/.local/state/omdroid/shell-restart-failed` and ends the retry budget for that monitor size
+(one attempt; a later size change is a new attempt). Only layers that exist and do not fit yet keep
+the retry budget (3 actions per size, then `giving up`). Log lines: guest `ui-scale <a> -> <b>`,
+`monitor scale <s> != ui-scale <w>: monitor fit ... scale <w>`; host `dock: ui-scale <n> written
+display=<id> <w>x<h>@<dpi>` and `launch: ui-scale <n> written|kept`.

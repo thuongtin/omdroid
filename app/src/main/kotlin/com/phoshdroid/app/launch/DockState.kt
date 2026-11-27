@@ -39,6 +39,8 @@ data class DockStatus(
     val keyboard: Boolean,
     val mouse: Boolean,
     val deskMode: Boolean,
+    /** The built-in (default) display, for the UI scale when undocked (F6); null if unreadable. */
+    val builtin: DisplayInfo? = null,
 )
 
 /**
@@ -68,6 +70,7 @@ object DockState {
                         .thenByDescending { !it.isPrivate }
                         .thenBy { it.id },
                 ).firstOrNull()
+        val builtin = displays.firstOrNull { it.isDefault }
         if (external == null) {
             return DockStatus(
                 docked = false,
@@ -77,6 +80,7 @@ object DockState {
                 keyboard = inputs.keyboard,
                 mouse = inputs.mouse,
                 deskMode = deskMode,
+                builtin = builtin,
             )
         }
         return DockStatus(
@@ -87,6 +91,7 @@ object DockState {
             keyboard = inputs.keyboard,
             mouse = inputs.mouse,
             deskMode = deskMode,
+            builtin = builtin,
         )
     }
 

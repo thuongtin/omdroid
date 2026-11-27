@@ -1,0 +1,86 @@
+#!/bin/bash
+# omdroid-session <stop|restart|shutdown|home|lock>
+#
+# Asks the Omdroid host app to act on the desktop session (launch contract, section 11).
+# The guest cannot end or restart itself in a way the host understands, and it cannot
+# reach Android at all, so it leaves a one-line request in <prefix>/tmp/omdroid-host/request
+# (guest: /tmp/omdroid-host/request) and waits for the host to take it.
+#
+#   stop      Logout: close the windows, end the session, show the session-ended screen
+#   restart   Restart: close the windows, end the session, start a fresh one
+#   shutdown  Shutdown: close the windows, end the session and close the app
+#   home      hand the screen back to Android (Suspend, and Lock: Android owns locking);
+#             the desktop keeps running in the background
+#   lock      the same as home
+#
+# After the host takes a stop, restart or shutdown request the script ends the session itself
+# (Hyprland's exit dispatcher); the host waits for that exit and only then falls back to signalling proot.
+# Never fails silently: when the host does not take the request within 4 s (an older app
+# build), a notification says so and the exit status is 1.
+action=${1:-}
+case "$action" in
+    stop | restart | shutdown | home) ;;
+    lock) action=home ;;
+    *)
+        echo "usage: omdroid-session stop|restart|shutdown|home|lock" >&2
+        exit 2
+        ;;
+esac
+dir=${OMDROID_HOST_DIR:-/tmp/omdroid-host}
+wait_ds=${OMDROID_SESSION_WAIT_DS:-40}
+log=${OMDROID_SESSION_LOG:-/tmp/omdroid-session.log}
+req=$dir/request
+mkdir -p "$dir" 2> /dev/null
+
+notify() { # $1 title, $2 body (normal urgency: a critical one is kept and shown again at every shell start)
+    omarchy-notification-send -u normal "$1" "$2" > /dev/null 2>&1 || echo "omdroid-session: $1: $2" >&2
+}
+
+if [ "$action" != home ]; then
+    case "$action" in
+        stop) msg="Logging out" ;;
+        restart) msg="Restarting the desktop" ;;
+        *) msg="Shutting down" ;;
+    esac
+    omarchy-osd -i "$action" -m "$msg" -d 3000 > /dev/null 2>&1 || true
+    # Close the windows first, as Omarchy does, so apps such as a browser save their state.
+    omarchy-hyprland-window-close-all > /dev/null 2>&1 || true
+    sleep 1
+fi
+
+tmp=$dir/.request.$$
+printf '%s %s\n' "$action" "$(date +%s)" > "$tmp" && mv -f "$tmp" "$req" || {
+    rm -f "$tmp"
+    notify "Omdroid could not $action" "The request file could not be written."
+    exit 1
+}
+i=0
+while [ -e "$req" ] && [ "$i" -lt "$wait_ds" ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+echo "$(date +%T) $action ack_after=$((i * 100))ms taken=$([ -e "$req" ] && echo no || echo yes)" >> "$log" 2> /dev/null
+if [ -e "$req" ]; then
+    rm -f "$req"
+    notify "Omdroid could not $action" "This Omdroid build does not answer session requests. Update the app."
+    exit 1
+fi
+# The host took the request. For stop, restart and shutdown the guest now ends itself the way a real
+# logout does: Hyprland exits (its own exit dispatcher, the orderly path; SIGTERM only when that
+# fails. Hyprland also crashes at exit now and then on either path, see r11-completeness.md), cage and
+# dbus-run-session follow, the session script ends and proot exits by itself. The fake-root broker is
+# a second proot that the host cannot reliably stop by signal (it survived SIGKILL on the device), so
+# its python program is told to end too, and proot leaves with it. Signalling proot from the app did
+# not end the guest on the device (r11 phase 3), so the host does that only as a fallback.
+if [ "$action" != home ]; then
+    how=exit
+    if [ "${OMDROID_SESSION_END:-exit}" = exit ] && hyprctl dispatch 'hl.dsp.exit()' > /dev/null 2>&1; then
+        :
+    else
+        how=SIGTERM
+        pkill -TERM -x Hyprland 2> /dev/null
+    fi
+    pkill -TERM -f '[o]mdroid-rootd.py' 2> /dev/null
+    echo "$(date +%T) $action ending the session: Hyprland $how, root broker told to end" >> "$log" 2> /dev/null
+fi
+exit 0
