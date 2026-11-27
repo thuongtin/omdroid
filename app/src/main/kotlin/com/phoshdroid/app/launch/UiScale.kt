@@ -30,4 +30,25 @@ object UiScale {
         densityDpi: Int,
         shorterWindowEdgePx: Int,
     ): Int = if (densityDpi >= 240 && shorterWindowEdgePx / 2 >= 360) 2 else 1
+
+    /** `1` or `2` from a stored or file value, else null (fractional and junk values never pass). */
+    fun parse(raw: String?): Int? =
+        when (raw?.trim()) {
+            "1" -> 1
+            "2" -> 2
+            else -> null
+        }
+
+    /**
+     * The scale for the display the desktop is on (F6): the user's stored choice
+     * wins, else [auto] from that display's own density and shorter edge. Null when
+     * the display is unknown or reports no size, so the caller leaves the file alone.
+     */
+    fun forDisplay(
+        stored: String?,
+        display: DisplayInfo?,
+    ): Int? {
+        if (display == null || display.width <= 0 || display.height <= 0 || display.densityDpi <= 0) return null
+        return resolve(stored, display.densityDpi, minOf(display.width, display.height))
+    }
 }

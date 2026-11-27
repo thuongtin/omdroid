@@ -167,12 +167,26 @@ rm -f "$XDG_RUNTIME_DIR/omarchy-ready"
 session_env="$HOME/.config/omdroid/session.env"
 export MALLOC_ARENA_MAX=2
 export MESA_SHADER_CACHE_MAX_SIZE=128M
+# Ring of the nested output: two buffers, one 25 MB frame less in the session.
+# AQ_WAYLAND_SWAPCHAIN=3 in session.env restores Hyprland three-buffer ring.
+export AQ_WAYLAND_SWAPCHAIN=2
 if [ -f "$session_env" ]; then
     set -a
     . "$session_env"
     set +a
     echo "session.env: read $session_env"
 fi
+
+# Per-feature hooks, run after session.env so its switches apply: mem (memory and
+# software GPU), share (Android storage), complete (Omarchy features under
+# Android). Each is a plain bash script that returns within a few seconds and
+# starts any long-running helper in the background itself. A failing hook is
+# logged and never stops the session.
+for hook in /etc/phoshdroid/mem/session-start.sh /etc/phoshdroid/share/session-start.sh /etc/phoshdroid/complete/session-start.sh; do
+    if [ -f "$hook" ]; then
+        bash "$hook" || echo "hook $hook rc=$?"
+    fi
+done
 
 # Ready marker + layer-fit watcher: writes the marker once the desktop is really
 # drawn, then keeps the shell layers in step with the monitor after a live root

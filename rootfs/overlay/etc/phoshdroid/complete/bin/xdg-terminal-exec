@@ -1,0 +1,29 @@
+#!/bin/bash
+# xdg-terminal-exec for the guest: the image has none, so every Omarchy script that opens a
+# terminal through uwsm-app -- xdg-terminal-exec (the config editors, the About window, the
+# floating "presentation" terminal behind Update, Setup and Install, the screensaver) died with
+# "exec: xdg-terminal-exec: not found". This maps the options Omarchy passes onto foot, the
+# terminal the guest ships. Linked into /usr/local/bin by complete/session-start.sh, and only
+# while no real xdg-terminal-exec is installed (OMDROID_COMPLETE_TERMINAL=0 removes the link).
+#   --app-id=ID / --app-id ID   foot --app-id ID
+#   --title=T   / --title T     foot --title T
+#   --dir=D     / --dir D       foot --working-directory D (ignored when empty)
+#   --hold                      foot --hold
+#   -e / --exec / --            the command follows; without one the first non-option starts it
+args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --app-id=*) args+=(--app-id "${1#*=}") ;;
+        --app-id) args+=(--app-id "$2"); shift ;;
+        --title=*) args+=(--title "${1#*=}") ;;
+        --title) args+=(--title "$2"); shift ;;
+        --dir=*) [ -n "${1#*=}" ] && args+=(--working-directory "${1#*=}") ;;
+        --dir) [ -n "$2" ] && args+=(--working-directory "$2"); shift ;;
+        --hold) args+=(--hold) ;;
+        -e | --exec | --) shift; break ;;
+        -*) ;;
+        *) break ;;
+    esac
+    shift
+done
+exec foot "${args[@]}" "$@"

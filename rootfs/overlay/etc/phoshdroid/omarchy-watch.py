@@ -14,6 +14,11 @@ Started by start.sh before cage starts. Contract halves:
     back on the X root, restart only the shell, then reload Hyprland's config
     (config-only) for the looknfeel half. The session and its windows are never
     touched.
+  * launch contract section 4 (F6) - the UI scale follows the display: the host writes
+    $HOME/.config/omdroid/ui-scale (1 or 2) for the display the desktop is on, and the
+    watcher puts the monitor on that scale with the same runtime rule it uses for the
+    size, then the layer remedy restarts only the shell. OMDROID_SCALE_FOLLOW=0 (in
+    session.env) turns it off, and a missing or unreadable file changes nothing.
   * after ready, keep the Hyprland monitor equal to the even-rounded X root:
     monitors.lua builds its mode from the start-time size, so any config reload
     (Hyprland reloads by itself when a config file changes) puts the start-time
@@ -48,6 +53,13 @@ import time
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")
 MARKER = os.path.join(RUNTIME, "omarchy-ready")
 LOG_PATH = os.environ.get("OMARCHY_WATCH_LOG", "/tmp/omarchy-watch.log")
+# A restart that kills the shell instead of bringing it back leaves this behind, so the
+# failure outlives the log and the next session can report it.
+FAIL_PATH = os.path.join(os.path.expanduser("~"), ".local", "state", "omdroid", "shell-restart-failed")
+# How long one recovery launch gets to bring the layers back before this size is left alone.
+RECOVER_WAIT = 10.0
+# The monitor size whose actions are spent after a lost shell: one-shot, cleared by a new size.
+EXHAUSTED = []
 POLL = 0.25          # seconds between evaluations
 STABLE_S = 1.5       # a new monitor size must hold this long before we act
 
@@ -71,6 +83,8 @@ ACT = os.environ.get("OMARCHY_WATCH_ACT", "1") == "1"
 HOME = os.environ.get("HOME", "/home/omarchy")
 UI_FILE = os.path.join(HOME, ".config", "omdroid", "ui")
 UI_PIN = os.path.join(HOME, ".config", "omdroid", "ui-pin")
+UI_SCALE = os.environ.get("OMDROID_WATCH_SCALE_FILE", os.path.join(HOME, ".config", "omdroid", "ui-scale"))
+SCALE_FOLLOW = os.environ.get("OMDROID_SCALE_FOLLOW", "1") != "0"
 UI_SCRIPT = os.environ.get("OMDROID_WATCH_UI_SCRIPT", "/etc/phoshdroid/omdroid-ui.sh")
 INDEX_SCRIPT = os.environ.get("OMDROID_WATCH_INDEX_SCRIPT", "/etc/phoshdroid/omarchy-plugin-index.sh")
 
@@ -278,6 +292,29 @@ def ui_mode(path=None, pin_path=None):
     return read_mode(pin_path or UI_PIN) or read_mode(path or UI_FILE) or "mobile"
 
 
+def wanted_scale(path=None):
+    """The UI scale the host wants (1 or 2), or None when the watcher must leave it alone.
+
+    The host (DockMonitor, LauncherActivity) writes ~/.config/omdroid/ui-scale for the
+    display the desktop is on. Missing, unreadable, fractional or any other value means
+    None, as does OMDROID_SCALE_FOLLOW=0: then the start-time OMARCHY_SCALE stays, which
+    is exactly the behaviour before F6.
+    """
+    if not SCALE_FOLLOW:
+        return None
+    try:
+        with open(path or UI_SCALE) as fh:
+            value = fh.read().strip()
+    except OSError:
+        return None
+    return {"1": 1, "2": 2}.get(value)
+
+
+def scale_matches(st, want):
+    """True when the monitor already runs the wanted scale (or none is wanted)."""
+    return want is None or abs((st.get("scale") or 1) - want) < 0.01
+
+
 def run_script(path, label, timeout=60):
     """Run one guest script; `label rc=0`, or the failing line, never an exception."""
     if not os.path.exists(path):
@@ -311,14 +348,17 @@ def reload_config(sig, timeout=15):
     return f"hyprctl reload config-only rc={r.returncode}"
 
 
-def fit_monitor(st, timeout=10):
+def fit_monitor(st, timeout=10, scale=None):
     """Put the Hyprland monitor on the even-rounded X root with a runtime rule.
 
     Hyprland follows cage on its own, but every config reload (an explicit one,
     or Hyprland's autoreload when omdroid-ui.sh edits looknfeel.lua) re-applies
     monitors.lua, whose mode is the size at session start. `hyprctl eval` with
     `hl.monitor` puts the current size back at once (measured on the tablet:
-    3200x1970 -> 1920x914 in one call); scale and refresh are kept.
+    3200x1970 -> 1920x914 in one call); scale and refresh are kept, unless `scale`
+    names the one the host wants (F6): then the same rule carries it, and the GDK
+    scale that monitors.lua exported at start follows in a second, best-effort call
+    (apps started after it get the new GDK_SCALE).
     """
     exe = shutil.which("hyprctl")
     sig = signature()
@@ -326,15 +366,24 @@ def fit_monitor(st, timeout=10):
         return "monitor fit skipped: no hyprctl or Hyprland instance"
     tw, th = st["target"]
     hz = st.get("hz") or 120.0
+    new_scale = st["scale"] if scale is None else scale
     lua = ('hl.monitor({ output = "", mode = "%dx%d@%.3f", position = "auto", '
-           'scale = %g, transform = 0 })' % (tw, th, hz, st["scale"]))
+           'scale = %g, transform = 0 })' % (tw, th, hz, new_scale))
     env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=sig)
     try:
         r = subprocess.run([exe, "eval", lua], capture_output=True, text=True,
                            timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"monitor fit failed: {e}"
-    return f"monitor fit {tw}x{th} rc={r.returncode}"
+    line = f"monitor fit {tw}x{th} scale {new_scale:g} rc={r.returncode}"
+    if scale is not None and abs(scale - st["scale"]) >= 0.01:
+        try:
+            r2 = subprocess.run([exe, "eval", 'hl.env("GDK_SCALE", "%d")' % int(round(scale))],
+                                capture_output=True, text=True, timeout=timeout, env=env)
+            line += f"; GDK_SCALE {int(round(scale))} rc={r2.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as e:
+            line += f"; GDK_SCALE failed: {e}"
+    return line
 
 
 # Non-empty while a UI switch could not restart the shell because of the rate
@@ -364,8 +413,9 @@ def switch_ui(mode, st=None):
     if st.get("missing"):
         parts.append("shell restart deferred: " + st["missing"])
         return "; ".join(parts)
-    if not st.get("mon_is_root"):
-        parts.append(fit_monitor(st))
+    want = wanted_scale()
+    if not st.get("mon_is_root") or not scale_matches(st, want):
+        parts.append(fit_monitor(st, scale=want))
         time.sleep(0.5)
     if not ACT:
         parts.append("shell restart off (OMARCHY_WATCH_ACT=0)")
@@ -378,7 +428,15 @@ def switch_ui(mode, st=None):
     parts.append(act())
     took = settle()
     if took is None:
-        parts.append("layers still do not fit 8 s after the restart")
+        verdict, facts = shell_after_failure()
+        if verdict == "failed":
+            write_failure(facts)
+            ok, line = recover(st)
+            parts.append("shell restart FAILED (%s), not retried; %s" % (facts, line))
+            if not ok:
+                mark_exhausted(st)
+        else:
+            parts.append("layers still do not fit 8 s after the restart (%s)" % facts)
     else:
         parts.append("layers fit again %.1f s after the restart" % took)
     parts.append(reload_config(signature()))
@@ -440,6 +498,127 @@ def settle(timeout=8.0):
     return None
 
 
+def shell_processes():
+    """How many Quickshell shell processes run, or None when that cannot be told.
+
+    `omarchy-launch-shell` runs `quickshell -n -p $OMARCHY_PATH/shell` in the background, so a
+    restart that leaves none at all has lost the shell; a restart that leaves one is a shell that
+    may still be drawing.
+    """
+    exe = shutil.which("pgrep")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-c", "-f", "quickshell .*-p "],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode == 1:
+        return 0
+    if r.returncode != 0:
+        return None
+    try:
+        return int((r.stdout or "").strip())
+    except ValueError:
+        return None
+
+
+def shell_after_failure():
+    """`(verdict, facts)` when a restart did not bring the layers back.
+
+    `failed` means the restart lost the shell (no shell layers at all, or no Quickshell process):
+    repeating it would repeat the crash, so the caller stops instead of using the retry budget.
+    `unfit` means the layers are there but do not fit yet, which is what the retry is for.
+    `unknown` is a reading that cannot decide either way; it is retried like `unfit`, the old
+    behaviour, and logged as such.
+    """
+    st = evaluate()
+    if st.get("missing"):
+        return "unknown", "no reading: " + st["missing"]
+    procs = shell_processes()
+    facts = "layers background=%s bar=%s quickshell=%s" % (
+        surface(st.get("bg")), surface(st.get("bar")),
+        "unknown" if procs is None else procs)
+    if (st.get("bg") is None and st.get("bar") is None) or procs == 0:
+        return "failed", facts
+    return "unfit", facts
+
+
+def write_failure(facts):
+    """Record a failed restart on disk (best effort, never fatal)."""
+    try:
+        os.makedirs(os.path.dirname(FAIL_PATH), exist_ok=True)
+        with open(FAIL_PATH, "w") as fh:
+            fh.write("%s shell restart failed, not retried: %s\n"
+                     % (time.strftime("%Y-%m-%d %H:%M:%S"), facts))
+    except OSError:
+        pass
+
+
+def restart_shell():
+    """The stock restart: `omarchy-restart-shell` (kill the instances, then dispatch a launch).
+
+    The recovery used to be a bare `omarchy-launch-shell` and never revived a lost shell: 4
+    attempts, 0 recoveries, every one `rc=0` with no Quickshell process afterwards (r11 phases 11
+    and 12). The restart revived it 3 of 3 in 0.1 s, and the piece it adds is the kill half — the
+    stale instance is cleared before Hyprland dispatches the launch. So the recovery is one more
+    of the same call, bounded to one: a copy of the retry loop is what the guard exists to stop.
+    """
+    exe = os.path.join(OMARCHY, "bin", "omarchy-restart-shell")
+    if not os.path.exists(exe):
+        return "omarchy-restart-shell missing"
+    env = dict(os.environ)
+    env.setdefault("OMARCHY_PATH", OMARCHY)
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=60, env=env)
+        return "omarchy-restart-shell rc=%d" % r.returncode
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "omarchy-restart-shell failed: %s" % e
+
+
+# Monitor sizes whose one recovery restart has been used: never a third restart for one size.
+RECOVERED = []
+
+
+def recover(st):
+    """The ONE recovery restart a lost shell authorises. Returns `(ok, one line)`.
+
+    Called only after `shell_after_failure()` said `failed` and the marker was written. Restart
+    budget for one size: the attempt that failed plus this one recovery, never a third. A second
+    episode on the same size (a recovery already used) goes straight to exhausted.
+    """
+    key = tuple(st.get("mon") or ())
+    if key in RECOVERED:
+        write_failure("recovery already used for %dx%d" % (key[0], key[1]) if len(key) > 1 else "recovery already used")
+        log("recovery: a recovery restart was already used for %dx%d: no further actions"
+            % (key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
+        return False, "recovery already used for this size, no further actions"
+    RECOVERED[:] = [key]
+    time.sleep(2)
+    log("recovery: one recovery restart after the failed one (%s)" % restart_shell())
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < RECOVER_WAIT:
+        time.sleep(0.5)
+        now = evaluate()
+        if not now.get("missing") and now.get("layers_ok"):
+            took = time.monotonic() - t0
+            log("recovery: recovered after one recovery restart %.1f s" % took)
+            return True, "recovered after one recovery restart %.1f s" % took
+    now = evaluate()
+    procs = shell_processes()
+    facts = "layers background=%s bar=%s quickshell=%s" % (
+        surface(now.get("bg")), surface(now.get("bar")), "unknown" if procs is None else procs)
+    write_failure(facts)
+    log("recovery: the recovery restart did not bring the layers back (%s): %dx%d is left alone, "
+        "no further actions" % (facts, key[0] if len(key) > 1 else 0, key[1] if len(key) > 1 else 0))
+    return False, "recovery restart did not bring the layers back (%s), no further actions" % facts
+
+
+def mark_exhausted(st):
+    """No more actions for this monitor size until it changes."""
+    EXHAUSTED[:] = [tuple(st.get("mon") or ())]
+
+
 def main():
     last_ui = ui_mode()
     log("start pid=%d runtime=%s act=%s ui=%s heartbeat=%.1fs legacy=%s" %
@@ -447,10 +626,13 @@ def main():
          "on" if LEGACY else "off"))
     ready = False
     last_missing = None
+    exhausted_logged = False
     last_key = None
     size_since = time.monotonic()
     attempts = 0
     fits = 0
+    scale_fits = 0
+    last_want = wanted_scale()
     limited = False
     last_root = None
     last_sig = None
@@ -486,6 +668,11 @@ def main():
         # shell live (contract section 8). Checked before the readiness gate so a
         # mode change that arrives while Hyprland is still starting is applied
         # rather than dropped.
+        want = wanted_scale()
+        if want != last_want:
+            log("ui-scale %s -> %s" % (last_want, want))
+            last_want = want
+            scale_fits = 0
         mode = ui_mode()
         if mode != last_ui:
             log("ui mode %s -> %s, switching in place" % (last_ui, mode))
@@ -506,9 +693,20 @@ def main():
             PENDING_RESTART[:] = []
             log("ui switch to %s: queued shell restart: %s" % (queued, act()))
             took = settle()
-            log("ui switch to %s: %s" % (queued, "layers still do not fit 8 s after the restart"
-                                          if took is None else
-                                          "layers fit again %.1f s after the restart" % took))
+            if took is None:
+                verdict, facts = shell_after_failure()
+                if verdict == "failed":
+                    write_failure(facts)
+                    ok, line = recover(st)
+                    if not ok:
+                        mark_exhausted(st)
+                    log("ui switch to %s: shell restart FAILED (%s), not retried; %s"
+                        % (queued, facts, line))
+                else:
+                    log("ui switch to %s: layers still do not fit 8 s after the restart (%s)"
+                        % (queued, facts))
+            else:
+                log("ui switch to %s: layers fit again %.1f s after the restart" % (queued, took))
             hot_until = time.monotonic() + HOT_S
             hypr_data = None
             continue
@@ -518,6 +716,16 @@ def main():
             size_since = time.monotonic()
             attempts = 0
             fits = 0
+            scale_fits = 0
+            # A new size is a new attempt, but an exhaustion recorded FOR this size stands: the
+            # ui-switch failure and the size change land in the same pass, and clearing it here
+            # let a second restart run for the size the guard had just left alone (phase 11,
+            # undock 1). Only a different size clears it.
+            if EXHAUSTED and EXHAUSTED[0] != key:
+                EXHAUSTED[:] = []
+                exhausted_logged = False
+            if RECOVERED and RECOVERED[0] != key:
+                RECOVERED[:] = []
             log("monitor %dx%d scale %g, logical %dx%d, X root %dx%d, "
                 "layers background=%s bar=%s" %
                 (key[0], key[1], st["scale"], st["logical"][0], st["logical"][1],
@@ -538,11 +746,30 @@ def main():
             if stable >= STABLE_S and fits < RETRY_CAP:
                 fits += 1
                 log("monitor %dx%d != X root %dx%d (even-rounded): %s, attempt %d/%d" %
-                    (key[0], key[1], st["target"][0], st["target"][1], fit_monitor(st),
-                     fits, RETRY_CAP))
+                    (key[0], key[1], st["target"][0], st["target"][1],
+                     fit_monitor(st, scale=want), fits, RETRY_CAP))
                 size_since = time.monotonic()
                 hot_until = size_since + HOT_S
                 hypr_data = None
+        elif not scale_matches(st, want):
+            # F6: the host wants another scale (a dock or undock moved the desktop to a
+            # display with another density, or a config reload put the start-time scale
+            # back). The same runtime rule as the size fit; the layers then no longer fit
+            # the new logical size and the remedy below restarts only the shell.
+            if stable >= STABLE_S and scale_fits < RETRY_CAP:
+                scale_fits += 1
+                log("monitor scale %g != ui-scale %d: %s, attempt %d/%d" %
+                    (st["scale"], want, fit_monitor(st, scale=want), scale_fits, RETRY_CAP))
+                size_since = time.monotonic()
+                hot_until = size_since + HOT_S
+                hypr_data = None
+        elif not st["layers_ok"] and EXHAUSTED and EXHAUSTED[0] == key:
+            # A restart lost the shell for this size and the one recovery launch did not bring it
+            # back. Nothing more is done here: another restart is the retry the guard forbids.
+            if not exhausted_logged:
+                log("layers do not fit %dx%d: this size is left alone after a lost shell "
+                    "(no further actions; a new size or the user is the way back)" % key)
+                exhausted_logged = True
         elif not st["layers_ok"]:
             if stable >= STABLE_S:
                 if attempts < RETRY_CAP:
@@ -565,7 +792,25 @@ def main():
                             log("act: " + act())
                             took = settle()
                             if took is None:
-                                log("act: layers still do not fit 8 s after the restart")
+                                verdict, facts = shell_after_failure()
+                                if verdict == "failed":
+                                    # The restart lost the shell. The failing call is NEVER retried
+                                    # (S1: a second stock restart leaves a black screen); exactly one
+                                    # fresh launch follows, and if that does not bring the layers
+                                    # back the size is exhausted.
+                                    write_failure(facts)
+                                    log("act: shell restart FAILED (%s): not retrying" % facts)
+                                    ok, line = recover(st)
+                                    log("act: %s" % line)
+                                    if ok:
+                                        attempts = 0
+                                    else:
+                                        attempts = RETRY_CAP + 2
+                                        mark_exhausted(st)
+                                        exhausted_logged = True
+                                else:
+                                    log("act: layers still do not fit 8 s after the restart (%s)"
+                                        % facts)
                             else:
                                 log("act: layers fit again %.1f s after the restart" % took)
                                 attempts = 0

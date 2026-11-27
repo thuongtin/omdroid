@@ -104,6 +104,13 @@ cp -a "$OVERLAY_DIR/etc/phoshdroid/hardlinks.txt" "$WORK/stage/etc/phoshdroid/ha
 # aquamarine with wl_touch (lib/README.md). start.sh puts /etc/phoshdroid/lib first
 # in LD_LIBRARY_PATH; the image copy in /opt/omarchy-android/aquamarine stays as is.
 cp -a "$OVERLAY_DIR/etc/phoshdroid/lib" "$WORK/stage/etc/phoshdroid/lib"
+# Per-feature trees (mem, share, complete), each optional; start.sh runs the
+# session-start.sh hook of every tree that has one.
+for tree in mem share complete; do
+    if [ -d "$OVERLAY_DIR/etc/phoshdroid/$tree" ]; then
+        cp -a "$OVERLAY_DIR/etc/phoshdroid/$tree" "$WORK/stage/etc/phoshdroid/$tree"
+    fi
+done
 chmod 755 "$WORK/stage/etc/phoshdroid/start.sh" "$WORK/stage/etc/phoshdroid/session-child.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-plugin-index.sh" \
     "$WORK/stage/etc/phoshdroid/omarchy-watch.py" \

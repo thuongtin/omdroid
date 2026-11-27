@@ -29,11 +29,13 @@
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Storage">
-        <SwitchPreferenceCompat
-            app:key="bind_sdcard"
-            app:title="Mount /sdcard"
-            app:summary="Reach Android storage from Omarchy at ~/Phone"
-            app:defaultValue="false" />
+        <ListPreference
+            app:key="bind_sdcard_mode"
+            app:title="Share Android storage"
+            app:entries="@array/share_mode_entries"
+            app:entryValues="@array/share_mode_values"
+            app:defaultValue="auto"
+            app:summary="@string/share_summary_auto_no_grant" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Advanced">

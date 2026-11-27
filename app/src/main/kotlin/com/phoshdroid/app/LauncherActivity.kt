@@ -37,6 +37,7 @@ import com.phoshdroid.app.launch.ReadyDecision
 import com.phoshdroid.app.launch.SessionPrep
 import com.phoshdroid.app.launch.UiModeFile
 import com.phoshdroid.app.launch.UiScale
+import com.phoshdroid.app.launch.UiScaleFile
 import com.phoshdroid.app.launch.XGeometry
 import com.phoshdroid.app.proot.ProotCommandBuilder
 import com.phoshdroid.app.proot.ProotDistroManager
@@ -99,6 +100,14 @@ class LauncherActivity : AppCompatActivity() {
 
         if (checkForDisplayShift("onCreate")) return
 
+        // The guest asked for a restart (Reboot in the Omarchy menu): the service has
+        // already ended the old session, so this is the START path (launch contract, section 11).
+        if (consumeSessionRestart(intent)) {
+            logLaunch("restart requested by the guest")
+            if (!bootstrapInProgress) startBootstrap()
+            return
+        }
+
         // The service brought us here because the guest exited on its own.
         // Show it; a session must never start from this screen.
         val endedExitCode = consumeSessionEnded(intent)
@@ -140,6 +149,11 @@ class LauncherActivity : AppCompatActivity() {
         // bootstrap is running, start otherwise (the previous session ended).
         setIntent(intent)
         if (restartInFlight) return
+        if (consumeSessionRestart(intent)) {
+            logLaunch("restart requested by the guest")
+            if (!bootstrapInProgress) startBootstrap()
+            return
+        }
         val endedExitCode = consumeSessionEnded(intent)
         if (endedExitCode != null) {
             showSessionEnded(endedExitCode)
@@ -737,20 +751,25 @@ class LauncherActivity : AppCompatActivity() {
         // pinned mode is never overwritten.
         val ui = UiModeFile(rootfsDir).apply(dock.docked)
         logLaunch("ui ${ui.effective} ${ui.reason}")
-        // The exit of a failed launch is dated against this (FailedLaunch.screen).
-        val launchStartedAtMs = System.currentTimeMillis()
-        ProotService.start(
-            this,
-            launchWidth,
-            launchHeight,
-            // The scale follows the density of the display the desktop will be on
-            // (a3) unless the user chose one (contract section 4).
+        // The scale follows the density of the display the desktop will be on
+        // (a3) unless the user chose one (contract section 4).
+        val sessionScale =
             UiScale.resolve(
                 PhoshdroidPreferences(this).uiScale,
                 targetDensityDpi(dock),
                 minOf(winWidth, winHeight),
-            ),
-        )
+            )
+        // F6: the same number goes into the guest's live scale file, so the watcher's
+        // baseline is what monitors.lua uses at start and only a later dock change moves it.
+        val scaleOutcome =
+            try {
+                UiScaleFile(rootfsDir).apply(sessionScale)
+            } catch (e: Exception) {
+                null
+            }
+        logLaunch("ui-scale $sessionScale ${if (scaleOutcome?.written == true) "written" else "kept"}")
+        val launchStartedAtMs = System.currentTimeMillis()
+        ProotService.start(this, launchWidth, launchHeight, sessionScale)
         logLaunch("session-started")
         statusText.text = getString(R.string.starting_desktop)
 
@@ -932,6 +951,13 @@ class LauncherActivity : AppCompatActivity() {
         return exitCode
     }
 
+    /** Reads and clears the `session_restart` extra, one shot like [consumeSessionEnded]. */
+    private fun consumeSessionRestart(intent: Intent?): Boolean {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_SESSION_RESTART, false)) return false
+        intent.removeExtra(EXTRA_SESSION_RESTART)
+        return true
+    }
+
     /**
      * The guest exited on its own: show why, with the session log's tail, and
      * wait for Start again. Never starts a session — the launcher decides that,
@@ -1024,6 +1050,9 @@ class LauncherActivity : AppCompatActivity() {
         /** Extras the service sets when the guest exited on its own. */
         const val EXTRA_SESSION_ENDED = "session_ended"
         const val EXTRA_SESSION_EXIT_CODE = "session_exit_code"
+
+        /** Set by the service after a guest `restart` request: start a fresh session. */
+        const val EXTRA_SESSION_RESTART = "session_restart"
 
         /** Lines of `<prefix>/tmp/omarchy-session.log` shown under an error. */
         private const val SESSION_LOG_TAIL_LINES = 20

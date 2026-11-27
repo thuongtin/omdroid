@@ -207,11 +207,22 @@ Item {
     var gesture = payload.gesture === true
     query = typeof payload.query === "string" ? payload.query : ""
     refreshApps()
+    // Map the window first (it is unmapped while closed) and let its surface
+    // exist for a frame before the sheet moves; the speed the finger let go at
+    // is captured now because gestureSpeed is cleared below.
+    var unmapped = !drawer.visible
+    gesturePrepare()
     opened = true
     focusInputOnShow = payload.focus === true
     focusDrawer()
-    settleTo(true, gesture ? gestureSpeed : 0)
+    var speed = gesture ? gestureSpeed : 0
     gestureSpeed = 0
+    if (unmapped) {
+      pendingSpeed = speed
+      mapFrame.restart()
+    } else {
+      settleTo(true, speed)
+    }
   }
 
   // Host-initiated close (`shell hide`): the drawer slides away from where
@@ -326,6 +337,21 @@ Item {
     warm = true
     warmTimer.restart()
     return true
+  }
+  // The drawer window unmaps while it is closed (see `drawer.visible`): mapped
+  // for the life of the shell it held two 22.97 MiB wl_shm buffers -- 45.9 MiB,
+  // 11.5 MiB of PSS a side -- for a drawer most sessions never open (measured by
+  // the memory stream on the R10 build, R11). OMDROID_DRAWER_MAPPED=1 restores
+  // the always-mapped window.
+  readonly property bool drawerAlwaysMapped: Quickshell.env("OMDROID_DRAWER_MAPPED") === "1"
+  // A mapped frame before the slide starts, so a new layer surface's first buffer
+  // is not drawn before the output's scale applies: that defect is what kept this
+  // window mapped for the life of the shell before (see `drawer.visible`).
+  property real pendingSpeed: 0
+  Timer {
+    id: mapFrame
+    interval: 24
+    onTriggered: root.settleTo(true, root.pendingSpeed)
   }
   // OMAMOBILE_DRAWER_FPS=1 logs how many frames the drawer window ticked per
   // gesture ("omamobile-launcher: drawer N frames in M ms").
@@ -460,7 +486,10 @@ Item {
           anchors.fill: parent
           anchors.margins: Style.spacing.xxl
           placeholder: (root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps…")
-          onTapped: root.expand()
+          // Map the drawer window before the summon goes over IPC, so its
+          // surface exists while the drawer still has nothing to draw (see
+          // `drawer.visible`).
+          onTapped: { root.gesturePrepare(); root.expand() }
           // Hold: the voice bar, as a hold on the pill over an app.
           onHeld: root.voiceHold()
         }
@@ -513,11 +542,21 @@ Item {
   // hide button that plugin drew above the keyboard covered a terminal's
   // input line, and Send and Next before that.
   property bool oskOpen: false
+  // omamobile-osk-watch belongs to omamobile.keyboard, which is not vendored
+  // here: the binary is absent, so this ran a failing exec every 3 s for the
+  // life of the session (R11 S2 steady-state count). Run it only when the
+  // plugin it watches for is installed.
+  readonly property bool keyboardPlugin: {
+    var registry = shell && shell.pluginRegistry ? shell.pluginRegistry : null
+    var revision = registry ? registry.registryRevision : 0
+    var p = registry ? registry.installedPlugins : null
+    return !!(p && p["omamobile.keyboard"])
+  }
 
   Process {
     id: oskWatch
     command: ["omamobile-osk-watch"]
-    running: true
+    running: root.keyboardPlugin
     stdout: SplitParser {
       onRead: function(line) {
         var words = String(line).trim().split(" ")
@@ -526,14 +565,14 @@ Item {
     }
     onExited: {
       root.oskOpen = false
-      oskRestart.restart()
+      if (root.keyboardPlugin) oskRestart.restart()
     }
   }
 
   Timer {
     id: oskRestart
     interval: 3000
-    onTriggered: oskWatch.running = true
+    onTriggered: if (root.keyboardPlugin) oskWatch.running = true
   }
 
   // A real fullscreen window (mode bit 2; a maximized one reports 1) on the
@@ -740,15 +779,18 @@ Item {
   PanelWindow {
     id: drawer
 
-    // Mapped for the life of the shell. Mapped on each open, a new layer
-    // surface's first frames drew before the output's scale and the slide
-    // applied (the grid at 3x, or faded at its final place, then a jump):
-    // now opening, closing and dragging only move the sheet (no visible,
-    // anchor or size changes anywhere). Closed, the sheet sits just below
-    // the window and the scrim is at opacity 0, so nothing is drawn and,
-    // with nothing changing, Qt renders no frames; the window takes no
-    // touch (an empty input region) and no keyboard.
-    visible: true
+    // Unmapped while closed (R11: mapped for the life of the shell it held two
+    // 22.97 MiB wl_shm buffers, 45.9 MiB, for a drawer nobody had opened).
+    // `root.warm` is set when a finger lands on the home screen and by the dock's
+    // tap before it summons the drawer, and open() waits one mapped frame before
+    // the slide, so the surface exists before anything is drawn on it: mapping on
+    // open alone was tried once and a new surface's first frames drew before the
+    // output's scale applied (the grid at 3x, or faded at its final place, then a
+    // jump). Everything else about opening, closing and dragging only moves the
+    // sheet: no anchor or size changes anywhere. Closed, the sheet sits just
+    // below the window and the scrim is at opacity 0, so nothing is drawn; the
+    // window takes no touch (an empty input region) and no keyboard.
+    visible: root.drawerAlwaysMapped || root.opened || root.warm || settle.running
     mask: Region { item: root.opened ? sheet : null }
     anchors { top: true; bottom: true; left: true; right: true }
     // Normal: fit between the bar and the on-screen keyboard, like Android's

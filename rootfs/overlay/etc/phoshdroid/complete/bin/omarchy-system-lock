@@ -1,0 +1,6 @@
+#!/bin/bash
+# Lock = hand the screen back to Android, which owns locking (no guest PAM lock exists).
+# Omarchy's own omarchy-system-lock needs systemd and uwsm, which this guest does not have, so it
+# fails without a word. Linked over /usr/local/bin/omarchy-system-lock by complete/session-start.sh
+# (OMDROID_COMPLETE_POWER=0 puts the original link back).
+exec "$(dirname "$(readlink -f "$0")")/omdroid-session" home
