@@ -25,6 +25,8 @@ import com.phoshdroid.app.launch.DisplayLaunch
 import com.phoshdroid.app.launch.DockState
 import com.phoshdroid.app.launch.DockStatus
 import com.phoshdroid.app.launch.DockStatusReader
+import com.phoshdroid.app.launch.FailedLaunch
+import com.phoshdroid.app.launch.FailedLaunchScreen
 import com.phoshdroid.app.launch.GuestOverlay
 import com.phoshdroid.app.launch.GuestOverlayAssets
 import com.phoshdroid.app.launch.KeyCapture
@@ -766,6 +768,7 @@ class LauncherActivity : AppCompatActivity() {
                 null
             }
         logLaunch("ui-scale $sessionScale ${if (scaleOutcome?.written == true) "written" else "kept"}")
+        val launchStartedAtMs = System.currentTimeMillis()
         ProotService.start(this, launchWidth, launchHeight, sessionScale)
         logLaunch("session-started")
         statusText.text = getString(R.string.starting_desktop)
@@ -784,7 +787,20 @@ class LauncherActivity : AppCompatActivity() {
             val reason = decision.reason.name.lowercase()
             logLaunch("failed $reason")
             ProotService.stop(this)
-            showSessionProblem(getString(R.string.error_desktop_not_started, reason))
+            // A guest that died during this launch is told by its exit code, like the ended screen.
+            when (
+                val screen =
+                    FailedLaunch.screen(
+                        decision.reason,
+                        ProotService.lastExitCode,
+                        ProotService.lastExitAtMs,
+                        launchStartedAtMs,
+                    )
+            ) {
+                is FailedLaunchScreen.ExitCode -> showSessionEnded(screen.code)
+                is FailedLaunchScreen.NotStarted ->
+                    showSessionProblem(getString(R.string.error_desktop_not_started, screen.reason))
+            }
             return false
         }
 
