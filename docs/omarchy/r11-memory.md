@@ -8,10 +8,10 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | # | Step | Status | Proof |
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
-| 2 | Quickshell fixes (through `mem/`) | PENDING | wallpaper decoded at 6016x3384 is the 77.7 MiB block; patch not written yet |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PENDING | library built (ABI OK, sha256 `5e8bbd35...`), device A/B not run |
+| 2 | Quickshell fixes (through `mem/`) | CODE COMMITTED, device PENDING | `47e1aee`: wallpaper `sourceSize` patch via `mem/qml-apply.sh` (dry run on a copy of the image shell dir: patched, idempotent, `OMDROID_MEM_QML=0` restores byte-identical); expected saving about 53 MiB; phase 2 measures it |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | CODE COMMITTED, device PENDING | `f97dda7`: patch 0004, library built (ABI OK: SONAME and NEEDED identical, 0 consumer symbols missing, GLIBC 2.38), sha256 `5e8bbd35...`; device A/B and correctness diffs run in phase 2 |
 | 4 | Hyprland extras (logo, cursor, render options) | PENDING | image config already sets logo, splash, blur, shadows off (read) |
-| 5 | Software-GPU diet (`OMDROID_GPU=software`) | PENDING | helper written (`mem/soft-diet.py`), not measured |
+| 5 | Software-GPU diet (`OMDROID_GPU=software`) | CODE COMMITTED, device PENDING | `70fef09`: `mem/soft-diet.py` (hyprctl eval, re-applied after `configreloaded`); the image config already has blur and shadows off (read), so the measurable part is animations: phase 3 decides whether more is needed |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | PENDING | |
 
 ## Step 1: attribution on the R10 build (measured)
@@ -112,7 +112,16 @@ Every full-frame buffer in the session: 72.2 + 24.1 + 24.1 + 24.2 + 24.1 (backgr
 
 ## What changed
 
-(filled in as steps land)
+- `rootfs/patches/aquamarine/0004-wayland-cap-the-nested-swapchain-at-two-buffers.patch`
+  (`CSwapchain::reconfigure`, `src/allocator/Swapchain.cpp`): a Wayland swapchain is capped at
+  `AQ_WAYLAND_SWAPCHAIN` buffers (default 2). `rootfs/build-aquamarine.sh` applies 0001-0004 and
+  checks the sha256 of each; the rebuilt library is `rootfs/overlay/etc/phoshdroid/lib/libaquamarine.so.13`.
+  `start.sh` exports `AQ_WAYLAND_SWAPCHAIN=2` in the env-defaults block, before `session.env`.
+- `rootfs/overlay/etc/phoshdroid/mem/`: `session-start.sh` (the hook), `qml-apply.sh` (patched
+  Quickshell files over the image copies, original kept as `<file>.omdroid-orig`, applied only
+  to the exact original whose sha256 is in `<file>.base-sha256`), `qml/plugins/background/Background.qml`
+  (the three wallpaper `Image` items get `sourceSize` = the screen in device pixels), `soft-diet.py`.
+- `docs/omarchy/tools/mem-attrib-smaps.sh` and `mem-attrib.py`: the attribution method.
 
 ## Host proof
 
