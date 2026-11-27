@@ -38,7 +38,7 @@ class ProotService : Service() {
     private var stopping = false
 
     // The guest's own request to end, restart or leave the session (launch contract,
-    // section 10). Set before the guest process is destroyed so the monitor thread
+    // section 11). Set before the guest process is destroyed so the monitor thread
     // reports what the user asked for instead of a crash.
     @Volatile
     private var userRequest: SessionAction? = null
@@ -250,7 +250,7 @@ class ProotService : Service() {
      * [GUEST_EXIT_WAIT_MS]. A guest that is still alive after both is reported, never papered over.
      */
     private fun endGuestForRequest(action: SessionAction) {
-        stopBroker()
+        stopBroker(wait = true)
         val proc = prootProcess
         if (proc == null) {
             android.util.Log.w("Phoshdroid", "session: request $action: no guest process to end")
@@ -361,24 +361,26 @@ class ProotService : Service() {
         }, "RootBrokerMonitor").start()
     }
 
-    private fun stopBroker() {
+    /**
+     * Ends the fake-root broker. Never waits on the calling thread: this runs from `onDestroy`
+     * on the main thread, and the broker proot has outlived SIGTERM and SIGKILL on the device.
+     * The R10 build waited here with an unbounded `waitFor()`, which froze the main thread when a
+     * session ended from inside (no ended screen, then an ANR). [wait] is for the request thread,
+     * which is off the main thread and wants the outcome in its log before it goes on.
+     */
+    private fun stopBroker(wait: Boolean = false) {
         val process = brokerProcess ?: return
         brokerProcess = null
-        try {
-            process.destroy()
-            // Bounded: this can run on the main thread (the notification Stop), and a broker
-            // that ignores SIGTERM must not freeze it.
-            if (!process.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                if (!process.waitFor(GUEST_STOP_WAIT_S, java.util.concurrent.TimeUnit.SECONDS)) {
-                    // Seen on the device (r11): a broker proot that outlived SIGKILL until the
-                    // app process ended. Say so; the guest asks its python program to end too.
+        val done = java.util.concurrent.CountDownLatch(1)
+        ProcessStop.stopAsync("BrokerStop", JavaProcessStoppable(process), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+            when (it) {
+                StopOutcome.SURVIVED ->
                     android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL")
-                }
+                else -> android.util.Log.i("ProotService", "session: root-broker stopped ($it)")
             }
-        } catch (_: Exception) {
+            done.countDown()
         }
-        android.util.Log.i("ProotService", "session: root-broker stopped")
+        if (wait) done.await(GUEST_STOP_WAIT_S * 2 + 1, java.util.concurrent.TimeUnit.SECONDS)
     }
 
     private fun startProot() {
@@ -561,9 +563,13 @@ class ProotService : Service() {
         stopping = true
         active = false
         stopRequestWatcher()
+        // Main thread (the notification Stop and onDestroy): no waiting here. A guest that already
+        // exited is a no-op; a live one is signalled on its own thread, and the monitor thread returns
+        // on `stopping` when it goes.
         prootProcess?.let { proc ->
-            proc.destroy()
-            proc.waitFor()
+            ProcessStop.stopAsync("GuestStop", JavaProcessStoppable(proc), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+                android.util.Log.i("ProotService", "session: guest process stopped ($it)")
+            }
         }
         prootProcess = null
         stopBroker()
