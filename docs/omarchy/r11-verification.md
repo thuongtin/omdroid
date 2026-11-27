@@ -16,7 +16,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
-| V6 | Session end and the error screen (H10-H15) | FAIL on the R10 build (phase 3, reproduced in phase 7); re-verify on S4's APK | the service side works (`session ended exit=0 ui=shown`, exit 7 reported), the screen does not: blank or stuck on "Starting desktop...", ANR 5.0 s after the end, no Start button, an icon tap does not restart; main thread futex-blocked at +3 s and +7 s with no screen contact (phase 7 case A); V6.2 never ran; see "V6" |
+| V6 | Session end and the error screen (H10-H15) | **PASS on S4's build `9dae471b`** (phase 11); **FAIL on the R10 build** (phase 3, reproduced in phase 7) | S4's build: the ended screen with the reason 0.02-0.03 s after `session ended` in all three clean exits, the exit-7 launch shows "(exit 7)", no ANR in any of the four logs, Start again restores the desktop in 18-19 s; Hyprland segfaulted at exit in 3 of 3 clean exits (log tail on screen) while the app's exit code read 0, 139, 0. R10 build: blank or stuck on "Starting desktop...", ANR 5.0 s after the end, no Start button, an icon tap does not restart; see "V6" and "V6, re-run" |
 | V7 | Pinch and three-finger touch | PARTIAL (phase 5 answered the first half; phase 8 queued for the Hyprland swipe) | pinch: both points reach a client, positions within 0.5 logical px, 0 cancels; three fingers: all three reach it, then HyperOS takes the gesture (split screen, then home) after ~160 ms; Hyprland swipe: not configured; scratch `verify/p5-multitouch.log` |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
 
@@ -275,6 +275,39 @@ Typed into a foot shell with `adb shell input text` and `input keycombination`; 
 
 Not run (not asked): R6 steps 8-10 (ownership of a `sudo touch`, the broker log, killing the broker). The yay path was R6b's.
 Observation, not a failure: every pacman transaction on the fresh guest prints `warning: directory permissions differ on /usr/ filesystem: 700 package: 755` (also `/usr/bin/`, `/usr/share/`, `/usr/share/licenses/`): directories extracted by the app come out 0700. It is harmless to these transactions; it is the extractor's mode handling, not this stream's to change, so it is a note for the parent.
+
+### V6, re-run on S4's build (phase 11, 10:05-10:10 UTC; **measured**, screenshots **viewed**)
+
+Build under test: `complete/apk/omdroid-complete-60d0b95.apk`, sha256 `9dae471b3c72…44877`, installed over the R10 build (`INSTALL: PASS`,
+`lastUpdateTime=2026-11-27 10:06:15`); the R10 build was reinstalled by the phase's exit trap at 10:10:57. Script `verify-p11-v6-s4.sh`, log
+`<scratch>/verify/p11-v6-s4.log`. The exit is the session's own `hl.dsp.exit()` dispatch, as S4's path.
+
+| Item | Measurement | Screen |
+| --- | --- | --- |
+| clean exit, run 1 | `proot exited (0)` 10:07:00.708; `launch: session ended exit=0` 10:07:00.727 -> `launch: ended-screen exit=0` 10:07:00.748 = **0.02 s** | at +2 s the ended screen: logo, "Omdroid", **"The desktop session ended."**, the session log tail, a **Start again** button (viewed) |
+| Start again, run 1 | tapped at (1600,1794); desktop back after **19 s**, probe PASS, new Hyprland pid 11875, app pid unchanged (10479) | the desktop (viewed) |
+| clean exit, run 2 | `proot exited (139)` 10:08:07.515; ended-screen **0.03 s** | **"The desktop session stopped unexpectedly (exit 139)."**, log tail, Start again (viewed) |
+| Start again, run 2 | desktop back after **18 s**, probe PASS, Hyprland pid 12900 | the desktop |
+| clean exit, run 3 | `proot exited (0)` 10:09:13.785; ended-screen **0.02 s** | **"The desktop session ended."**, log tail, Start again (viewed) |
+| Start again, run 3 | desktop back after **19 s**, probe PASS, Hyprland pid 13647 | the desktop |
+| launch that dies (session.env `exit 7`) | `proot exited (7)` 10:09:50.828 and `proot retry exited (7)` 10:09:51.065 (one retry, as `SessionExit` says); ended-screen **0.00 s** | **"The desktop session stopped unexpectedly (exit 7)."** with the shell trace tail ending `+ exit 7` (viewed) |
+| Start again after the failed launch | desktop back after **18 s**, probe PASS | the desktop (viewed) |
+
+- **No ANR, four times.** `logcat -d` in each of the four dumps holds no `ANR in com.phoshdroid.app`; none of the four screenshots shows
+  "isn't responding"; `dumpsys activity exit-info` lists only `reason=10 (USER REQUESTED) subreason=21 (FORCE STOP)` and
+  `reason=16 (PACKAGE UPDATED)`, which are this phase's own force-stops and the APK installs.
+- **The reason text is on the screen**, not only in the log: the headline names the exit code when it is non-zero (139, 7) and says the session
+  ended when it is 0, followed by the last lines of the guest session log; `Start again` is a real node in the UI dump in all four cases, which
+  is why the tap hit it at (1600,1794) rather than falling back to the icon path.
+- **The segfault S4 reported, as this run saw it.** Every one of the three clean-exit frames carries
+  `session-child.sh line 49: <pid> Segmentation fault -- "HYPRLAND" --config "HYPRLAND_CONFIG"` in the log tail on screen (pids 10888,
+  11875, 12900: the session's own Hyprland each time), so Hyprland died by SIGSEGV on **3 of 3** clean exits here, while the exit code the app
+  received read 0, 139, 0. So the segfault is the normal shape of a session exit on this build, the ended screen is correct regardless of it, and
+  **the exit code is not a reliable detector of the segfault** (1 of 3 read 139). S4's "4 of 9" was counted from exit codes, so it undercounts
+  rather than overstates. Not investigated further: which part of Hyprland's shutdown path faults.
+- **Against the R10 build (phase 3):** that build logged `launch: ended-screen exit=7 665ms` and then showed "Starting desktop…", a blank
+  launcher afterwards, an ANR 5.0 s after the end and no Start button, with the main thread futex-blocked at +3 s and +7 s (phase 7). None of
+  that reproduces here: the same three scenarios and the exit-7 launch all show their screen within 0.03 s and recover.
 
 ### V6, session end and the error screen (phase 3, 02:25-02:32 UTC; **measured**, screenshots **viewed**)
 
