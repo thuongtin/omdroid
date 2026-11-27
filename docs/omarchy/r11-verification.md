@@ -17,7 +17,7 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4â€¦` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
 | V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
 | V6 | Session end and the error screen (H10-H15) | **PASS on S4's build `9dae471b`** (phase 11); **FAIL on the R10 build** (phase 3, reproduced in phase 7) | S4's build: the ended screen with the reason 0.02-0.03 s after `session ended` in all three clean exits, the exit-7 launch shows "(exit 7)", no ANR in any of the four logs, Start again restores the desktop in 18-19 s; Hyprland segfaulted at exit in 3 of 3 clean exits (log tail on screen) while the app's exit code read 0, 139, 0. R10 build: blank or stuck on "Starting desktop...", ANR 5.0 s after the end, no Start button, an icon tap does not restart; see "V6" and "V6, re-run" |
-| V7 | Pinch and three-finger touch | **PARTIAL** (pinch PASS; three-finger taken by HyperOS; phase 8's bound 2- and 4-finger swipe changed nothing) | pinch: both points reach a client, positions within 0.5 logical px, 0 cancels; a three-finger swipe is consumed by HyperOS (split screen, then home) with `enable_three_gesture=1`; a runtime `hl.gesture` bind for 2 or 4 fingers answered `ok` but neither a bound nor an unbound swipe changed workspace, monitor or top activity, and the swipes landed on an empty desktop, so the Hyprland touch workspace swipe is **not demonstrated** and stays open; see "V7" |
+| V7 | Pinch and three-finger touch | **PARTIAL** | pinch PASS (both points reach a client, within 0.5 logical px, 0 cancels); a three-finger swipe is consumed by HyperOS (split screen, then home) with `enable_three_gesture=1`; a `hl.gesture` workspace bind for 2 or 4 fingers answered `ok` and moved nothing in 8 swipes **with the window asserted on the visible workspace and focused** (phase 13), so the Hyprland touch workspace swipe does not work on this stack; the `workspace_swipe_touch=true` variant is **untested, not cleared** (the option cannot be changed at runtime here); see "V7" |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
 
 ## What changed
@@ -420,11 +420,23 @@ straight lines, 30 steps of 16 ms), and `touchlog` (R5 build, sha256 `68a58e97â€
     so foot was either never started or left behind on another workspace. The swipes therefore landed on an empty workspace, which is not the
     arrangement a workspace gesture is aimed at. Injection itself is proven from phase 5 (the same helper delivered a two-finger pinch, 31
     motion events per finger, into a client), so the failure is not "nothing was ever injected".
-  - **What it does and does not show:** a runtime bind plus a swipe with that finger count changes nothing here, and the bound arm is
-    indistinguishable from the unbound control. It does **not** show whether the touch reached Hyprland's gesture recogniser, or whether the
-    bind alone is enough with `gestures:workspace_swipe_touch` false. **The Hyprland touch workspace swipe is not demonstrated; V7's gesture
-    question stays open.** The next experiment, if wanted: the same arms with foot focused on the visible workspace, and a third arm with
-    `gestures:workspace_swipe_touch = true` set at runtime and restored afterwards.
+  - **What it showed, and what phase 13 then settled:** a runtime bind plus a swipe with that finger count changed nothing, and the bound
+    arm was indistinguishable from the unbound control, but phase 8's frames carried no window on the visible workspace, so the reading was
+    left open. Phase 13 (below) repeats it with the window asserted there.
+- **Phase 13, the closing experiment (10:46-10:48 UTC, one session, R10 build; **measured**, frames **viewed**).** Before every swipe the
+  arrangement was asserted three ways and the arm aborted loudly if any failed: a `foot` client whose `workspace.id` equals the active
+  workspace id (`j/clients`, `j/activeworkspace`), `j/activewindow` class `foot`, and the frame taken just before the swipe differing from a
+  clean-desktop frame by more than 100,000 px. All four arms passed: `ws=1`, `activeclass=foot`, the window covering **5,809,706-5,809,863 px**
+  of the frame (a maximised single window filling the area under the bar, viewed in `ctl-pre`: terminal with prompt, clock 10:47, key bar).
+  - Eight swipes: control (nothing bound), 2 fingers bound, 4 fingers bound (both binds answered `ok`), and a fourth arm meant to add
+    `gestures:workspace_swipe_touch=true`. **Every one of the eight: `ws=1` before and after, monitor `WAYLAND-1 3200x1970@120.00 scale=2.0`,
+    top `com.termux.x11.MainActivity`, same frame** (viewed `g2-right-after`: the same terminal, same workspace).
+  - **The flag arm is void:** `gestures:workspace_swipe_touch` reads `bool: false` and neither `setoption gestures:workspace_swipe_touch 1` nor
+    `keyword gestures:workspace_swipe_touch true` changed it (read-back stayed `bool: false`), so it ran as a second 2-finger arm and moved
+    nothing. It was put back to `bool: false`, its original value (read at the start, logged).
+  - **RESULT: the touch workspace swipe does not work on this stack with the window focused on the visible workspace and a runtime `hl.gesture`
+    bind of two or four fingers.** The `workspace_swipe_touch=true` variant is **untested, not cleared**: the option cannot be changed at runtime
+    on this build, so testing it needs a config edit plus a session restart, which this round did not do. No further arms were run.
 
 ### Incident: phase 7 held the tablet lock for five hours (my script, **measured**)
 
