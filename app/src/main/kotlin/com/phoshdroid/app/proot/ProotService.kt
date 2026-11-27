@@ -220,15 +220,22 @@ class ProotService : Service() {
         }, "RootBrokerMonitor").start()
     }
 
+    /**
+     * Ends the fake-root broker. Never waits on the calling thread: this runs from `onDestroy`
+     * on the main thread, and the broker proot has outlived SIGTERM and SIGKILL on the device.
+     * The R10 build waited here with an unbounded `waitFor()`, which froze the main thread when a
+     * session ended from inside (no ended screen, then an ANR).
+     */
     private fun stopBroker() {
         val process = brokerProcess ?: return
         brokerProcess = null
-        try {
-            process.destroy()
-            process.waitFor()
-        } catch (_: Exception) {
+        ProcessStop.stopAsync("BrokerStop", JavaProcessStoppable(process), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+            when (it) {
+                StopOutcome.SURVIVED ->
+                    android.util.Log.w("ProotService", "session: root-broker still alive after SIGKILL")
+                else -> android.util.Log.i("ProotService", "session: root-broker stopped ($it)")
+            }
         }
-        android.util.Log.i("ProotService", "session: root-broker stopped")
     }
 
     private fun startProot() {
@@ -349,9 +356,13 @@ class ProotService : Service() {
     private fun stopSession() {
         stopping = true
         active = false
+        // Main thread (the notification Stop and onDestroy): no waiting here. A guest that already
+        // exited is a no-op; a live one is signalled on its own thread, and the monitor thread returns
+        // on `stopping` when it goes.
         prootProcess?.let { proc ->
-            proc.destroy()
-            proc.waitFor()
+            ProcessStop.stopAsync("GuestStop", JavaProcessStoppable(proc), GUEST_STOP_WAIT_S * 1000, GUEST_STOP_WAIT_S * 1000) {
+                android.util.Log.i("ProotService", "session: guest process stopped ($it)")
+            }
         }
         prootProcess = null
         stopBroker()
@@ -442,6 +453,10 @@ class ProotService : Service() {
         private const val EXTRA_WIDTH = "width"
         private const val EXTRA_HEIGHT = "height"
         private const val EXTRA_SCALE = "scale"
+
+        // A stop waits this long for SIGTERM and then this long for SIGKILL, off the main thread
+        // (ProcessStop); r11 phase 4 measured a broker and a guest that outlived both.
+        private const val GUEST_STOP_WAIT_S = 3L
 
         // True from the moment a session is requested until it is stopped, the
         // guest exits for good or the service dies. The launcher's readiness
