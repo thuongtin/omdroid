@@ -21,7 +21,7 @@ tile-state pass off the boot path, cached its result, and closed three idle rest
 | 3 | Fix the cause, behind a switch, SOURCE.md updated | PASS | commit `3ae27b9`; `qmlformat` rc=0 on the three QML files, `sh -n` on tile-state.sh; SOURCE.md rows |
 | 4 | Prove on an APK: 3 mobile + 3 desktop cold starts, alternating, target mobile within 1.5 s of desktop; gestures still pass | PASS on the marker, FAIL on `coldstart.sh`'s hand-over | phase 7, ten alternating cold starts on APK `5fdc257b…` (five per arm, one build, one hour): mobile ready marker **3.10 / 3.13 / 3.13 / 3.18 / 3.13 s** with the drawer unmapped against **6.67 / 6.73 / 11.41 / 11.70 / 12.39 s** with it mapped, and 1.82-2.88 s for the desktop UI. Mobile is 0.25-1.3 s from desktop on the marker (target met). `coldstart.sh`'s hand-over reads 6.1-6.2 s for mobile against 3.0-3.7 s for desktop, but it polls `dumpsys activity` at ~2 s resolution; gestures: bar tap, sheet close, dock swipe-up, app open PASS, three items blocked by the switcher not closing (re-run in phase 8) |
 | 5 | Steady state: CPU of every omamobile helper at idle over 60 s | PASS | 0 process births in 60 s idle (was: cell 5 s, call 5 s, osk 3 s); resident helpers `fit-x11.py` 0.2 % CPU, `omarchy-watch.py` 0.6 % (`p3/procs-idle.txt`, `p3/idle-ps.txt`) |
-| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PASS | commit `9f407c8`, APK `5fdc257b…`: three 23528K (22.97 MiB) `wayland-shm` mappings with the drawer mapped and **none** with it unmapped (four cold starts, two pairs); session PSS Quickshell 208/207 → 138 MB, Hyprland 269 → 178 MB; open latency 137-213 ms (one 1036 ms outlier) against a 192 ms sheet control; gestures: bar tap, sheet close, drawer open and close, dock swipe-up, app open PASS |
+| 6 | Drawer unmapped while closed (CONTINUATION 1): ~46 MiB less with it closed, open latency ≤ 100 ms worse, gestures still pass | PASS | commit `9f407c8`, APK `5fdc257b…`: three 23528K (22.97 MiB) `wayland-shm` mappings with the drawer mapped and **none** with it unmapped (four cold starts, two pairs); session PSS Quickshell 208/207 → 138 MB, Hyprland 269 → 178 MB; open latency 137-213 ms (one 1036 ms outlier, open item below) against a 192 ms sheet control; the drawer's settled frame viewed by the parent — clean, 19 icons in five uniform rows, first row complete, no 3× or cropped icon, no torn region (a one-frame 3× flash would need a higher-rate capture to exclude); gestures: bar tap, sheet close, drawer open and close, dock swipe-up, app open PASS |
 
 ## What changed
 
@@ -192,10 +192,14 @@ Gestures, each from a verified clean layer list:
 | pill short swipe | recents opened instead of home | the documented injected-swipe hazard (R5: injected moves arrive ~0.4 s apart, so a slow swipe reads as a pause and opens recents) |
 | back edge from x = 20 | no change | needs the R5 byte-logger window to prove Escape; untested here (a second `foot` of my own opened, ws 1, 2 windows) |
 
-Screenshots for the parent's eyes, all PENDING-VISION under `<scratch>/p8/shots/`:
-`r11s2-p8-drawer-open.png` (the grid-flash check — the one thing a layer timeline cannot see),
-`bar-tap`, `qs-close`, `drawer-closed`, `dock-swipe-up`, `switcher-close`, `foot-open`,
-`pill-short-swipe`, `back-edge`, `final`.
+Screenshots under `<scratch>/p8/shots/`. **`r11s2-p8-drawer-open.png` was viewed by the parent** (this
+stream cannot see images): "a clean drawer — header 'Apps', 19 app icons in five rows on a uniform grid,
+the first row complete (Basecamp, Chromium, Discord, Disk Usage, Docker, Document Viewer), every icon the
+same size and correctly positioned, no 3× oversized or cropped icon, no empty band where icons should be,
+no torn region; the search field and the extra-key bar both correct." Recorded with its caveat: a settled
+frame proves the grid settles correctly and does not by itself prove a single frame was never drawn at the
+wrong scale — that would need a higher-rate capture. The rest stay PENDING-VISION: `bar-tap`, `qs-close`,
+`drawer-closed`, `dock-swipe-up`, `switcher-close`, `foot-open`, `pill-short-swipe`, `back-edge`, `final`.
 
 ### Phase 6 — partial (two instrument bugs, recorded so they are not repeated)
 
@@ -280,9 +284,17 @@ regression — it needs one re-run, or a finger. Screenshots (this stream cannot
 
 ## Not done
 
-- **The visual check that unmapping does not flash the grid** — the defect that made upstream keep the
-  window mapped — is PENDING-VISION. A one-frame 3×-scale flash leaves no trace in the layer timeline,
-  so `r11s2-p8-drawer-open.png` and a drawer opened by finger are the settling evidence.
+- **The visual check on unmapping** (the defect that made upstream keep the window mapped) is answered
+  for the settled frame: the parent viewed `r11s2-p8-drawer-open.png` — clean drawer, 19 icons in five
+  uniform rows, first row complete, no 3× or cropped icon, no torn region, search field and key bar
+  correct. **Not** answered: whether a single frame was ever drawn at the wrong scale; that needs a
+  high-rate capture of a drawer opening.
+- **Open item, not a blocker: the 1036 ms first dock tap** in phase 8 (taps 2-3: 213 and 137 ms). It is
+  the first tap after a five-process `smaps` walk, which reads ~2 200 mappings per process inside the
+  app's own cgroup on this box; the two fast taps followed an idle tablet. Read it as contention from the
+  instrument, not from the drawer path — a clean repeat on an idle box would confirm it, and the sheet
+  control (192 ms, also a lazy panel) shows the same instrument sees no such cost when it is not being
+  hammered.
 - **`coldstart.sh`'s hand-over metric is quantised at ~2 s** (one `dumpsys activity activities` per
   poll); the guest's ready marker is the precise signal this round used. A true hand-over number needs
   the display activity's first frame.
