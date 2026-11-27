@@ -9,9 +9,9 @@ Branch `r11/memory` (from `90d7494`). Stream S1 of R11. Evidence labels: **measu
 | --- | --- | --- | --- |
 | 1 | Attribution (R10 build, Quickshell + Hyprland + app) | PASS | tables below; device phase 1, log `<scratch>/mem/phase1.log`, rows `<scratch>/mem/phase1/attrib/rows.txt` |
 | 2 | Quickshell fixes (through `mem/`) | PASS (memory), fidelity noted | `47e1aee`: wallpaper `sourceSize`: Quickshell wallpaper block 77.7 -> 26.3 MiB, Quickshell heap 143.2 -> 91.3 / 92.3 MB in both candidate arms (phase 2, below); picture unchanged to my eye, fine-detail energy 36 % lower (measured, below); `OMDROID_MEM_QML=0` restores the file |
-| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS on memory, CPU and commit rhythm; CORRECTNESS PARTIAL | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted (the trace line is live: 1,859 cap lines); cold start +0.3 s. Correctness: the forced-repaint step did NOT repaint (0 damaged commits of 256 and 233), so the "0 changed" table proves nothing about remnants; compared with the frame before the event instead: window open+close 0 px, toast area clean (bar shows clock and an unread badge), rotation round trip leaves edge-level wallpaper differences (9,503 px above 8 levels, unexplained; the phase 6 restart arm was invalid, phase 7 repeats it by rotation) |
+| 3 | aquamarine swapchain 3 -> 2 (`AQ_WAYLAND_SWAPCHAIN`) | PASS on memory, CPU and commit rhythm; correctness by before/after frames (no working repaint control) | `f97dda7`: -12.0 MB in Hyprland and -12.0 MB in the app in all candidate arms; typing CPU -6.3..-9.5 points, scrolling -3.2..-6.7 (timed windows, 4 arms); commit rhythm idle 604 vs 610, scrolling 375 vs 337 (not lower), ring never exhausted (the trace line is live: 1,859 cap lines); cold start +0.3 s. Correctness: the forced-repaint step did NOT repaint (0 damaged commits of 256 and 233), so the "0 changed" table proves nothing about remnants; compared with the frame before the event instead: window open+close 0 px, toast area clean (bar shows clock and an unread badge), the phase 2 rotation residual did NOT reproduce: 8 round-trip comparisons on both builds (C B B C, phase 7) differ only in the bar (clock, wifi icon), the wallpaper is pixel-identical |
 | 4 | Hyprland extras (logo, cursor, render options) | NOTHING TO CUT, 52 MiB block unattributed | read: logo, splash and blur and shadows are off in the image config (`default/hypr/looknfeel.lua`), `XCURSOR_SIZE` 24; read-back in a live session: `damage_tracking` 2, `direct_scanout` 0, border 0, rounding 0. The 52 MiB Hyprland anonymous block is not the ring and I have no lever for it (a guess, not tested: two monitor-size render targets of 24 MiB each) |
-| 5 | Software-GPU diet (`OMDROID_GPU=software`) | DIET FAIL, REVERTED `41e272f`; one lead with a measurement, not shipped | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without. Typing costs 8 llvmpipe workers at 60-69 % each. Levers: `LP_NUM_THREADS` 2/4 sit at 197/384 % (not a fix), `vfr` -25..-30 % (risk, not shipped), the rest nothing. **Lead (phase 6, one session per arm): a quarter of the pixels (X root 1600x984 at scale 1 instead of 3200x1970 at scale 2) types at 147 % against 455 %, Hyprland -254 MB, session -400 MB, desktop intact (viewed); needs a smaller X-server surface in software mode, a host change handed to the parent.** The intermittent high-CPU state of phase 5 is unexplained and was not reproduced in phase 6 |
+| 5 | Software-GPU diet (`OMDROID_GPU=software`) | DIET FAIL, REVERTED `41e272f`; one lead with a measurement, not shipped | `70fef09`: blur, shadows and animations already read `false` before the diet (phase 3, 4 arms): typing Hyprland CPU 448-498 % with the diet, 474-520 % without. Typing costs 8 llvmpipe workers at 60-69 % each. Levers: `LP_NUM_THREADS` 2/4 sit at 197/384 % (not a fix), `vfr` -25..-30 % (risk, not shipped), the rest nothing. **Lead (phase 6, one session per arm): a quarter of the pixels (X root 1600x984 at scale 1 instead of 3200x1970 at scale 2) types at 147 % against 455 %, Hyprland -254 MB, session -400 MB, desktop intact (viewed); needs a smaller X-server surface in software mode, a host change handed to the parent.** The intermittent high-CPU state of phase 5 (4 of 4 sessions) did not recur in 3 of 3 default-thread sessions of phases 6 and 7 and is unexplained |
 | 6 | Optional: `TERMUX_X11_FORCE_FLIP=1` (report only) | NO EFFECT EXPECTED (read), not run | `termux-x11/app/src/main/cpp/lorie/InitOutput.c:799-803`: `loriePresentFlip` returns FALSE for a pixmap with `priv->mem` (cage's MIT-SHM frames, the only kind this chain presents) before the `TERMUX_X11_FORCE_FLIP` test is reached, and the flag is read by the in-process X server through `getenv`, so only the host app could set it; the check at 799 also compares `root.width` with `drawable.height` |
 
 ## Step 1: attribution on the R10 build (measured)
@@ -348,13 +348,15 @@ with an error bar):
    a measurement, not shipped here.
 2. **`debug.vfr` costs the same lever as before** (phase 4: -25..-30 %): typing 320 % against 428 / 483 %, idle 0.1 %.
    Not shipped, for the lost-last-frame risk named in phase 4.
-3. **The "persistent busy state" I wrote up after phase 5 is retracted as a general property.** In phase 5 Hyprland
-   stayed at 742 % (LP8) or at the thread-count ceiling (LP2 197 %, LP4 384 %) after the foot window closed or even
-   from the first idle window. In phase 6 the same sequence ended at **1.9 %** both times (V1 and V3, 15.9 and 15.7 s
-   windows starting 3 s after the close). So the high state exists, it is intermittent, and I do not know what
-   enters it. Therefore my earlier sentence that R10's "496 % while typing" is this state is **withdrawn**: typing
-   at default threads costs 428-520 % in every default-thread typing window of phases 3 to 6, and in phase 6
-   the idle after it was 1.9 %.
+3. **The "persistent busy state" I wrote up after phase 5 is retracted as a general property, and not explained.**
+   In phase 5 all four sessions went into it (LP2 and LP4 from the first idle window, LP8 and LP2b after the typing):
+   Hyprland stayed at 742 % (LP8) or at the thread-count ceiling (197 % LP2, 384 % LP4) after the foot window closed.
+   In the three default-thread sessions of phases 6 and 7 (V1, V3, and the phase 7 repeat of the exact phase 5 LP8
+   sequence, S) it never came: idle after the typing **1.9 / 1.8 %** (S, two 20 s windows), 1.9 % (V1), 2.0 % (V3). So it
+   exists and is intermittent, I do not know what enters it, and I could not make it recur. My earlier sentence that R10's
+   "496 % while typing" is this state is **withdrawn**: typing at default threads cost 339-520 % in every
+   default-thread window of phases 3 to 7 (S: 372 / 339 %, the lowest), and idle after it is 1.9 % when the state is
+   not on.
 4. **`LP_NUM_THREADS` is not a fix.** At 2 or 4 threads the phase 5 arms sat at 197 % and 384 % through the idle
    windows, while the default sat at 1.9 % in the same windows; the trace of the 2-thread run shows 1.7 commits/s, every
    one carrying damage, against 60 empty commits/s at default idle (so it is not a quieter desktop). Whether the
@@ -365,21 +367,50 @@ with an error bar):
 
 Trace of the post-typing window (phase 6 `Vt`, trace on, 5-11 s after the foot window closed): 8.4 commits/s, 51 of 51
 with one damage rect, against 61.5 empty commits/s at calm idle. The trace arm did not measure CPU (the trace changes it),
-so I cannot say whether this window is the intermittent high state or the tail of the window closing; phase 7 repeats
-the phase 5 sequence on the candidate to see whether the high state recurs.
+so I cannot say whether this window is the intermittent high state or the tail of the window closing; the phase 7
+repeat (item 3) read 1.9 / 1.8 % idle after typing in the same position, so I take it to be the tail of the window closing.
 
-### Phase 6, shell-restart determinism arm (K): invalid
+### Phase 6, shell-restart arm (K): invalid for wallpaper determinism, and it found a crash
 
-The arm took a frame, ran `omarchy-restart-shell` twice from the live session and compared the frames. It cannot
-answer the wallpaper-determinism question, because the manual restart does not leave a desktop on either build:
-after restart 1 on the R10 behaviour (arm B) the frame is a black screen with the cursor and no bar or wallpaper
-(I viewed `sr-B-1.png`); after restart 2 on the candidate (arm C) the frame is a black screen with a "Quickshell has
-crashed" dialog (viewed `sr-C-2.png`). The other three frames (`sr-C-0`, `sr-C-1`, `sr-B-0`) I could not view (the image
-did not come back), so I do not say what they show. The pixel counts (C: 5.88 M then 0.42 M changed; B: 6.30 M then 0)
-are therefore comparisons of dead frames. Both arms fail, so the candidate's changes are not the cause by that
-evidence alone; I have not run the manual restart on the R10 APK. The watcher's own shell restart (every rotation in
-phases 2 and 3) did leave a working desktop, so phase 7 retests determinism by rotation round trips and reads the
-manual restart's output and crash report.
+The arm took a frame, ran the stock `omarchy-restart-shell` twice from the live session and compared the frames
+(pixel counts: candidate C 5.88 M then 0.42 M changed; R10 behaviour B 6.30 M then 0). I looked at every frame:
+`sr-C-0` and `sr-B-0` (15 s after the cold start) are intact desktops (wallpaper, bar at 08:17, the two
+"Omdroid could not shutdown / could not stop" toasts); after restart 1 on the candidate (`sr-C-1`) the screen is black
+with a "Quickshell has crashed" dialog (crashed process 11733, crash folder `7z8szi5pt`) and the toasts; after restart 1
+on arm B (`sr-B-1`) the screen is black with only the cursor and no dialog; `sr-C-2` shows the same crash dialog and
+`sr-B-2` is byte-identical in size to `sr-B-1` (black). So the pixel counts compare dead frames and say nothing about the
+wallpaper. Both arms ended without a desktop; the cause was not read in phase 6.
+
+## Phase 7: rotation round trips, the manual restart, the busy state again (measured, tablet, 08:52-09:07, candidate APK)
+
+**Rotation round trips (4 arms in the order C B B C, two round trips each, `screen.sh rot 0` then `reset`, frame
+before and after, `scrdiff.py`).** Every arm: the layers went to 1068x1517 logical and back to 1600x985, and the
+frame after the round trip equals the frame before it except in the bar:
+
+| arm | before -> after round trip 1 | round trip 1 -> round trip 2 |
+| --- | --- | --- |
+| C1 (candidate) | 388 px, bbox (141,29)-(3083,89) | 366 px, bbox (141,29)-(160,58) |
+| B1 (R10 behaviour) | 265 px, bbox (141,29)-(160,58) | 477 px, bbox (141,29)-(3083,89) |
+| B2 (R10 behaviour) | 365 px, bbox (141,28)-(3083,89) | 939 px, bbox (72,28)-(160,58) |
+| C2 (candidate) | 450 px, bbox (141,28)-(3083,89) | 263 px, bbox (141,28)-(160,58) |
+
+All 263-939 changed pixels sit inside the bar (y < 90): the clock (x 141-160, y 29-58; I viewed the bar before and
+after in C1: 08:53 -> 08:54, and a struck-through wifi icon at the far right, which is where x about 3083 is). **The wallpaper
+below the bar is identical to the pixel in all eight comparisons, on both builds.** The 2.2 M-pixel edge-level
+difference I measured in phase 2 (`toast-faded-after` -> `restored-after`) did **not** reproduce here in either build, so
+the candidate's smaller wallpaper decode is deterministic across round trips and the phase 2 residual is unexplained
+(UNVERIFIED hypothesis only: that sequence had a toast, a window and a clock turnover between the frames). The
+"control: before -> rotated must differ" line printed "size differs" (the frame is 2136x3200 against 3200x2136), a
+trivial control; the rotated frames are `r7-*-rot1.png` but I did not compare them pixel by pixel. In B2 the watcher also
+logged one of its own shell restarts (`act: omarchy-restart-shell rc=0`, "layers fit again 0.1 s after the restart") and
+the desktop was intact afterwards.
+
+**Manual `omarchy-restart-shell` on the candidate (arm X, no `session.env`):** the command returned `rc=0` and the screen
+ended on the Quickshell crash dialog (viewed `r7-X-after.png`: crashed process 1867, crash folder `0d1z4l5pt`, created 09:03);
+the layers after it were only background, `omamobile-home-strip` and `omamobile-launcher` (no bar), and the process list
+had two live Quickshell processes plus one defunct. So the crash on the manual restart reproduced on the candidate,
+three of three times (phase 6 restart 1, phase 6 restart 2 shows the stale dialog, phase 7). Whether it is caused by this
+stream's changes is not known yet: phase 8 reads the crash report and runs the same restart on the R10 APK.
 
 ## What changed
 
