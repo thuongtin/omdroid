@@ -163,6 +163,7 @@ class Bridge:
         self.last_set_on_x = None    # the text we last made the X selection owner for
         self.pending = None          # text expected in the next SelectionNotify
         self.wl: "WaylandWatch | None" = None   # set once the watch starts
+        self.copies = []             # live wl-copy processes, newest last
         ev = ctypes.c_int()
         er = ctypes.c_int()
         self.have_xfixes = bool(xfixes.XFixesQueryExtension(dpy, ctypes.byref(ev), ctypes.byref(er)))
@@ -219,13 +220,22 @@ class Bridge:
     def to_wayland(self, text):
         if not text or text == self.last_text:
             return
+        # wl-copy can stay in the foreground while it serves the selection; a
+        # blocking wait here stalls this loop, and the loop is what notices the
+        # next Android copy. Start it, hand it the text, keep the handle.
         try:
-            subprocess.run(["wl-copy"], input=text.encode("utf-8"),
-                           timeout=5, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, check=False)
+            proc = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            if proc.stdin is None:
+                return
+            proc.stdin.write(text.encode("utf-8"))
+            proc.stdin.close()
         except Exception as exc:  # noqa: BLE001 - a clipboard failure must not kill us
             say("wl-copy failed: %s" % exc)
             return
+        self.copies.append(proc)
+        self.copies = [p for p in self.copies if p.poll() is None][-4:]
         self.last_text = text
         # The X selection already holds this text (it came from there), so a
         # later Wayland change carrying the same text must not re-own it: that

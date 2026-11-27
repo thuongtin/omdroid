@@ -44,6 +44,10 @@ Details that cost a round each and are worth keeping:
 - **Start order.** The hook runs before cage starts, so the bridge waits for `:0` (60 s) and for a
   Wayland socket that accepts `wl-paste` (60 s), and re-starts the watch if Hyprland restarts under
   it.
+- **`wl-copy` must not be waited on.** It can serve the selection in the foreground, and a blocking
+  wait stalled the loop that notices the next Android copy: measured as a 4 s delay between the
+  ownership change and the conversion. It is started, handed the text and left running now, with
+  the handles kept so it cannot become a zombie.
 
 Switch: `OMDROID_COMPLETE_CLIPBOARD=0` in `~/.config/omdroid/session.env` (or
 `OMDROID_COMPLETE=0` for the whole hook). Pid in `~/.local/state/omdroid/complete/clipboard.pid`,
@@ -60,6 +64,8 @@ itself (`complete: clipboard: bridge started (pid 26893)`):
 | Xlorie collects it | bridge log | `x: answered TARGETS for 0x511`, `x: answered 12 chars for 0x511` — 0x511 is Xlorie's window, so the Android half fired unasked |
 | X to guest | `clipboard-x.py write android-text-B 8` (stands in for Xlorie), then `wl-paste --no-newline` | `android-text-B`; log shows `x: CLIPBOARD owner=0xa00001`, `x -> wayland: 14 chars` |
 | no echo | same run | `x -> wayland: 19 chars` with no following `wayland -> x` |
+| cold start | APK built from this branch (1,124,828,862 B, `sha256 f189a008...`), installed 13:57:57, then one force-stop and start | the hook started the bridge by itself: `complete: clipboard: bridge started (pid 29111)`, and the bridge log shows `wayland: watching wayland-1` without anyone passing `WAYLAND_DISPLAY` |
+| speed | probe takes CLIPBOARD, `wl-paste` polled every 0.5 s | conversion inside the first poll: `x -> wayland: 8 chars` logged within 0.5 s of the ownership change |
 
 `clipboard-x.py` is the probe in `docs/omarchy/tools/`: `read` prints the owner and the text,
 `write TEXT [SEC]` takes CLIPBOARD with that text and answers conversions for SEC seconds, which is
@@ -77,9 +83,6 @@ starts the bridge, the process is alive, the switch off stops it, and the proces
   Android app and pasted it in the guest yet.
 - **Images and rich content.** Text only; anything that needs INCR transfer is capped at 1 MiB.
 - **PRIMARY selection.** Only CLIPBOARD is bridged, which is what Android and `wl-copy` use.
-- **A cold start from a built APK.** The hook was run directly inside the live session; the APK path
-  (`syncGuestOverlay` includes `complete/**`, the packager copies the tree) is unchanged, but no
-  build carrying this file has been installed yet.
 
 ## Files
 
