@@ -22,6 +22,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.phoshdroid.app.R
+import com.phoshdroid.app.launch.DisplayLaunch
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
@@ -48,7 +49,11 @@ import java.util.concurrent.ConcurrentHashMap
  * exclusively (a link planted at the temp name cannot redirect the write) and a directory that
  * has itself been replaced by a link turns the bridge off instead of being written through.
  */
-class AndroidControls(private val context: Context, prefix: File) {
+class AndroidControls(
+    private val context: Context,
+    prefix: File,
+    private val displayId: Int? = null,
+) {
     private val directory = File(prefix, "tmp/omdroid-android")
     private val requestsDirectory = File(directory, "requests")
     private val requests = AndroidControlRequests(requestsDirectory)
@@ -299,7 +304,10 @@ class AndroidControls(private val context: Context, prefix: File) {
             else -> return
         }
         try {
-            context.startActivity(Intent(intentAction).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            // Docked, open the page on the display the desktop is on (contract section 8), so it
+            // is not raised out of sight on the built-in screen. Any refusal falls back to the
+            // plain launch inside DisplayLaunch.
+            DisplayLaunch.start(context, Intent(intentAction).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), displayId)
         } catch (error: Exception) {
             warn("Android settings page unavailable: $action", error)
             Toast.makeText(context, R.string.android_settings_unavailable, Toast.LENGTH_SHORT).show()

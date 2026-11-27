@@ -51,6 +51,9 @@ class ProotService : Service() {
     private var width = 0
     private var height = 0
     private var scale = 2
+    // The display the desktop was handed to (a4): Android's settings pages open there too, so a
+    // docked session raises them on the monitor instead of out of sight on the built-in screen.
+    private var sessionDisplayId: Int? = null
     private var refreshMhz = 120_000
     private var bindSdcard = true
     private var gpu = GpuMode.KGSL
@@ -112,6 +115,7 @@ class ProotService : Service() {
         val prefs = PhoshdroidPreferences(this)
         width = intent.getIntExtra(EXTRA_WIDTH, 0)
         height = intent.getIntExtra(EXTRA_HEIGHT, 0)
+        sessionDisplayId = intent.getIntExtra(EXTRA_DISPLAY, -1).takeIf { it >= 0 }
         // The launcher resolves the scale from the window it predicted (UiScale)
         // and passes the integer; the density fallback covers an older caller.
         scale =
@@ -185,7 +189,8 @@ class ProotService : Service() {
         writeResolvConf()
 
         startRequestWatcher()
-        androidControls = AndroidControls(applicationContext, File(prefixDir)).also { it.start() }
+        androidControls =
+            AndroidControls(applicationContext, File(prefixDir), sessionDisplayId).also { it.start() }
 
         startBroker()
         startProot()
@@ -680,6 +685,7 @@ class ProotService : Service() {
         private const val EXTRA_WIDTH = "width"
         private const val EXTRA_HEIGHT = "height"
         private const val EXTRA_SCALE = "scale"
+        private const val EXTRA_DISPLAY = "display"
 
         /** How long a process may take to die after SIGTERM before it is killed. */
         private const val GUEST_STOP_WAIT_S = 3L
@@ -711,6 +717,7 @@ class ProotService : Service() {
             width: Int,
             height: Int,
             scale: Int,
+            displayId: Int? = null,
         ) {
             active = true
             val intent =
@@ -718,6 +725,8 @@ class ProotService : Service() {
                     putExtra(EXTRA_WIDTH, width)
                     putExtra(EXTRA_HEIGHT, height)
                     putExtra(EXTRA_SCALE, scale)
+                    // Absent means "the default display": an undocked launch never asks for one.
+                    if (displayId != null) putExtra(EXTRA_DISPLAY, displayId)
                 }
             context.startForegroundService(intent)
         }
