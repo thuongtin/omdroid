@@ -40,6 +40,12 @@ the three idle restart loops the same instrument found are closed.
 
 ## Host proof
 
+- Build from `3ae27b9`: `assembleDebug` rc=0 (58 s), `:app:test` 180 tests / 0 failed; APK sha256
+  `cc12c0e3…`, 1,124,731,539 bytes, kept at `<scratch>/apk/omdroid-r11s2-3ae27b9.apk`.
+- The image inside that APK is the round's `rootfs.bin` (unchanged); the build log's
+  `IMAGE!=REPO start.sh` line is that difference (the image predates this round's `start.sh`,
+  which S1 and S4 own) and does not matter here: the guest's `/etc/phoshdroid` is re-synced from
+  the APK's guest overlay on every cold start, and all four changed files travel that way.
 - `qmlformat` (host, `/usr/lib/qt6/bin/qmlformat`) rc=0 on `QuickSettings.qml`, `Bar.qml`,
   `Launcher.qml`; `sh -n` clean on `tile-state.sh`.
 - The leak gate (build-machine home paths, scratch paths, the device serial, the model number)
