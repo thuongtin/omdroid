@@ -109,13 +109,19 @@ every commit each frame puts the X window's content back. **A pixel control cann
 `ctl3` ZERO, every `after-vs-forced` ZERO) are the same fact and prove nothing about the event.
 **Phase 10 settles nothing about attribution, and its close events are not graded here.** The one observation worth carrying, marked
 ungraded because it comes from the arm whose control failed: A1's close 2 shows the same 22 px, 1 level at x 3058-3083, y 88 (`before-vs-after` 22 px), so the residue
-may be there in the whole-surface arm too, which would say the patch is not its cause.
+may be there in the whole-surface arm too, which would say the patch is not its cause. A2 (same failed control) shows it in all three of its closes
+as well (`after-vs-forced` 22 px each; its `close3` before-vs-after is 4881 px, mostly the pointer and a 3 s-later frame taken while the session was
+still settling, ungraded). This is the lead phase 12 tests properly.
 
 Two facts from the valid arm B do carry:
 - the remnant survives 3 s in B1 (`ctl2` ZERO) and the forcing step erases it, so the B-side instrument works;
-- B1's `ctl3` (clean frame vs the frame after the forcing step) is **CHANGED, 22 px, max_diff 1, at 3058-3083, y 88**: the forcing step alone
+- B1's and B2's `ctl3` (clean frame vs the frame after the forcing step) are each **CHANGED, 22 px, max_diff 1, at 3058-3083, y 88**: the forcing step alone
   produces that 1-level difference at that row, with no window close and no event. So it is a difference between the damage-limited render and the
   full repaint at that pixel row, not something a window close leaves behind.
+- Arm B's six closes (B1 and B2, three each): `after-vs-forced` 22 px, max_diff 1, at 3058-3083, y 88 every time. `before-vs-forced`:
+  ZERO, ZERO, ZERO (B1 close 3, B2 closes 2 and 3) and 2037 px in the two runs where the pointer moved. Phase 9's nine B-arm closes show the
+  same thing at 24 px (x 3057-3082). So the residue is the same 22-24 px in every shipped-arm close, and the pointer is the only other
+  difference between the frames.
 - phase 10's arm A "2322 px" event difference was mostly the pointer: 2037 px at x 320-608, rows 383-453, max_diff 235 (a white
   arrow against a dark one), plus the 22 px row-88 difference and the clock; pixel diff and both frames viewed. The pointer moves between shots, so
   phase 12 parks it at a fixed spot before every frame.
