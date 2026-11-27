@@ -13,10 +13,11 @@
 > [!WARNING]
 > **Highly experimental.** Omdroid has been measured on one tablet and used by hand on one phone.
 > The latest build is the
-> [`v0.0.18-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) pre-release: it
-> adds docking to a monitor with a keyboard and mouse, `sudo` and `yay` to the mobile UI, real
-> touch and keyboard pass-through of 0.0.15. It has been installed on the tablet as an update
-> over the earlier builds and cold-started, never as a clean install. Most measurements come
+> [`v0.0.19-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.19-alpha) pre-release: the
+> running desktop uses about 12 % of a core at idle instead of about 155 %, the first start
+> extracts the guest in 104 s instead of 284 s, the APK is 1.1 GB instead of 1.7 GB, and a new
+> Graphics setting chooses Auto, Adreno GPU (KGSL) or Software. It has been installed
+> on the tablet as an update over the earlier builds and cold-started, never as a clean install. Most measurements come
 > from injected input; docking was also tried by hand with a real USB-C dock, monitor, keyboard
 > and trackpad. Expect breakage. The guest lives in the app's private storage, so
 > uninstalling the app or clearing its data deletes everything inside it.
@@ -43,9 +44,10 @@ Highly experimental. Every measurement below was taken on one device: a Xiaomi P
 a 3200x2136 panel and 12 GB of RAM. The owner also runs 0.0.15 on his Samsung foldable phone
 (Android 17, Adreno 840) and reports that it works well; nothing on the phone was measured. The
 current Omdroid build is the
-[`v0.0.18-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) pre-release; the
+[`v0.0.19-alpha`](https://github.com/zweck/omdroid/releases/tag/v0.0.19-alpha) pre-release; the
 APKs of releases 0.0.13 to 0.0.17 were withdrawn because they embedded a build-machine path
-(their notes stay up, `docs/omarchy/r10-release-0.0.18.md`). Releases before `v0.0.14-alpha` are
+(their notes stay up, `docs/omarchy/r10-release-0.0.18.md`), and the APKs of the Phoshdroid
+releases 0.0.1 to 0.0.12 were withdrawn with a note pointing here (their notes stay up too). Releases before `v0.0.14-alpha` are
 Phoshdroid builds -- postmarketOS with Phosh, a different guest under the same package id -- so
 do not install Omdroid over Phoshdroid: uninstall it first. Installing over it has not been tested.
 
@@ -96,7 +98,8 @@ Not verified yet:
   `docs/omarchy/r6-sudo-report.md`.
 - Docking on the phone: Samsung DeX, whether a real unplug survives Samsung's teardown, and the
   phone's monitor density. The checklist is in `docs/omarchy/r7-dock-device-report.md`.
-- A clean install of a release. `v0.0.14-alpha`, `v0.0.15-alpha` and `v0.0.18-alpha` have each
+- A clean install of a release. `v0.0.14-alpha`, `v0.0.15-alpha`, `v0.0.18-alpha` and
+  `v0.0.19-alpha` have each
   been installed on the tablet only as an update over an existing guest and cold-started with
   `probe.sh` passing (row T0 in `docs/omarchy/r4-touch-report.md` for 0.0.14). Android refuses
   apps hard links, so a guest extracted before 0.0.14 lacks the image's 1,832 hard-link members
@@ -297,20 +300,20 @@ service is not enabled and the log says so (`launch: key-capture no WRITE_SECURE
 - A Qualcomm Adreno GPU for the accelerated path (Mesa KGSL). Without it the guest
   falls back to software rendering (`swrast`/`pixman`); there is no virgl route,
   because the payload contains no `virpipe` driver.
-- About 6.5 GB free in the app's private storage. The APK carries a 1.6 GB gzipped
-  guest image that expands to about 4 GB (76,382 files), and the app refuses to extract
-  when less than 6.5 GB is available.
-- Sideloading: the APK is about 1.7 GB, which puts it out of Play's reach. The Android
+- About 6.5 GB free in the app's private storage. The APK carries a 1.0 GB zstd guest
+  image that expands to about 3.5 GB (61,908 files extracted on the build machine,
+  3,528,869,198 bytes), and the app refuses to extract when less than 6.5 GB is available.
+- Sideloading: the APK is about 1.1 GB, which puts it out of Play's reach. The Android
   package id is still `com.phoshdroid.app`; renaming it is a separate, upgrade-breaking
   change.
 
 ## Build and install
 
-To install the pre-release, download `omdroid-0.0.18-alpha.apk` (about 1.7 GB) from the
-[`v0.0.18-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.18-alpha) and sideload it: `adb install omdroid-0.0.18-alpha.apk`,
+To install the pre-release, download `omdroid-0.0.19-alpha.apk` (about 1.1 GB) from the
+[`v0.0.19-alpha` release](https://github.com/zweck/omdroid/releases/tag/v0.0.19-alpha) and sideload it: `adb install omdroid-0.0.19-alpha.apk`,
 or open the file from a file manager on the device. HyperOS and MIUI refuse `adb install`;
-see the end of this section. The first start extracts the guest; that took about
-two minutes on the test tablet.
+see the end of this section. The first start extracts the guest; that took 104 s on the test
+tablet (it took 284 s with the 0.0.17-era image).
 
 To build it yourself:
 
@@ -321,7 +324,8 @@ git config core.hooksPath .githooks     # optional: pre-push runs the unit tests
 
 # Guest image. Downloads the pinned upstream bundle (~1.2 GB), verifies its
 # sha256, applies the guest overlay, unpacks cage/wlroots/libliftoff from
-# Arch Linux ARM, and writes a gzipped tar. Needs ~6 GB free; no root.
+# Arch Linux ARM, and writes a zstd tar (a gzipped one with
+# OMDROID_IMAGE_CODEC=gzip). Needs ~6 GB free; no root.
 ./rootfs/package-omarchy-rootfs.sh
 
 # Termux prefix and the host binaries that must live in jniLibs.
@@ -352,7 +356,7 @@ HyperOS and MIUI refuse `adb install` with `INSTALL_FAILED_USER_RESTRICTED`.
 back to pushing the APK to `/sdcard/Download` and driving Android's own package installer by
 tapping the buttons it finds by their text. Either way it grants the permissions the app needs
 and compares the installed APK's sha256 with the local file. App data survives, so it is an
-update; the 1.7 GB push takes a few minutes.
+update; the 1.1 GB push takes a few minutes.
 
 ## Developing and debugging on a device
 

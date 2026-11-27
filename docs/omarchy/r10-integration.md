@@ -45,7 +45,10 @@ is the baseline measured earlier the same day.
 - **Load (default arm):** typing 20 x `abcde` into foot over 10 s cost X11Server 4.8 % and the
   two renderer threads 5.3 % each; a scrolling foot cost 12.1 % and 16.6 % / 16.5 %.
 
-Correctness against a forced full repaint (`scrdiff.py`, exact pixel compare, one run each):
+Correctness against a forced full repaint (`scrdiff.py`, exact pixel compare, one run each).
+**Correction (2026-11-27):** the forcing step these runs used (`debug.vfr = false`) repaints
+nothing on this build, so a match here says nothing either way; the corrected check and its
+result are in the note at the end of this file.
 
 | Scenario | Changed pixels | Verdict |
 | --- | --- | --- |
@@ -154,7 +157,7 @@ owner had no `ui-pin` before the run and has none after it; the final cold start
 
 | Check | Result |
 | --- | --- |
-| Toast fade x3 (`notify-send -t 2500`, judged 10 s later against a forced repaint) | `changed=0` x3: PASS. This is the case where `debug.vfr = true` left a remnant; committed damage with `vfr = false` leaves none |
+| Toast fade x3 (`notify-send -t 2500`, judged 10 s later against a forced repaint; the step repainted nothing, see the correction above) | `changed=0` x3: PASS (not evidence). This is the case where `debug.vfr = true` left a remnant; committed damage with `vfr = false` leaves none |
 | foot open and close x2 | `changed=0` x4: PASS |
 | foot on the fresh R10 guest (swapped in again) | opens: a `foot` client maps, prompt `[omarchy@localhost ~]$` (viewed), foot 1.27.0 exits 0, locale `C.UTF-8`. Run 2 shot it 4 s after a 2-minute `yay` build, too early |
 | Fresh guest cold start | hand-over 12.8 s (first sessions build their caches), probe PASS |
@@ -166,7 +169,7 @@ tablet. `omarchy-upgraded-20261126` (the earlier round's upgraded guest) is unto
 
 | Goal | Result |
 | --- | --- |
-| Faster at idle | **PASS**: session idle CPU 154-159 % of a core -> about 12 % (X server 77-80 % -> about 1 % per thread); no stale pixels in 13 forced-repaint checks (one diff was the clock turning over) |
+| Faster at idle | **PASS**: session idle CPU 154-159 % of a core -> about 12 % (X server 77-80 % -> about 1 % per thread); no stale pixels in 13 forced-repaint checks (one diff was the clock turning over; those checks are corrected at the end of this file, and the corrected check on 24 scenario comparisons also found no stale pixels) |
 | Faster first start | **PASS**: rootfs extraction 283.9 s -> 104.1 s; APK 1.72 GB -> 1.12 GB |
 | Faster cold start | **FAIL, small**: 0.7-1.0 s slower than 0.0.18 in the same hour (CPU clocks up later). The mobile UI costs 7.3 s of every cold start (desktop UI 3.5 s); that is the next lever |
 | Less memory at idle | **No change**: 689-697 MB against 695-714 MB in the same hour |
@@ -180,7 +183,22 @@ tablet. `omarchy-upgraded-20261126` (the earlier round's upgraded guest) is unto
 - `onTrimMemory` / `onLowMemory` logging was never triggered (no memory pressure applied).
 - No 16 KB-page device and no non-Adreno device was available.
 - Nothing is pushed: the `termux-app` commit must reach the fork before `r10/integration`
-  can be merged.
+  can be merged. **Update (2026-11-27):** `3e3b93a5` is on `zweck/termux-app`
+  `phoshdroid-integration` (fast-forward from `3274badd`), and `r10/integration` was released as
+  0.0.19-alpha (`docs/omarchy/r10-release-0.0.19.md`).
+
+## Correction: the stale-pixel check (2026-11-27)
+
+The forcing step used above (`hl.config({ debug = { vfr = false } })`, `r10/device/run5.sh:23`)
+produces no damaged commits when `vfr` is already false (`r11-memory.md` lines 298-317), so those
+checks could not show a stale pixel. The check was redone with a step proven to repaint: a control
+painted a 400x250 rectangle into the live desktop (`verify-xcorrupt`), a bare `vfr = false`
+re-assert left the remnant in place, and a forcing step with damaged rects (`force_A`, about 54
+rects per commit) cleared it; the control was repeated in the scenario session (TRY_OK). With that
+step: 24 scenario comparisons (three toast fades, three terminal opens, three closes, three
+scroll stops, three scroll closes, three rotations each way) showed `changed=0` against the forced
+frame apart from the bar clock and a 24-pixel bar corner whose pixels differ by 1. Log:
+`r11/verify/p9-repaint2.log` (APK `bef783d7`, the R10 build).
 
 ## Questions runs 1 and 2 left, settled by run 3
 
