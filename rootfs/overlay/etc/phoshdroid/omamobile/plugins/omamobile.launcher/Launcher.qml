@@ -513,11 +513,21 @@ Item {
   // hide button that plugin drew above the keyboard covered a terminal's
   // input line, and Send and Next before that.
   property bool oskOpen: false
+  // omamobile-osk-watch belongs to omamobile.keyboard, which is not vendored
+  // here: the binary is absent, so this ran a failing exec every 3 s for the
+  // life of the session (R11 S2 steady-state count). Run it only when the
+  // plugin it watches for is installed.
+  readonly property bool keyboardPlugin: {
+    var registry = shell && shell.pluginRegistry ? shell.pluginRegistry : null
+    var revision = registry ? registry.registryRevision : 0
+    var p = registry ? registry.installedPlugins : null
+    return !!(p && p["omamobile.keyboard"])
+  }
 
   Process {
     id: oskWatch
     command: ["omamobile-osk-watch"]
-    running: true
+    running: root.keyboardPlugin
     stdout: SplitParser {
       onRead: function(line) {
         var words = String(line).trim().split(" ")
@@ -526,14 +536,14 @@ Item {
     }
     onExited: {
       root.oskOpen = false
-      oskRestart.restart()
+      if (root.keyboardPlugin) oskRestart.restart()
     }
   }
 
   Timer {
     id: oskRestart
     interval: 3000
-    onTriggered: oskWatch.running = true
+    onTriggered: if (root.keyboardPlugin) oskWatch.running = true
   }
 
   // A real fullscreen window (mode bit 2; a maximized one reports 1) on the
