@@ -67,6 +67,7 @@ Bump `versionCode` + `versionName` together in `app/build.gradle.kts`. A release
 
 ## Conventions
 
+- **Every change lands through a pull request.** No direct pushes to `main`, releases included: a release PR carries the version bump, the `release: 0.0.N-alpha` commit and the round report, and the tag goes on `main` after the merge. Inside a round, each stream's branch is a PR into that round's integration branch (`r11/integration`, `r12/integration`, …) and the integration branch is a PR into `main`. Draft while the work is unfinished; ready when its gates pass.
 - Conventional commits: `feat(scope):`, `fix(scope):`, `perf(…)`, `build:`, `chore(scope):`, `release: 0.0.N-alpha`. Scopes in use: `rootfs`, `launcher`, `proot`.
 - Own code lives under `app/src/main/kotlin/com/phoshdroid/app/`. JUnit 5 tests sit in the same package; method names are backtick sentences (`writes default config`).
 - Lint only our app (`:app:lintDebug`). `abortOnError = false`; do not lint Termux submodule sources. Root `build.gradle.kts` forces all Android subprojects to compileSdk 35 — do not fight the Groovy Termux files.
