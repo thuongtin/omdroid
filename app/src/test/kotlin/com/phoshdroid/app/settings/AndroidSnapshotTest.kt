@@ -63,4 +63,12 @@ class AndroidSnapshotTest {
         state.observe(mapOf("bluetoothEnabled" to null, "batteryPercent" to 76), 1_000)
         assertEquals("""{"schema":2,"timestamp":1000,"observed":{"bluetoothEnabled":1000,"batteryPercent":1000},"bluetoothEnabled":null,"batteryPercent":76}""", state.json(1_000))
     }
+
+    @Test fun `connectivity is unknown until the network callback has reported`() {
+        // Before the callback's first report, "no networks known" is not "not connected".
+        assertNull(wifiConnected(known = false, transports = emptyList()))
+        assertEquals(false, wifiConnected(known = true, transports = emptyList()))
+        assertEquals(false, wifiConnected(known = true, transports = listOf(false)))
+        assertEquals(true, wifiConnected(known = true, transports = listOf(false, true)))
+    }
 }

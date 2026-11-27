@@ -73,6 +73,13 @@ class AndroidControls(
     /** Networks Android currently reports, and whether each carries Wi-Fi. */
     private val networks = ConcurrentHashMap<Network, Boolean>()
 
+    /**
+     * True once the network callback has reported at all. Registering delivers the networks that
+     * already match, so a session with any network is known immediately; until then connectivity
+     * is unknown and is published as null, never as "not connected".
+     */
+    private var networkKnown = false
+
     /** Re-confirms every reading before the guest's ten-second window closes. */
     private val refresh =
         object : Runnable {
@@ -113,6 +120,7 @@ class AndroidControls(
                     context.getSystemService(ConnectivityManager::class.java)
                         ?.getNetworkCapabilities(network)
                         ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+                networkKnown = true
                 schedule()
             }
 
@@ -121,11 +129,13 @@ class AndroidControls(
                 capabilities: NetworkCapabilities,
             ) {
                 networks[network] = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                networkKnown = true
                 schedule()
             }
 
             override fun onLost(network: Network) {
                 networks.remove(network)
+                networkKnown = true
                 schedule()
             }
         }
@@ -139,6 +149,7 @@ class AndroidControls(
         // Do not replay taps from a previous session.
         requestsDirectory.listFiles()?.forEach { it.delete() }
         networks.clear()
+        networkKnown = false
         state.clear()
         running = true
         register()
@@ -267,7 +278,7 @@ class AndroidControls(
         fun field(read: () -> Any?): Any? = runCatching(read).getOrNull()
         return linkedMapOf(
             "wifiEnabled" to field { wifi?.isWifiEnabled },
-            "wifiConnected" to field { networks.values.any { it } },
+            "wifiConnected" to field { wifiConnected(networkKnown, networks.values) },
             // This is the OS radio state, not a scan or the user's paired-device list.
             "bluetoothEnabled" to
                 field {
@@ -338,6 +349,16 @@ class AndroidControls(
         const val WARN_INTERVAL_MS = 60_000L
     }
 }
+
+/**
+ * Wi-Fi connectivity as the network callback sees it: true when any reported network carries
+ * Wi-Fi, false when the callback has reported networks and none does, and null until it has
+ * reported at all - an unknown reading must not be drawn as "not connected" (contract section 13).
+ */
+internal fun wifiConnected(
+    known: Boolean,
+    transports: Collection<Boolean>,
+): Boolean? = if (known) transports.any { it } else null
 
 /**
  * Writes [body] to `[directory]/[name]` by temp name plus rename, opening the temp file
