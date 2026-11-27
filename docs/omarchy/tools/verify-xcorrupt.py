@@ -17,8 +17,16 @@ Default rectangle: 400x250 at (1400, 900), magenta, well clear of the bar and th
 import ctypes
 import sys
 
-args = [a for a in sys.argv[1:]]
-x, y, w, h = (int(v) for v in args[:4]) if len(args) >= 4 else (1400, 900, 400, 250)
+# mode: "paint" (default, the original call shape), "read" (read the rect back from the window) or
+# "paint-read" (paint, then read it back through the same connection, a few ms later). The read-back proves
+# WHERE the paint landed: in the window cage composites. With AQ_WAYLAND_FULL_DAMAGE=1 every commit sends the
+# whole surface, so the next frame repairs the paint before any screenshot can catch it; the read-back is then
+# the only way to show that the draw itself worked and the screen simply repainted over it.
+argv = sys.argv[1:]
+mode = "paint"
+if argv and argv[0] in ("read", "paint", "paint-read"):
+    mode = argv.pop(0)
+x, y, w, h = (int(v) for v in argv[:4]) if len(argv) >= 4 else (1400, 900, 400, 250)
 
 x11 = ctypes.CDLL("libX11.so.6")
 Window = ctypes.c_ulong
@@ -65,10 +73,49 @@ for i in range(n.value):
 if best is None:
     print("verify-xcorrupt: no top-level window under the root")
     sys.exit(2)
-gc = x11.XCreateGC(dpy, best, 0, None)
-x11.XSetForeground(dpy, gc, 0xFF00FF)
-x11.XFillRectangle(dpy, best, gc, x, y, w, h)
-x11.XFlush(dpy)
-x11.XSync(dpy, 0)
-print("verify-xcorrupt: painted %dx%d at %d,%d into window 0x%x (geometry %s, %d top-level windows)" % (w, h, x, y, best, best_geom, n.value))
+def read_back():
+    """Print what the window's pixels hold in the rect right now (XGetImage, no compositor involved)."""
+    x11.XGetImage.restype = ctypes.c_void_p
+    x11.XGetImage.argtypes = [ctypes.c_void_p, Window, ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint,
+                              ctypes.c_ulong, ctypes.c_int]
+    class XImage(ctypes.Structure):
+        _fields_ = [("width", ctypes.c_int), ("height", ctypes.c_int), ("xoffset", ctypes.c_int),
+                    ("format", ctypes.c_int), ("data", ctypes.c_void_p), ("byte_order", ctypes.c_int),
+                    ("bitmap_unit", ctypes.c_int), ("bitmap_bit_order", ctypes.c_int),
+                    ("bitmap_pad", ctypes.c_int), ("depth", ctypes.c_int),
+                    ("bytes_per_line", ctypes.c_int), ("bits_per_pixel", ctypes.c_int)]
+    img = x11.XGetImage(dpy, best, x, y, w, h, 0xFFFFFFFF, 2)
+    if not img:
+        print("verify-xcorrupt: XGetImage failed")
+        return None
+    im = ctypes.cast(img, ctypes.POINTER(XImage)).contents
+    if im.bits_per_pixel != 32:
+        print("verify-xcorrupt: read-back needs 32-bit pixels, got %d" % im.bits_per_pixel)
+        return None
+    buf = (ctypes.c_ubyte * (im.bytes_per_line * h)).from_address(im.data)
+    cnt, common = {}, (0, 0, 0)
+    for j in range(h):
+        row = j * im.bytes_per_line
+        for i in range(w):
+            o = row + i * 4
+            px = (buf[o + 2], buf[o + 1], buf[o])
+            cnt[px] = cnt.get(px, 0) + 1
+    common = max(cnt.items(), key=lambda kv: kv[1])
+    cx, cy = w // 2, h // 2
+    o = cy * im.bytes_per_line + cx * 4
+    centre = (buf[o + 2], buf[o + 1], buf[o])
+    x11.XDestroyImage = getattr(x11, "XDestroyImage", None)
+    print("verify-xcorrupt: read-back of %dx%d at %d,%d from window 0x%x: centre=%s, magenta %d of %d px, "
+          "most common %s (%d px)" % (w, h, x, y, best, centre, cnt.get((255, 0, 255), 0), w * h, common[0], common[1]))
+    return centre
+
+if mode in ("paint", "paint-read"):
+    gc = x11.XCreateGC(dpy, best, 0, None)
+    x11.XSetForeground(dpy, gc, 0xFF00FF)
+    x11.XFillRectangle(dpy, best, gc, x, y, w, h)
+    x11.XFlush(dpy)
+    x11.XSync(dpy, 0)
+    print("verify-xcorrupt: painted %dx%d at %d,%d into window 0x%x (geometry %s, %d top-level windows)" % (w, h, x, y, best, best_geom, n.value))
+if mode in ("read", "paint-read"):
+    read_back()
 x11.XCloseDisplay(dpy)
