@@ -327,9 +327,11 @@ class ProotService : Service() {
             // The Stop action may have arrived between the guest's exit and this
             // runnable: a Stop is the user's decision to go quiet, so it wins.
             if (stopping) return@post
-            active = false
+            // The exit is recorded before `active` drops: a launcher thread that sees the session
+            // dead must find this exit, not the previous one.
             lastExitCode = exitCode
             lastExitAtMs = System.currentTimeMillis()
+            active = false
             stopForeground(STOP_FOREGROUND_REMOVE)
             val shown =
                 try {

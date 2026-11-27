@@ -25,6 +25,8 @@ import com.phoshdroid.app.launch.DisplayLaunch
 import com.phoshdroid.app.launch.DockState
 import com.phoshdroid.app.launch.DockStatus
 import com.phoshdroid.app.launch.DockStatusReader
+import com.phoshdroid.app.launch.FailedLaunch
+import com.phoshdroid.app.launch.FailedLaunchScreen
 import com.phoshdroid.app.launch.GuestOverlay
 import com.phoshdroid.app.launch.GuestOverlayAssets
 import com.phoshdroid.app.launch.KeyCapture
@@ -735,6 +737,8 @@ class LauncherActivity : AppCompatActivity() {
         // pinned mode is never overwritten.
         val ui = UiModeFile(rootfsDir).apply(dock.docked)
         logLaunch("ui ${ui.effective} ${ui.reason}")
+        // The exit of a failed launch is dated against this (FailedLaunch.screen).
+        val launchStartedAtMs = System.currentTimeMillis()
         ProotService.start(
             this,
             launchWidth,
@@ -764,7 +768,20 @@ class LauncherActivity : AppCompatActivity() {
             val reason = decision.reason.name.lowercase()
             logLaunch("failed $reason")
             ProotService.stop(this)
-            showSessionProblem(getString(R.string.error_desktop_not_started, reason))
+            // A guest that died during this launch is told by its exit code, like the ended screen.
+            when (
+                val screen =
+                    FailedLaunch.screen(
+                        decision.reason,
+                        ProotService.lastExitCode,
+                        ProotService.lastExitAtMs,
+                        launchStartedAtMs,
+                    )
+            ) {
+                is FailedLaunchScreen.ExitCode -> showSessionEnded(screen.code)
+                is FailedLaunchScreen.NotStarted ->
+                    showSessionProblem(getString(R.string.error_desktop_not_started, screen.reason))
+            }
             return false
         }
 
