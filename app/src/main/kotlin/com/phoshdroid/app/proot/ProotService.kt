@@ -17,6 +17,7 @@ import com.phoshdroid.app.PhoshdroidApp
 import com.phoshdroid.app.R
 import com.phoshdroid.app.launch.GpuMode
 import com.phoshdroid.app.launch.GpuModeRule
+import com.phoshdroid.app.launch.GuestTimezone
 import com.phoshdroid.app.launch.MemorySignals
 import com.phoshdroid.app.launch.ProcessLimits
 import com.phoshdroid.app.launch.SessionAction
@@ -26,6 +27,7 @@ import com.phoshdroid.app.settings.AndroidControls
 import com.phoshdroid.app.settings.PhoshdroidPreferences
 import com.phoshdroid.app.storage.ShareRule
 import java.io.File
+import java.util.TimeZone
 
 /**
  * Owns the host-side process of the desktop: the proot guest running the
@@ -187,6 +189,15 @@ class ProotService : Service() {
         // into XDG_RUNTIME_DIR.
         File(prefixDir, "tmp").mkdirs()
         writeResolvConf()
+
+        try {
+            GuestTimezone.sync(
+                File(prefixDir, "var/lib/proot-distro/installed-rootfs/$DISTRO_NAME"),
+                TimeZone.getDefault().id,
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("ProotService", "Could not sync guest time zone", e)
+        }
 
         startRequestWatcher()
         androidControls =

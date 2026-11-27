@@ -62,7 +62,8 @@ this Hyprland build accepts.
 
 1. Host: wipe `<prefix>/tmp/omarchy-runtime/` (it is `XDG_RUNTIME_DIR`: nothing in it is meant to
    survive a session) and stale `<prefix>/tmp/proot-*` entries; keep the logs in `<prefix>/tmp`.
-2. Host: start the X server, then the proot guest with `/etc/phoshdroid/start.sh` (its environment
+2. Host: start the X server, synchronize the guest time zone from Android (section 14), then
+   start the proot guest with `/etc/phoshdroid/start.sh` (its environment
    carries the GPU mode, section 9), and alongside it the fake-root broker proot (section 7). No host-side Wayland compositor is started (weston
    is gone; cage inside the guest is the parent).
 3. Guest `start.sh`: build the plugin index, remove a stale ready marker, start the resize helper
@@ -448,4 +449,18 @@ no secure-settings grant, location permission, nearby-device permission, root or
 service. An Android/OEM restriction on a read leaves that field unknown; a missing settings
 activity reports an error. Stopping the session unregisters the listeners and removes the
 snapshot.
+
+## 14. Guest time zone (host -> guest)
+
+Before starting the broker or desktop, `ProotService` synchronizes the guest's
+`/etc/localtime` with Android's named time zone through `GuestTimezone`. The relative
+symlink points to `../usr/share/zoneinfo/<zoneId>` inside the guest's installed tzdata,
+so the clock, calendar and applications share local time and daylight-saving rules.
+The host replaces the link atomically without writing through an existing link.
+An already-correct link is left unchanged; missing or invalid zone data preserves
+the previous configuration. An I/O failure is logged and does not prevent startup.
+
+A host time-zone change takes effect when the next guest session starts. The guest
+uses its own installed tzdata rules; this does not update that database, change the
+system clock, or start a time daemon. No additional Android permission is needed.
 
