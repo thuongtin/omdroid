@@ -18,6 +18,11 @@ export OMDROID_COMPLETE_REAL_XTE=$T/no-such-xte OMDROID_COMPLETE_NVIM=no-such-nv
 # The clipboard bridge is a long-running process with its own start/stop section below;
 # off here so its pkill does not shift the counters the session tests assert on.
 export OMDROID_COMPLETE_CLIPBOARD=0
+# The browser section links each Chromium-family name the image has; a fake /usr/bin keeps
+# that independent of what this host happens to install.
+mkdir -p "$T/usrbin"
+for b in brave chromium; do printf '#!/bin/sh\n' > "$T/usrbin/$b"; chmod 755 "$T/usrbin/$b"; done
+export OMDROID_COMPLETE_USRBIN=$T/usrbin
 export OMDROID_COMPLETE_LOG=$T/hook.log OMDROID_HOST_DIR=$T/host OMDROID_SESSION_WAIT_DS=8
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy/extensions"
 printf -- '-- user looknfeel\nhl.config({ general = { gaps_in = 3 } })\n' > "$HOME/.config/hypr/looknfeel.lua"
@@ -154,11 +159,13 @@ check "clipboard: the switch off stops it" "grep -q 'clipboard: bridge off' $T/h
 tries=0; while kill -0 "$cbpid" 2> /dev/null && [ $tries -lt 20 ]; do sleep 0.1; tries=$((tries+1)); done
 check "clipboard: the process is gone after the switch off" "! kill -0 $cbpid 2> /dev/null"
 
-# --- the browser: the link that gives brave its proot flags
-OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=1 bash "$D/session-start.sh" > /dev/null 2>&1
-check "browser: the switch on links brave to the shim" "[ \"\$(readlink $T/bin/brave)\" = \"$D/bin/brave\" ] && [ -x $D/bin/brave ]"
-OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=0 bash "$D/session-start.sh" > /dev/null 2>&1
-check "browser: the switch off removes the link" "[ ! -e $T/bin/brave ]"
+# --- browsers: one launcher, linked for each family member the image has
+OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=1 OMDROID_COMPLETE_USRBIN=$T/usrbin bash "$D/session-start.sh" > /dev/null 2>&1
+check "browser: the switch on links an installed browser to the launcher" "[ \"\$(readlink $T/bin/brave)\" = \"$D/bin/chromium-proot\" ] && [ -x $D/bin/chromium-proot ]"
+check "browser: the second family member shares that launcher" "[ \"\$(readlink $T/bin/chromium)\" = \"$D/bin/chromium-proot\" ]"
+check "browser: a browser the image lacks is not linked" "[ ! -e $T/bin/vivaldi-stable ]"
+OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=0 OMDROID_COMPLETE_USRBIN=$T/usrbin bash "$D/session-start.sh" > /dev/null 2>&1
+check "browser: the switch off removes the links" "[ ! -e $T/bin/brave ] && [ ! -e $T/bin/chromium ]"
 
 rm -rf "$T"
 [ $fail = 0 ] && echo "all passed" || echo FAILED

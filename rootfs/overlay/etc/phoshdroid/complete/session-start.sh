@@ -21,6 +21,7 @@
 # Every change is key-level and reversible; the state lives in ~/.local/state/omdroid/complete.
 D=${OMDROID_COMPLETE_DIR:-/etc/phoshdroid/complete}
 BIN=${OMDROID_COMPLETE_BIN:-/usr/local/bin}
+USRBIN=${OMDROID_COMPLETE_USRBIN:-/usr/bin}
 OMARCHY_BIN=${OMDROID_COMPLETE_OMARCHY_BIN:-/usr/share/omarchy/bin}
 STATE=$HOME/.local/state/omdroid/complete
 LOG=${OMDROID_COMPLETE_LOG:-/tmp/omdroid-complete.log}
@@ -174,19 +175,27 @@ else
     say "clipboard: bridge off (switch)"
 fi
 
-# --- the browser ---------------------------------------------------------------------
-# A bare `brave` aborts here: its setuid sandbox helper cannot be root-owned mode 4755
-# inside proot, so it exits before a window exists and the next launch says it quit
-# unexpectedly. The image's Chromium is launched with the sandbox off for the same
-# reason (omarchy-launch-browser's proot branch). This link gives Brave those flags
-# from every entry point - a desktop entry's `Exec=brave %U`, the menu, a terminal -
-# because /usr/local/bin comes before /usr/bin in the session PATH.
+# --- browsers ------------------------------------------------------------------------
+# No member of the Chromium family can sandbox itself inside proot: the helper must be
+# root-owned mode 4755 and the zygote needs user namespaces, neither of which exists
+# here. A bare brave therefore aborts before a window appears, and the next launch says
+# it quit unexpectedly. The image's Chromium only works because Omarchy's own launcher
+# passes the flags (omarchy-launch-browser's proot branch). One launcher covers the
+# family: it takes the name it was called by, and only names the image actually has are
+# linked, so /usr/local/bin/brave and /usr/local/bin/chromium both get the flags from
+# a desktop entry, the menu, omarchy-launch-browser or a terminal.
+browser=${OMDROID_COMPLETE_BROWSER:-1}
+browsers="brave chromium google-chrome-stable microsoft-edge-stable vivaldi-stable opera"
 if [ "$browser" != 0 ]; then
-    link_ours brave "$D/bin/brave"
-    say "browser: brave launches with the sandbox off (proot)"
+    for name in $browsers; do
+        [ -x "$USRBIN/$name" ] && link_ours "$name" "$D/bin/chromium-proot"
+    done
+    say "browser: chromium-family browsers launch with the sandbox off (proot)"
 else
-    [ "$(readlink "$BIN/brave" 2> /dev/null)" = "$D/bin/brave" ] && rm -f "$BIN/brave"
-    say "browser: the image brave kept (switch)"
+    for name in $browsers; do
+        [ "$(readlink "$BIN/$name" 2> /dev/null)" = "$D/bin/chromium-proot" ] && rm -f "$BIN/$name"
+    done
+    say "browser: the image launchers kept (switch)"
 fi
 
 exit 0
