@@ -107,3 +107,8 @@ run_arm A A1
 run_arm A A2
 run_arm B B2
 phase_log "V3/V1 part 2 done"
+# my scratch files in the app's prefix tmp (NOT under installed-rootfs): the V5 markers, trace windows and wayland logs
+cf=$(mktemp)
+printf '%s\n' 'rm -f files/usr/tmp/v5-* files/usr/tmp/ts-B* files/usr/tmp/ts-A* files/usr/tmp/verify-* files/usr/tmp/touchlog.out' > "$cf"
+runas "$cf"; rm -f "$cf"
+phase_log "prefix tmp scratch files left: $(adb_ shell run-as $PKG ls files/usr/tmp | tr -d '\r' | grep -cE '^(v5-|ts-[AB]|verify-|touchlog.out)')"

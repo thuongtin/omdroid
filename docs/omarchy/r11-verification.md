@@ -14,8 +14,8 @@ A view of a screenshot is written as "viewed:" with one line of what was seen.
 | V1 | AQ_TRACE commit rhythm (`r10-damage.md` check 5) | PARTIAL (phase 1 done; stall check awaits phase 6) | idle 0-rect 732/732, keypress rects 78, rhythm 60.0/s = the 60 Hz panel mode, control arm 100 % whole-surface; log: scratch `verify/p1-trace-trim.log`; see "V1" |
 | V2 | Correctness vs forced repaint, 3 runs of toast / open-close / scroll / rotation | PASS | 24 forced-repaint comparisons: 21 identical, 3 differ only in the bar clock (viewed), 0 changed elsewhere; real-change control read CHANGED (5,388,233 px); the `vfr=true` control stayed clean (not a reproduction of the R10 remnant, see "V2"); scratch `verify/p2-repaint.log`, APK `bef783d7…` |
 | V3 | `onTrimMemory` levels and survival | PARTIAL (levels 5, 10, 15 PASS; 20-80 refused by Android for this process; phase 6 gets the text and the natural UI_HIDDEN) | see "V3" |
-| V4 | Fresh-image path for the patched aquamarine | PENDING | |
-| V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PENDING | |
+| V4 | Fresh-image path for the patched aquamarine | PASS | fresh extraction 102,176 ms; `guest-overlay files=68 changed=0` (the image already carried every overlay file); Hyprland maps the overlay `libaquamarine.so.13`, inode = the guest file's, sha256 `35a9ffd4…` = repo; `j/devices` `touch: ["wl_touch"]` in the first session; scratch `verify/p4-fresh-sudo.log` |
+| V5 | `sudo` interactive, Ctrl+C, `omarchy-pkg-add` | PASS | prompt answered `n` (rc 1, nothing installed), `sudo sleep 30` + Ctrl+C = rc 130 at 6.65 s with the terminal restored and the broker still answering, `omarchy-pkg-add sl` rc 0 then removed (`pacman -Q` rc 1); screenshots viewed; same fresh guest as V4 |
 | V6 | Session end and the error screen (H10-H15) | PENDING | |
 | V7 | Pinch and three-finger touch | PENDING | |
 | V8 | Owner-only checklist (written, not attempted) | PASS (written) | section "V8"; nothing here was run on any device |
@@ -149,6 +149,39 @@ foreground service (`curProcState=2`, `mHasForegroundServices=true`, read from `
 An odd value like 7 is not an `am` level name at all. Phase 6 re-runs every level keeping the whole answer,
 tries the background levels with the app on the home screen, and records the one level Android sends by
 itself there (UI_HIDDEN, 20).
+
+### V4, the fresh-image path for the patched aquamarine (phase 4, 02:01-02:05 UTC; **measured**)
+
+The owner guest was parked (`omarchy-r11-keep`, phase library), the APK extracted a fresh guest from its own
+`rootfs.bin`, and the first session ran on it. APK `bef783d7…`, repo `lib/libaquamarine.so.13` sha256 `35a9ffd4c565364900a13c53fee935898c5885bd2508c527228b752d316d1562`.
+
+| Check | Result |
+| --- | --- |
+| extraction | `launch: rootfs-extracted 102176ms`; `am start` to hand-over 126 s (R10 run 2: 104.1 s for the extraction alone, so the same) |
+| the image already carries the overlay | `launch: guest-overlay files=68 changed=0 102272ms`: the sync found nothing to rewrite, so the packager's `lib/` and `etc/phoshdroid` copy put every file in the image byte-equal to the APK |
+| the first session | one `session-started` since the park; `probe.sh` VERDICT PASS; X display on top; 38 stale `proot-*` sockets in the prefix tmp were wiped at the start (from the earlier phases' killed sessions) |
+| the library that is mapped | `/proc/<Hyprland>/maps`: `.../omarchy/etc/phoshdroid/lib/libaquamarine.so.13`, inode **1302760** = `stat` of the guest overlay file (1302760); its sha256 = the repo's; the stock copy in `/opt/omarchy-android/aquamarine/lib/` is `8a2a2cbe…` and is not the mapped one |
+| the touch device | `hc.sh j/devices`: `mice ['wl_pointer'] keyboards ['wl_keyboard'] touch ['wl_touch']` |
+| the screen | viewed: the mobile desktop with the sunset wallpaper, the 26 px bar with the clock, the "Search apps..." dock and the key bar; no banner, no foreign dialog. The fresh guest has none of the two sticky notifications seen on the owner's (they live in the owner's shell history) |
+
+The test guest was deleted at the end of the phase, after the owner guest was moved back (`installed-rootfs`: `omarchy`, `omarchy-upgraded-20261126`).
+This settles the README line "The fresh-image path for the patched aquamarine ... not repacked".
+
+### V5, `sudo` beyond `sudo id` (phase 4, same fresh guest; **measured**, screenshots **viewed**)
+
+Typed into a foot shell with `adb shell input text` and `input keycombination`; each case ends in a file the guest writes.
+`sudo id` / `sudo -u omarchy id` / `sudo false` first: root, `uid=1000(omarchy)`, `false-rc=1`.
+
+| Case | What ran | Result |
+| --- | --- | --- |
+| interactive prompt | `sudo pacman -Syy --noconfirm` (rc 0), then `sudo pacman -S sl`, answer `n` + Enter | viewed at the prompt: `Packages (1) sl-5.05-6 ... :: Proceed with installation? [Y/n]` with the cursor waiting; after `n`: the letter shown once; after Enter: `[Y/n] n` and the shell prompt back; `pacman rc=1`, `sl` not installed |
+| Ctrl+C control | a plain `sleep 30` and the same Ctrl+C injection | viewed: `^C` and the prompt back. (The marker file is absent because bash abandons a `;` list whose child died of SIGINT, so absence is not a failure; the next command ran at once, which a live `sleep 30` would have blocked) |
+| Ctrl+C during `sudo sleep 30` | injection about 6 s in | `sudo sleep rc=130 t0=...095.64 t1=...102.30`: it ended on the key, 23 s early; viewed: `^C`, prompt back; `stty -a` afterwards has `isig icanon echo` all on; a typed `echo typed-ok > /tmp/v5-typed.txt` ran (`typed-ok` read back); `sudo id` afterwards still root (the broker lived) |
+| `omarchy-pkg-add` | `omarchy-pkg-add sl` | rc 0, `pacman -Q` `sl 5.05-6` (viewed: key check, `installing sl`, post-transaction hooks) |
+| removal | `sudo pacman -Rns --noconfirm sl` (the last step of `omarchy-pkg-remove`, whose own front end is an fzf picker) | rc 0, `removing sl`, `pacman -Q sl` rc 1 |
+
+Not run (not asked): R6 steps 8-10 (ownership of a `sudo touch`, the broker log, killing the broker). The yay path was R6b's.
+Observation, not a failure: every pacman transaction on the fresh guest prints `warning: directory permissions differ on /usr/ filesystem: 700 package: 755` (also `/usr/bin/`, `/usr/share/`, `/usr/share/licenses/`): directories extracted by the app come out 0700. It is harmless to these transactions; it is the extractor's mode handling, not this stream's to change, so it is a note for the parent.
 
 ## V8, the owner-only checklist (do NOT attempt from an agent)
 
