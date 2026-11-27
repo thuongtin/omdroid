@@ -500,6 +500,17 @@ Session PSS, idle, same hour, same tablet (measured, PSS including SwapPss; Swap
 | R10 behaviour (B1, B2) | 683.8 / 689.3 MB | 12.1-12.5 % |
 | candidate (C1, C2) | 630.6 / 610.7 MB | 12.1-12.5 % |
 
+## Switches
+
+| Change | Switch (`session.env`) | Off value |
+| --- | --- | --- |
+| aquamarine ring of two | `AQ_WAYLAND_SWAPCHAIN` (set in `start.sh`, overridable in `session.env`) | `3` |
+| every change of `mem/` | `OMDROID_MEM` | `0` |
+| the Quickshell wallpaper patch | `OMDROID_MEM_QML` | `0` (restores the image file byte-identically) |
+
+The soft-GPU diet has no switch because it no longer exists (reverted in `41e272f`). Nothing else in this
+stream changes behaviour at runtime.
+
 ## Risks
 
 - **A candidate session leaves the patched `Background.qml` in the owner's guest.** The R10 `start.sh` has no
