@@ -10,10 +10,10 @@ Evidence labels: **measured** (command given), **read** (file:line or URL), **es
 | Step | State | Proof |
 | --- | --- | --- |
 | 1. Today's path on the device (`bind_sdcard`, `~/Phone`, both directions, time, media store) | PASS | Phase 1, both arms in the same minute. Bind off: `/home/omarchy/Phone` does **not exist** (the brief said "empty directory" - it is absent). Bind on: 35 top-level entries, guest writes land as uid 10298/group 1023 mode 0660 (dirs 2770), both directions work, cold start 10.3 s off vs 10.6-11.2 s on, a guest-written picture is **not** in the media store until `MEDIA_SCANNER_SCAN_FILE`. `<scratch>/share/phase1/step1.txt` |
-| 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). `auto` follows the `MANAGE_EXTERNAL_STORAGE` grant; `on`/`off` override; the old boolean folds in. Device: with the grant, no prefs file -> `share: mode=auto all-files=true -> bind=true` and `~/Phone` present (phase 2); the no-grant arms are in phase 3 (phase 2's `appops set` without `--uid` left the uid mode `allow`, so those arms measured nothing) |
-| 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device proof in phase 2 |
-| 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page |
-| 5. Device proof of the provider (`content query`, read, write, Files app) | PENDING | phase 2 |
+| 2. The default rule as a pure function + unit tests | PASS | `storage/ShareRule.kt` + `ShareRuleTest` (5 tests, green in `:app:testDebugUnitTest`). Device, three arms on the new build: `mode=auto all-files=true -> bind=true`; `mode=on all-files=false -> bind=true` and the guest then sees only **10** of the 35 top-level entries (the media dirs; the app's own files are missing); `mode=auto all-files=false -> bind=false`. The deny needs `appops set --uid` - the package mode alone does not change `Environment.isExternalStorageManager()` |
+| 3. Guest side: file-manager bookmark in `share/session-start.sh` | PASS | `rootfs/overlay/etc/phoshdroid/share/session-start.sh`; host dry run (add, idempotent, user line kept, user-edited label left alone, off removes only ours); device: `file:///home/omarchy/Phone Omdroid Phone` added beside the owner's four bookmarks, and `omdroid-share: bookmark removed` with sharing off, the owner's lines untouched |
+| 4. DocumentsProvider in `storage/` + path rules + tests + manifest | PASS | `storage/GuestTree.kt`, `storage/OmdroidDocumentsProvider.kt`, `GuestTreeTest` (9 tests green), manifest `<provider>` per the platform page; device: registered and queried by DocumentsUI |
+| 5. Device proof of the provider (read, write, Files app) | PENDING | phase 4 (phase 3's picker drive failed: the device shell glob-expanded `-t */*`, and the tap matcher matched a filename) |
 | 6. `launch-contract.md` storage section | PASS | `docs/omarchy/launch-contract.md` section 10 |
 
 ## What changed
@@ -117,8 +117,21 @@ Two things the round found that the brief did not know:
     wrong screen and are not cited. The provider is instead driven by tapping the "Omdroid" root in
     the picker's drawer (phase 3).
 
-**Phase 3:** appended when it has run (no-grant arms with `--uid`, and the provider read/create
-through the ROM's picker).
+**Phase 3** (same APK; `<scratch>/share/phase3/step5b.txt`): the no-grant arms, done properly with
+`appops set --uid`.
+
+| Arm | Log line | Guest side |
+| --- | --- | --- |
+| all-files denied, mode `on` (forced) | `share: mode=on all-files=false -> bind=true` | `~/Phone` present but only **10** top-level entries - Android, Audiobooks, DCIM, Documents, Download, MIUI, Movies, Music, Pictures, Podcasts - where the grant gives 35; the app's own files are missing |
+| all-files denied, mode `auto` (the default) | `share: mode=auto all-files=false -> bind=false` | `~/Phone` is the leftover empty dir (`d--------- 2 omarchy omarchy`), and the hook logged `omdroid-share: bookmark removed`, leaving the owner's four bookmarks |
+| grant restored, mode `auto` | `share: mode=auto all-files=true -> bind=true` | `~/Phone` mounted again; desktop ready in 6.6 s |
+
+That is the evidence behind the default: without the grant a bind shows a partial tree whose extra
+directories are the media collections, which reads as "the phone's storage, minus the user's own
+files" - worse than no bind at all. Cold starts across all arms: 6.6-11.3 s to desktop, no arm stood
+out.
+
+**Phase 4:** appended when it has run (the provider's children/read/create through the ROM's picker).
 
 ## Switches
 
