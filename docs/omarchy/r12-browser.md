@@ -46,6 +46,9 @@ name=${0##*/}
 exec "/usr/bin/$name" --no-sandbox --disable-dev-shm-usage --password-store=basic "$@"
 ```
 
+(This is the launcher as this round left it. Software GPU mode later added two flags; see
+"Follow-up: Chromium in software GPU mode" below.)
+
 The complete hook links it into `/usr/local/bin` for each name the image actually has (`brave`,
 `chromium`, `google-chrome-stable`, `microsoft-edge-stable`, `vivaldi-stable`, `opera` are tried;
 only present ones are linked). `/usr/local/bin` comes before `/usr/bin` in the session PATH, so a

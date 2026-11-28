@@ -33,7 +33,12 @@
 # not. The real launcher puts the file's flags before its arguments and Chromium keeps
 # the last value of a switch, so the order is: flags file, then these, then the caller,
 # who can still choose otherwise. A browser whose flags file does not ask for Vulkan is
-# left exactly as before.
+# left exactly as before. The flags files are read one switch per line, the shape the
+# image's file has; a --use-angle placed mid-line is not seen.
+#
+# OMDROID_COMPLETE_ETC and OMDROID_COMPLETE_USRBIN stand in for /etc and /usr/bin, like
+# the other OMDROID_COMPLETE_* overrides, so complete-hook-test.sh can run the launcher
+# against fake browsers. Nothing in a session sets them.
 name=${0##*/}
 gl=()
 if [ "${OMDROID_GPU:-}" = software ]; then

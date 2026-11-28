@@ -173,6 +173,13 @@ check "browser: a browser the image lacks is not linked" "[ ! -e $T/bin/vivaldi-
 check "browser: an entry that names its binary by full path gets a copy that does not" "grep -qx 'Exec=chromium %U' $T/apps/chromium.desktop && grep -qx 'Exec=chromium' $T/apps/chromium.desktop && ! grep -q '^Exec=/usr/bin/' $T/apps/chromium.desktop"
 check "browser: the copy keeps every other line of the entry" "[ \"\$(grep -v '^Exec=' $T/apps/chromium.desktop | sed '\$d')\" = \"\$(grep -v '^Exec=' $T/apps-src/chromium.desktop)\" ]"
 check "browser: an entry that already names it bare gets no copy" "[ ! -e $T/apps/brave.desktop ]"
+# A read of the source entry that fails keeps the good copy: a sed that fails on that one
+# file stands in for the entry vanishing between the check and the read.
+mkdir -p "$T/failsed"
+printf '#!/bin/bash\nfor a; do case "$a" in */apps-src/chromium.desktop) exit 2 ;; esac; done\nexec %s "$@"\n' "$(command -v sed)" > "$T/failsed/sed"
+chmod 755 "$T/failsed/sed"
+PATH=$T/failsed:$PATH OMDROID_COMPLETE_CLIPBOARD=0 OMDROID_COMPLETE_BROWSER=1 bash "$D/session-start.sh" > /dev/null 2>&1
+check "browser: a failed read of the source entry keeps the previous copy" "grep -qx 'Exec=chromium %U' $T/apps/chromium.desktop && grep -qx '\[Desktop Entry\]' $T/apps/chromium.desktop && [ ! -e $T/apps/chromium.desktop.new ]"
 
 # The launcher itself, run through the link the hook made. Chromium's flags file is the
 # image's shape: ANGLE on Vulkan with the Vulkan features on. Brave has no flags file.

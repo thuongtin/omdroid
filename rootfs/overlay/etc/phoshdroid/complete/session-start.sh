@@ -201,8 +201,12 @@ entry_ours() { # $1 browser name
     if grep -Eqs "^Exec=/usr/bin/$1( |\$)" "$APPS_SRC/$1.desktop" \
             && { [ ! -e "$APPS/$1.desktop" ] || entry_is_ours "$1"; }; then
         mkdir -p "$APPS"
-        { sed -E "s#^Exec=/usr/bin/$1( |\$)#Exec=$1\\1#" "$APPS_SRC/$1.desktop"; echo "$entry_mark"; } \
-            > "$APPS/$1.desktop.new" && mv -f "$APPS/$1.desktop.new" "$APPS/$1.desktop"
+        # Each step gates the next: a failed read leaves the previous copy in place
+        # rather than installing a file that holds only the marker.
+        sed -E "s#^Exec=/usr/bin/$1( |\$)#Exec=$1\\1#" "$APPS_SRC/$1.desktop" > "$APPS/$1.desktop.new" \
+            && echo "$entry_mark" >> "$APPS/$1.desktop.new" \
+            && mv -f "$APPS/$1.desktop.new" "$APPS/$1.desktop"
+        rm -f "$APPS/$1.desktop.new"
     elif entry_is_ours "$1"; then
         rm -f "$APPS/$1.desktop"
     fi
